@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
             "A célmeghajtó MINDEN partíciója és adata törlődni fog."
         )
         if mode == "windows":
-            details += "\n\nA készítő GPT/FAT32 meghajtót hoz létre, amely UEFI x64 rendszerekhez készült."
+            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT UEFI:NTFS indítópartíciót a lemez végén. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ."
         reply = QMessageBox.warning(
             self,
             "Végleges megerősítés szükséges",
