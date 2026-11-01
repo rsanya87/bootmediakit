@@ -1,122 +1,96 @@
 # BootMediaKit
 
-**BootMediaKit** egy natív, magyar nyelvű grafikus USB-készítő Arch-alapú Linux rendszerekhez (jelenleg CachyOS-on tesztelt). A Rufus használati folyamatából merít ötletet, de nem a Rufus Windows-programjának Linuxra fordított vagy teljes funkcionalitású portja.
+**BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, rendszergazdai jogosultsággal futó háttérfolyamat végzi.
 
-Verzió: `0.1.1-alpha`
+**Fejlesztői verzió:** `0.1.2-alpha`  
+**Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
+**Az alkalmazás licence:** GNU GPL-3.0-only
 
-## Mit tud ez a változat?
+> Ez alfa verzió, tesztelésre készült. Nem állítjuk, hogy már teljes Rufus-helyettesítő. Az új Windows UEFI:NTFS eljárás automatikus tesztekkel ellenőrzött, de valódi pendrive-on, UEFI firmware-rel és Windows Telepítővel még tesztelni kell.
 
-### 1. Lemezkép közvetlen kiírása
+## Jelenlegi funkciók
 
-- ISO, IMG, BIN és RAW lemezképfájlok közvetlen írása USB-meghajtóra.
-- Külön `dd` parancs nélkül, grafikus felületről.
-- A kiírás után opcionális teljes visszaolvasás és bájtról bájtra összehasonlítás.
-- A régi partíciós és fájlrendszer-aláírások eltávolítása az írás előtt.
-- Folyamatjelző és napló.
+- ISO, IMG, BIN és RAW lemezképek közvetlen kiírása.
+- Nyers lemezkép írása után opcionális teljes visszaolvasás.
+- Windows telepítő ISO-k felismerése, hogy ne kerüljenek véletlenül nyers kiírásra.
+- Windows x64 UEFI telepítő készítése GPT lemezen, két partícióval:
+  - egy nagy NTFS Microsoft Basic Data partíció az eredeti Windows ISO fájljainak;
+  - egy 1 MiB-os FAT EFI System Partition a pendrive végén, az UEFI:NTFS segédképpel.
+- Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
+- A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
+- A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
+- Opcionális, alapértelmezésben bekapcsolt SHA-256 visszaellenőrzés minden átmásolt Windows fájlra.
+- Grafikus folyamatjelző és napló.
+- Rendszergazdai engedélykérés csak a tényleges, romboló lemezművelethez.
 
-**Fontos:** ez a mód nyers lemezképírás. Linux ISO-k esetében a legtöbb hibrid ISO-val használható. Nem alakít át egy tetszőleges, hagyományos ISO-fájlt bootolható lemezzé. Szokványos Windows telepítő ISO-hoz a külön Windows módot használd.
+## Windows UEFI:NTFS – hogyan működik?
 
-### 2. Windows telepítő USB (UEFI x64)
+A megoldás az UEFI:NTFS projekt és a Rufus által használt elrendezést követi: a pendrive első, nagy partíciója NTFS, és az eredeti Windows telepítőfájlokat tartalmazza. A második, kisméretű FAT partíció a lemez legvégére kerül.
 
-- Windows ISO csatolása csak olvasható módban.
-- GPT partíciós tábla és FAT32 EFI rendszerpartíció létrehozása.
-- A Windows telepítőfájlok másolása.
-- A 4 GiB-nál nagyobb `install.wim` fájl automatikus darabolása `install.swm`, `install2.swm` stb. részekre a `wimlib` segítségével.
-- A 4 GiB-nál nagyobb, nem titkosított `install.esd` átalakítása hagyományos LZX-tömörítésű WIM-mé, majd darabolása `install*.swm` fájlokra.
-- A nagy WIM/ESD fájlok előfeldolgozása és a tényleges USB-kapacitás ellenőrzése még a pendrive törlése előtt történik.
-- A Microsoft ISO-kban található szabványos x64 UEFI indítófájl ellenőrzése.
-- A nagy WIM/ESD fájlból készült SWM-részek méretének ellenőrzése FAT32-kompatibilitáshoz.
+A gép UEFI firmware-e a FAT partícióról elindítja az UEFI:NTFS betöltőt. Az betölti az NTFS UEFI illesztőprogramot, megkeresi ugyanazon az USB-eszközön az NTFS partíciót, majd elindítja rajta a Windows x64 EFI bootloadert.
 
-A Windows-fájlmásolási mód jelenleg nem végez teljes, USB-ről visszaolvasásos fájlonkénti ellenőrzést; a nyers lemezkép mód külön visszaolvasásos ellenőrzést kínál.
+Az UEFI:NTFS segédképet telepítéskor az alkalmazás a Rufus hivatalos GitHub-forrásából, rögzített commitból tölti le. A letöltő ellenőrzi a fájl pontos méretét és Git-blob SHA-1 azonosítóját. Az írás közben ugyanezeket a feltételeket ellenőrzi, majd a segédpartíciót vissza is olvassa.
 
-A célmód **UEFI x64**. Legacy BIOS / CSM indítás, UEFI:NTFS, Windows To Go és TPM/Secure Boot követelményeket megkerülő telepítő még nincs támogatva. A 4 GiB feletti, titkosított ESD-ket a wimlib nem tudja feldolgozni. Az ESD átalakításához és darabolásához a `/var/tmp` fájlrendszeren jelentős szabad tárhely szükséges; a program ezt előzetesen ellenőrzi. A Windows ISO-tól és a célgéptől függően Secure Boot kompatibilitást nem garantálok.
+A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani.
 
-## Biztonsági korlátok
+### Secure Boot
 
-- A grafikus felület normál felhasználóként fut.
-- A `7zip` segítségével felismeri a szokványos Windows telepítő ISO-kat, és figyelmeztet, ha azokat közvetlen nyers írási módban próbálnád kiírni.
-- Csak a tényleges írás előtt kér rendszergazdai engedélyt a `pkexec` segítségével.
-- A meghajtólistában alapértelmezésben csak USB-nek jelölt vagy eltávolítható lemezek szerepelnek.
-- A háttérfolyamat az írás előtt ismét ellenőrzi, hogy teljes lemez legyen kiválasztva, valóban USB/eltávolítható-e, írható-e, és nem a rendszer (`/`, `/boot`, `/efi`) meghajtója-e.
-- Minden célpartíció leválasztásra kerül a művelet előtt.
-- A felület külön megerősítést kér, mert a célmeghajtó teljes tartalma törlődik.
+A Rufus által közzétett UEFI:NTFS segédkép tartalmaz Secure Boot aláírású x64 UEFI:NTFS összetevőket. Ez **nem jelent minden gépen garantált Secure Boot kompatibilitást**: a firmware tanúsítványtárolója, a Microsoft harmadik féltől származó UEFI CA beállítása és a visszavonási lista eltérhet. Egyes gépeken engedélyezni kell a harmadik féltől származó UEFI tanúsítványokat, más esetben a firmware visszautasíthat egy visszavont aláírást. A BootMediaKit nem kapcsolja ki a Secure Bootot és nem módosít firmware-beállításokat.
 
-A biztonsági ellenőrzések csökkentik a téves meghajtóválasztás kockázatát, de nem helyettesítik a felhasználó ellenőrzését. Mindig ellenőrizd a meghajtó nevét és kapacitását.
+### Jelenlegi korlátozások
 
-## Telepítés Arch-alapú Linux alatt
+- Windows telepítő: **UEFI x64**.
+- Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
+- A jelenlegi elrendezés 512 bájtos logikai szektorú USB-meghajtót igényel.
+- A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
+- A valódi Windows Telepítő teszt még hátravan. A 0.1.1-alpha korábbi FAT32/SWM eljárásával a felhasználó gépén „Hiányzik egy adathordozóhoz szükséges illesztőprogram” hiba jelent meg, miközben ugyanaz az ISO Rufusszal működött. A 0.1.2 UEFI:NTFS eljárása ezt a fájlrendszer- és indítási korlátot célozza, de a hibajegyet csak a felhasználó gépén sikeres telepítőindítás után zárjuk le.
+- A fájl-ellenőrzés a másolt fájlok méretét és SHA-256 hashét ellenőrzi. Az ISO eredetiségét vagy kiadói aláírását nem vizsgálja.
 
-1. Töltsd le és csomagold ki a `BootMediaKit` könyvtárat.
-2. Nyiss terminált ebben a könyvtárban.
-3. Futtasd:
+## Telepítés Arch-alapú Linuxon
 
-   ```bash
-   chmod +x install.sh
-   ./install.sh
-   ```
+A telepítőnek internetkapcsolat kell, mert a hivatalos Rufus GitHub-forrásból letölti a rögzített UEFI:NTFS segédképet, majd ellenőrzi.
 
-A telepítő a következő Arch Linux csomagokat kéri a `pacman` segítségével:
+```bash
+chmod +x install.sh
+./install.sh
+```
 
-- `pyside6` – grafikus felület
-- `parted` – partíciós tábla létrehozása
-- `dosfstools` – FAT32 fájlrendszer
-- `wimlib` – nagy Windows WIM fájlok darabolása
-- `7zip` – Windows ISO-k felismerése, hogy ne kerüljenek véletlenül nyers kiírásra
-- `polkit` – jogosultságkezelés
-
-A `lsblk`, `blockdev`, `findmnt`, `mount`, `umount`, `wipefs`, `sync` és `udevadm` az alap Arch Linux rendszer segédprogramjai. KDE alatt egy aktív polkit hitelesítő ügynök szükséges a hitelesítési ablak megjelenítéséhez.
-
-Indítás: alkalmazásmenüből **BootMediaKit**, vagy terminálból:
+Indítás az alkalmazásmenüből vagy terminálból:
 
 ```bash
 bootmediakit
 ```
 
-## Eltávolítás
+Szükséges Arch csomagok:
 
-A projekt könyvtárából:
+- `pyside6` — grafikus felület
+- `parted` — lemezkezelő segédprogram
+- `dosfstools` — FAT fájlrendszer-kezelés
+- `ntfs-3g` — NTFS csatolás
+- `ntfsprogs` — `mkfs.ntfs` formázó (Arch külön csomag)
+- `polkit` — jogosultságemelés
+- `7zip` — Windows ISO felismerése
+
+KDE alatt aktív polkit hitelesítő ügynök szükséges.
+
+## Automatikus tesztek
 
 ```bash
-./uninstall.sh
-```
-
-A függőségként telepített rendszer-csomagokat az eltávolító nem törli.
-
-## Tesztelés és jelenlegi korlátok
-
-A platformfüggetlen biztonsági és ISO-felismerési tesztek futtatása a forráskönyvtárban:
-
-```bash
+python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
+bash -n install.sh uninstall.sh
 python3 -m unittest discover -s tests -v
 ```
 
-Ez egy alfa kiadás. A tesztek a fájlkezelési, WIM/ESD-előkészítési és biztonsági logikát ellenőrzik; ebben a fejlesztői környezetben nem lehetett valódi pendrive-on tesztelni. Nem állítom, hogy minden ISO-val, USB-vezérlővel, UEFI firmware-rel vagy Windows-kiadással már igazoltan működik.
+Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet és az SHA-256 visszaellenőrzést. Ezek nem helyettesítik a valódi USB-s, firmware-es és Windows Telepítő tesztet.
 
-Első használatkor csak olyan pendrive-val próbáld, amelyen nincs megőrzendő adat. Az elkészült adathordozót a célgépen indítsd el, és ellenőrizd a telepítő működését.
+## Fejlesztési irány
 
-## Tervezett, de még nem megvalósított Rufus-funkciók
+Elsőként az Arch/CachyOS változatot stabilizáljuk. Debian/Ubuntu és Fedora csak ezután következik. Részletek: [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- MBR / Legacy BIOS Windows telepítőmód
-- NTFS és UEFI:NTFS
-- FreeDOS / MS-DOS indító
-- Windows To Go
-- Linux perzisztens tárhely
-- Hibás szektor / hamis kapacitás teszt
-- SHA-256 / SHA-1 / MD5 ellenőrzőösszeg
-- Tetszőleges USB-formázás több fájlrendszerrel
-- Windows ISO letöltő
-- Windows 11 telepítő testreszabási lehetőségek
-- VHD / VHDX / FFU műveletek
+## Biztonság
 
-## Licenc
+Az USB teljes tartalma törlődik. Mindig ellenőrizd a meghajtó eszköznevét, típusát és kapacitását. Csak olyan pendrive-ot használj, amelyen nincs megőrzendő adat. A program írás előtt újraellenőrzi a céleszközt és tiltja a rendszerlemezt, de a téves eszközválasztás kockázatát semmilyen program nem tudja teljesen megszüntetni.
 
-A projekt saját kódja GNU GPL v3 (GPL-3.0-only) licenc alatt kerül kiadásra. Külső rendszereszközöket használ (például `parted`, `wimlib`, `dosfstools`); ezek saját licence és csomagolása változatlan marad.
+## Külső összetevők
 
-## Platformtámogatás – fontos
-
-Ez a `0.1.1-alpha` alapverzió jelenleg Arch-alapú rendszerekhez készült telepítőszkriptet tartalmaz; a fejlesztési és első tesztelési célrendszer a CachyOS. Ubuntu, Debian és Fedora támogatás tervben van, de ehhez még külön függőségkezelés, telepítőcsomagolás és disztribúciónkénti tesztelés szükséges. Ezeket a rendszereket ez a kiadás még nem támogatja hivatalosan.
-
-## Kiinduló verzió és tesztállapot
-
-Ez a repository a korábbi belső `CachyUSB 0.1.1-alpha` forrásából indul. A kiinduló változatban a projekt neve, a telepítési útvonalak, az indítóparancs és az alkalmazásmenü-bejegyzés `BootMediaKit` névre változott; a működési logika szándékosan nem változott. A kilenc automatizált egységteszt fejlesztői környezetben sikeresen lefutott. Fizikai USB-eszközös és UEFI/Windows telepítési teszt nincs teljes körűen igazolva.
-
-A jelenleg ismert Windows UEFI telepítési problémát és a `0.1.2` tervezett munkáit a [ROADMAP.md](ROADMAP.md) és a [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) dokumentálja.
+Az UEFI:NTFS segédképet a program a Rufus rögzített upstream forrásából tölti le. A segédkép és az abban található külső kódok licence nem változik. Lásd: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
