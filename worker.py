@@ -394,6 +394,7 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
 
     digest = hashlib.sha1()
     digest.update(f"blob {expected}\0".encode("ascii"))
+    sha256 = hashlib.sha256()
     fd = os.open(partition, os.O_RDONLY)
     try:
         remaining = expected
@@ -402,12 +403,15 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
             if not data:
                 raise RuntimeError("Az UEFI:NTFS partíció visszaolvasása váratlanul véget ért.")
             digest.update(data)
+            sha256.update(data)
             remaining -= len(data)
     finally:
         os.close(fd)
     if digest.hexdigest() != UEFI_NTFS_GIT_BLOB_SHA1:
-        raise RuntimeError("Az UEFI:NTFS indítópartíció visszaolvasása nem egyezik a hivatalos képpel.")
-    emit("UEFI:NTFS partíció visszaolvasása sikeres.", 40)
+        raise RuntimeError("Az UEFI:NTFS indítópartíció Git-blob hash-e eltér a hivatalos képtől.")
+    if sha256.hexdigest() != UEFI_NTFS_SHA256:
+        raise RuntimeError("Az UEFI:NTFS indítópartíció SHA-256 hash-e eltér a hivatalos képtől.")
+    emit("UEFI:NTFS partíció SHA-1 és SHA-256 visszaolvasása sikeres.", 40)
 
 
 def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
