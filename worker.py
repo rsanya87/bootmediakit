@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -22,7 +21,6 @@ from pathlib import Path
 from typing import Iterable
 
 CHUNK = 4 * 1024 * 1024
-FAT32_MAX_FILE = 4 * 1024 * 1024 * 1024 - 1
 UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
 UEFI_NTFS_IMAGE_SIZE = 1_048_576
 UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
