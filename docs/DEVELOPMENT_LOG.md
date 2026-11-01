@@ -24,6 +24,7 @@
 - Upstream source is pinned to Rufus commit `acf7de640848ab249bedeb6feb59b33001f656b6`.
 - Image Git blob SHA-1: `ac50eed9730af847c43c145a5c17678f54128b33`.
 - Image SHA-256: `72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e`.
+- Image SHA-256: `72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e`.
 - Image size: 1,048,576 bytes.
 - The image README describes UEFI:NTFS loader 2.8 and NTFS UEFI drivers 1.9, plus additional EfiFs drivers. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
 
