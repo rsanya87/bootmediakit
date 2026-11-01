@@ -65,6 +65,7 @@ Szükséges Arch csomagok:
 
 - `pyside6` — grafikus felület
 - `util-linux` — `lsblk`, `blockdev`, `sfdisk`, `wipefs`, `mount` és `umount`
+- `parted` — `partprobe`, hogy a kernel újraolvassa a partíciós táblát
 - `ntfs-3g` — NTFS csatolás
 - `ntfsprogs` — `mkfs.ntfs` formázó (Arch külön csomag)
 - `polkit` — jogosultságemelés
