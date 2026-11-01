@@ -130,5 +130,73 @@ class CopyVerificationTests(unittest.TestCase):
                 worker.verify_copied_files(destination, manifest)
 
 
+class WindowsIsoScanTests(unittest.TestCase):
+    def test_scan_accepts_case_insensitive_uefi_and_install_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "EFI" / "BOOT"
+            efi.mkdir(parents=True)
+            (efi / "BOOTX64.EFI").write_bytes(b"efi-loader")
+            sources = root / "Sources"
+            sources.mkdir()
+            (sources / "Boot.WIM").write_bytes(b"boot-image")
+            (sources / "Install.ESD").write_bytes(b"install-image")
+            expected_total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+            install_image, boot_wim, total = worker.scan_windows_iso(root)
+
+            self.assertEqual(install_image.name, "Install.ESD")
+            self.assertEqual(boot_wim.name, "Boot.WIM")
+            self.assertEqual(total, expected_total)
+
+    def test_scan_rejects_missing_boot_wim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "efi" / "boot"
+            efi.mkdir(parents=True)
+            (efi / "bootx64.efi").write_bytes(b"efi-loader")
+            sources = root / "sources"
+            sources.mkdir()
+            (sources / "install.esd").write_bytes(b"install")
+            with self.assertRaisesRegex(RuntimeError, "boot.wim"):
+                worker.scan_windows_iso(root)
+
+    def test_scan_rejects_missing_install_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "efi" / "boot"
+            efi.mkdir(parents=True)
+            (efi / "bootx64.efi").write_bytes(b"efi-loader")
+            sources = root / "sources"
+            sources.mkdir()
+            (sources / "boot.wim").write_bytes(b"boot")
+            with self.assertRaisesRegex(RuntimeError, "install.wim"):
+                worker.scan_windows_iso(root)
+
+
+class UefiNtfsImageTests(unittest.TestCase):
+    def test_helper_image_size_and_hash_are_checked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"BootMediaKit helper")
+            size = path.stat().st_size
+            digest = worker.git_blob_sha1(path)
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", digest
+            ):
+                worker.verify_uefi_ntfs_image(path)
+
+    def test_helper_image_with_wrong_hash_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"tampered helper")
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", path.stat().st_size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", "0" * 40
+            ):
+                with self.assertRaisesRegex(RuntimeError, "ellenőrzőösszege"):
+                    worker.verify_uefi_ntfs_image(path)
+
+
+
 if __name__ == "__main__":
     unittest.main()
