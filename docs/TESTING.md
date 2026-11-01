@@ -25,7 +25,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - File-copy manifest generation and SHA-256 read-back verification.
 - Detection of a changed copied file.
 
-Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 19 unit tests. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
