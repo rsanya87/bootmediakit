@@ -26,6 +26,7 @@ FAT32_MAX_FILE = 4 * 1024 * 1024 * 1024 - 1
 UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
 UEFI_NTFS_IMAGE_SIZE = 1_048_576
 UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
+UEFI_NTFS_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
 GPT_ESP_GUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 GPT_BASIC_DATA_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 GPT_ALIGNMENT_SECTORS = 2048
@@ -195,7 +196,16 @@ def verify_uefi_ntfs_image(path: Path = UEFI_NTFS_IMAGE) -> None:
     actual_hash = git_blob_sha1(path)
     if actual_hash != UEFI_NTFS_GIT_BLOB_SHA1:
         raise RuntimeError(
-            "Az UEFI:NTFS segédkép ellenőrzőösszege nem egyezik a rögzített hivatalos verzióval. "
+            "Az UEFI:NTFS segédkép Git-blob azonosítója nem egyezik a rögzített hivatalos verzióval. "
+            "A biztonság kedvéért nem írok a pendrive-ra."
+        )
+    sha256 = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(CHUNK), b""):
+            sha256.update(block)
+    if sha256.hexdigest() != UEFI_NTFS_SHA256:
+        raise RuntimeError(
+            "Az UEFI:NTFS segédkép SHA-256 ellenőrzőösszege nem egyezik a rögzített hivatalos verzióval. "
             "A biztonság kedvéért nem írok a pendrive-ra."
         )
 
