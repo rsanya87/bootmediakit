@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from iso_utils import is_windows_install_iso
 
-APP_VERSION = "0.1.1-alpha"
+APP_VERSION = "0.1.2-alpha"
 APP_NAME = "BootMediaKit"
 WORKER = Path(__file__).with_name("worker.py")
 
@@ -187,7 +187,7 @@ class MainWindow(QMainWindow):
         self.raw_button.setCheckable(True)
         self.raw_button.setChecked(True)
         self.raw_button.setObjectName("modeButton")
-        self.windows_button = QPushButton("Windows telepítő (UEFI / GPT / FAT32)")
+        self.windows_button = QPushButton("Windows telepítő (UEFI / GPT / NTFS)")
         self.windows_button.setCheckable(True)
         self.windows_button.setObjectName("modeButton")
         self.raw_button.clicked.connect(lambda: self.select_mode("raw"))
@@ -371,8 +371,9 @@ class MainWindow(QMainWindow):
         raw = mode == "raw"
         self.raw_button.setChecked(raw)
         self.windows_button.setChecked(not raw)
-        self.verify_checkbox.setEnabled(raw)
+        self.verify_checkbox.setEnabled(True)
         if raw:
+            self.verify_checkbox.setText("Kiírás utáni teljes visszaolvasás és ellenőrzés")
             self.mode_description.setText(
                 "ISOHybrid Linux- és egyéb lemezképekhez. A teljes lemezkép közvetlenül "
                 "az USB-re kerül; a meglévő partíciós tábla és fájlok felülíródnak. "
@@ -380,11 +381,13 @@ class MainWindow(QMainWindow):
             )
         else:
             self.mode_description.setText(
-                "Windows x64 telepítő készítése GPT + FAT32 partícióval, UEFI indításhoz. "
-                "A nagy install.wim fájlokat darabolja; a 4 GiB feletti install.esd fájlokat "
-                "előbb WIM-mé alakítja. Ehhez szabad /var/tmp tárhely szükséges. "
-                "Legacy BIOS, UEFI:NTFS és Windows To Go még nem támogatott."
+                "Windows x64 UEFI telepítő készítése két GPT partícióval: nagy NTFS adatpartíció "
+                "az eredeti ISO-fájloknak, valamint 1 MiB FAT UEFI:NTFS indítópartíció a lemez végén. "
+                "Az install.esd és install.wim változatlanul kerül át, nincs WIM-konvertálás vagy darabolás. "
+                "Másolás után opcionális teljes SHA-256 visszaellenőrzés. Secure Boot működése a firmware "
+                "megbízható tanúsítványaitól és visszavonási listájától is függ. Legacy BIOS és Windows To Go még nem támogatott."
             )
+            self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
 
     def append_log(self, text: str) -> None:
         if text:
@@ -409,7 +412,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Windows ISO észlelve",
                 "Ez Windows telepítő ISO-nak tűnik. Ne nyers lemezképként írd ki, mert így általában nem lesz bootolható. "
-                "Válaszd a „Windows telepítő (UEFI / GPT / FAT32)” módot.",
+                "Válaszd a „Windows telepítő (UEFI / GPT / NTFS)” módot.",
             )
             return
         if mode == "raw" and image.stat().st_size > device["size"]:
@@ -445,8 +448,7 @@ class MainWindow(QMainWindow):
             return
 
         args = ["/usr/bin/python3", str(WORKER), mode, str(image), str(device["path"])]
-        if mode == "raw":
-            args.append("1" if self.verify_checkbox.isChecked() else "0")
+        args.append("1" if self.verify_checkbox.isChecked() else "0")
 
         self.progress.setValue(0)
         self.log.clear()
