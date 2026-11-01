@@ -18,6 +18,8 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Case-insensitive lookup of UEFI and Windows setup files.
 - Windows ISO detection.
 - GPT partition layout calculation and alignment.
+- Parse the generated GPT layout with real `sfdisk --no-act` against a sparse image file.
+- Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
 - GPT Basic Data and EFI System partition type identifiers.
 - Linux `sdX` and NVMe partition naming.
 - Git object hash calculation used to pin the helper image.
@@ -25,7 +27,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - File-copy manifest generation and SHA-256 read-back verification.
 - Detection of a changed copied file.
 
-Current automated test suite: 19 unit tests. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 20 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
