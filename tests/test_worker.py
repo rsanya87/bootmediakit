@@ -1,5 +1,6 @@
 import hashlib
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -76,6 +77,24 @@ class UefiNtfsLayoutTests(unittest.TestCase):
     def test_too_small_drive_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "túl kicsi"):
             worker.calculate_gpt_layout(4096)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_accepts_generated_gpt_script_on_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input=worker.make_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
 
     def test_sfdisk_script_uses_basic_data_and_efi_system_types(self):
         layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
