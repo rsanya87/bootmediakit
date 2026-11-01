@@ -64,6 +64,7 @@ bootmediakit
 Szükséges Arch csomagok:
 
 - `pyside6` — grafikus felület
+- `util-linux` — `lsblk`, `blockdev`, `sfdisk`, `wipefs`, `mount` és `umount`
 - `ntfs-3g` — NTFS csatolás
 - `ntfsprogs` — `mkfs.ntfs` formázó (Arch külön csomag)
 - `polkit` — jogosultságemelés
