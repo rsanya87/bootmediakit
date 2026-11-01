@@ -1,34 +1,44 @@
 # Testing
 
-## Baseline 0.1.1-alpha import
+## 0.1.2-alpha development checks
 
-Automated command:
+Run from the repository root:
 
 ```bash
+python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
+bash -n install.sh uninstall.sh
 python3 -m unittest discover -s tests -v
 ```
 
-Recorded development result: 9 tests passed.
+The GitHub Actions workflow runs these static and unit checks on pushes to development branches and on pull requests.
 
-Additional static checks:
+### Unit-test scope
 
-```bash
-python3 -m py_compile app.py worker.py iso_utils.py
-bash -n install.sh uninstall.sh
-```
+- Block-device safety validation rejects invalid paths and non-block devices.
+- Case-insensitive lookup of UEFI and Windows setup files.
+- Windows ISO detection.
+- GPT partition layout calculation and alignment.
+- GPT Basic Data and EFI System partition type identifiers.
+- Linux `sdX` and NVMe partition naming.
+- Git object hash calculation used to pin the helper image.
+- Windows ISO scan for EFI bootloader, boot.wim and install image.
+- File-copy manifest generation and SHA-256 read-back verification.
+- Detection of a changed copied file.
 
-These checks validate Python syntax and shell syntax, not runtime behavior on every supported distribution.
+Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
-## Known manual test result
+## Required manual tests before merge/release
 
-One Windows Setup attempt using the BootMediaKit 0.1.1-alpha Windows UEFI/FAT32 path reached Setup but showed the “required media driver is missing” dialog. The same ISO reportedly works when prepared with Rufus on the same target PC. This is a confirmed reproducible report from one user setup, not yet a root-caused defect.
+1. Install the branch on a clean/current CachyOS system. Confirm that `ntfs-3g`, `ntfsprogs`, and other dependencies are present and that the UEFI helper image downloads with the pinned hash.
+2. Confirm the downloaded image is exactly 1,048,576 bytes and matches the pinned Git blob SHA-1.
+3. Use a disposable USB drive. Check the device path, model, capacity and all partitions before confirming.
+4. Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB from the same ISO used for the 0.1.1 failure report.
+5. Inspect the GPT layout: partition 1 must be Microsoft Basic Data / NTFS; partition 2 must be EFI System / FAT and contain the 1 MiB helper image.
+6. Confirm the install.esd is copied unchanged (same size and SHA-256 as the ISO source file).
+7. Boot the USB in UEFI mode on the same physical PC. Confirm UEFI:NTFS launches Windows Boot Manager and Windows Setup can load the installation image.
+8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
+9. Optionally repeat using a second USB stick and Windows ISO.
 
-## Test levels
+## Test result discipline
 
-- Unit tests: automated with mocked system calls where appropriate.
-- Integration tests: require a Linux host with the listed system tools.
-- Hardware tests: require a disposable USB drive.
-- Firmware tests: require booting the created USB on physical or virtual UEFI firmware.
-- Windows Setup tests: require booting the USB and confirming that Setup can read the installation image.
-
-Never describe a mocked unit test as proof that the USB-writing workflow works on real hardware.
+Do not describe mocked unit tests as proof that media creation works on physical hardware. Do not close GitHub issue #2 until the same-machine test passes. Do not merge to `main` or publish a 0.1.2 release before the user confirms successful boot and Windows Setup source access.
