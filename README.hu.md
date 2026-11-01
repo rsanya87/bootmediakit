@@ -64,8 +64,6 @@ bootmediakit
 Szükséges Arch csomagok:
 
 - `pyside6` — grafikus felület
-- `parted` — lemezkezelő segédprogram
-- `dosfstools` — FAT fájlrendszer-kezelés
 - `ntfs-3g` — NTFS csatolás
 - `ntfsprogs` — `mkfs.ntfs` formázó (Arch külön csomag)
 - `polkit` — jogosultságemelés
