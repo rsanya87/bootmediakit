@@ -23,12 +23,24 @@ UPSTREAM_URL = (
 )
 EXPECTED_SIZE = 1_048_576
 EXPECTED_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
+EXPECTED_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
 
 
 def git_blob_sha1(path: Path) -> str:
     size = path.stat().st_size
     digest = hashlib.sha1()
     digest.update(f"blob {size}\0".encode("ascii"))
+    with path.open("rb") as stream:
+        while True:
+            block = stream.read(1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
     with path.open("rb") as stream:
         while True:
             block = stream.read(1024 * 1024)
@@ -49,6 +61,7 @@ def main() -> int:
         if (
             destination.stat().st_size == EXPECTED_SIZE
             and git_blob_sha1(destination) == EXPECTED_GIT_BLOB_SHA1
+            and sha256_file(destination) == EXPECTED_SHA256
         ):
             print(f"UEFI:NTFS v2.8 image already verified: {destination}")
             return 0
@@ -81,8 +94,12 @@ def main() -> int:
         actual_hash = git_blob_sha1(temporary)
         if actual_hash != EXPECTED_GIT_BLOB_SHA1:
             raise RuntimeError(
-                "UEFI:NTFS image integrity check failed. "
-                "The file was not installed."
+                "UEFI:NTFS image Git blob hash check failed. The file was not installed."
+            )
+        actual_sha256 = sha256_file(temporary)
+        if actual_sha256 != EXPECTED_SHA256:
+            raise RuntimeError(
+                "UEFI:NTFS image SHA-256 check failed. The file was not installed."
             )
         os.chmod(temporary, 0o644)
         os.replace(temporary, destination)
