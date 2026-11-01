@@ -482,7 +482,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
 
         emit("NTFS fájlrendszer létrehozása…", 25)
-        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", ntfs_partition], timeout=300)
+        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", ntfs_partition], timeout=300)
         write_uefi_ntfs_image(UEFI_NTFS_IMAGE, uefi_partition)
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
