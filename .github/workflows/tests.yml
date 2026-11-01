@@ -30,5 +30,7 @@ jobs:
         run: bash -n install.sh uninstall.sh
       - name: Fetch and verify the pinned UEFI:NTFS helper image
         run: python fetch_uefi_ntfs.py "$RUNNER_TEMP/uefi-ntfs.img"
+      - name: Report verified helper SHA-256
+        run: sha256sum "$RUNNER_TEMP/uefi-ntfs.img"
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
