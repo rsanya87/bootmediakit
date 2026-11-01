@@ -32,5 +32,13 @@ jobs:
         run: python fetch_uefi_ntfs.py "$RUNNER_TEMP/uefi-ntfs.img"
       - name: Report verified helper SHA-256
         run: sha256sum "$RUNNER_TEMP/uefi-ntfs.img"
+      - name: Install NTFS format utility for a dry-run check
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ntfs-3g
+      - name: Validate NTFS formatting arguments on a temporary image
+        run: |
+          truncate -s 64M "$RUNNER_TEMP/ntfs-test.img"
+          mkfs.ntfs --no-action --fast --force --label BOOTMEDIA --partition-start 2048 --sector-size 512 "$RUNNER_TEMP/ntfs-test.img"
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
