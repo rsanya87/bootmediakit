@@ -5,7 +5,7 @@
 ### Windows UEFI media rewrite
 
 - Replace the single GPT/FAT32 Windows USB layout with a GPT layout containing a large NTFS Basic Data partition and a 1 MiB FAT EFI System Partition at the end of the device.
-- Use the Rufus UEFI:NTFS helper image from a pinned upstream Rufus commit, with file-size and Git blob SHA-1 verification.
+- Use the Rufus UEFI:NTFS helper image from a pinned upstream Rufus commit, with file-size, Git blob SHA-1 and SHA-256 verification.
 - Read back and verify the written UEFI:NTFS helper image before continuing.
 - Keep the original Windows `install.esd` / `install.wim` file unchanged; remove the ESD-to-WIM conversion and SWM splitting from the Windows path.
 - Add full optional SHA-256 verification of the copied Windows ISO files (enabled by default).
