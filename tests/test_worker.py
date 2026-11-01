@@ -181,9 +181,10 @@ class UefiNtfsImageTests(unittest.TestCase):
             path.write_bytes(b"BootMediaKit helper")
             size = path.stat().st_size
             digest = worker.git_blob_sha1(path)
+            sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
             with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", size), patch.object(
                 worker, "UEFI_NTFS_GIT_BLOB_SHA1", digest
-            ):
+            ), patch.object(worker, "UEFI_NTFS_SHA256", sha256):
                 worker.verify_uefi_ntfs_image(path)
 
     def test_helper_image_with_wrong_hash_is_rejected(self):
@@ -193,9 +194,20 @@ class UefiNtfsImageTests(unittest.TestCase):
             with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", path.stat().st_size), patch.object(
                 worker, "UEFI_NTFS_GIT_BLOB_SHA1", "0" * 40
             ):
-                with self.assertRaisesRegex(RuntimeError, "ellenőrzőösszege"):
+                with self.assertRaisesRegex(RuntimeError, "Git-blob"):
                     worker.verify_uefi_ntfs_image(path)
 
+
+    def test_helper_image_with_wrong_sha256_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"correct git hash but bad sha256 pin")
+            git_hash = worker.git_blob_sha1(path)
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", path.stat().st_size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", git_hash
+            ), patch.object(worker, "UEFI_NTFS_SHA256", "0" * 64):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                    worker.verify_uefi_ntfs_image(path)
 
 
 if __name__ == "__main__":
