@@ -62,6 +62,7 @@ Arch dependencies:
 
 - `pyside6` — graphical interface
 - `util-linux` — `lsblk`, `blockdev`, `sfdisk`, `wipefs`, `mount`, and `umount`
+- `parted` — `partprobe` to notify the kernel about the new partition table
 - `ntfs-3g` — mounting NTFS volumes from Linux
 - `ntfsprogs` — `mkfs.ntfs` formatter (Arch split package)
 - `polkit` — narrowly scoped privilege elevation
