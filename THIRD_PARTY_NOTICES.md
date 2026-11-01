@@ -8,6 +8,7 @@ BootMediaKit's own source code is licensed under GNU GPL-3.0-only. The program a
 - Upstream file: `res/uefi/uefi-ntfs.img`
 - Pinned Rufus commit: `acf7de640848ab249bedeb6feb59b33001f656b6`
 - Git blob SHA-1: `ac50eed9730af847c43c145a5c17678f54128b33`
+- SHA-256: `72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e`
 - Exact image size: 1,048,576 bytes
 - Upstream description: https://github.com/pbatard/rufus/blob/master/res/uefi/readme.txt
 
