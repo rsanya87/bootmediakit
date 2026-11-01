@@ -61,9 +61,7 @@ bootmediakit
 Arch dependencies:
 
 - `pyside6` — graphical interface
-- `parted` — retained for disk utilities used by the application/toolchain
-- `dosfstools` — FAT filesystem utilities
-- `ntfs-3g` — mounting NTFS volumes from Linux
+- - `ntfs-3g` — mounting NTFS volumes from Linux
 - `ntfsprogs` — `mkfs.ntfs` formatter (Arch split package)
 - `polkit` — narrowly scoped privilege elevation
 - `7zip` — Windows ISO detection
