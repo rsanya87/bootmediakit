@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=BootMediaKit
+GenericName=Bootolható USB készítő
+Comment=ISO és Windows telepítő USB készítése Linux alatt
+Exec=bootmediakit
+Icon=bootmediakit
+Terminal=false
+Type=Application
+Categories=System;Utility;
+StartupNotify=true
