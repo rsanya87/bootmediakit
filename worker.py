@@ -539,7 +539,7 @@ def validate_ntfs_boot_sector(partition: str, expected_start_sector: int) -> Non
             f"Az NTFS HiddenSectors mező hibás: {hidden_sectors}; "
             f"elvárt {expected_start_sector}."
         )
-    if boot[510:512] != b"\\x55\\xaa":
+    if boot[510:512] != b"\x55\xaa":
         raise RuntimeError("Az NTFS boot szektor 0x55AA aláírása hiányzik.")
 
 
