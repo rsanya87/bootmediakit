@@ -8,8 +8,10 @@ and keeps Windows ISO inspection/capacity checks ahead of all disk writes.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
+import struct
 import os
 import shutil
 import stat
@@ -20,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-CHUNK = 4 * 1024 * 1024
+CHUNK = 8 * 1024 * 1024
 UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
 UEFI_NTFS_IMAGE_SIZE = 1_048_576
 UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
@@ -307,9 +309,37 @@ def copy_tree_progress(
     span: int = 43,
     hash_files: bool = True,
 ) -> list[tuple[str, int, str]]:
-    """Copy regular ISO files; optionally compute source SHA-256 hashes while copying."""
-    copied = 0
+    """Copy ISO files, using in-kernel copy_file_range when hashing is disabled.
+
+    copy_file_range is best-effort: cross-filesystem or unsupported NTFS3/ISO9660
+    combinations transparently fall back to the buffered streaming path.
+    Progress messages are throttled to at most one per percentage point.
+    """
+    copied_total = 0
     manifest: list[tuple[str, int, str]] = []
+    last_percent = -1
+    fast_copy_enabled = not hash_files and hasattr(os, "copy_file_range")
+    unsupported_copy_range = {
+        errno.EXDEV,
+        errno.EINVAL,
+        errno.ENOSYS,
+        errno.EOPNOTSUPP,
+        getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),
+    }
+
+    def report_progress() -> None:
+        nonlocal last_percent
+        percent = base_percent + int(
+            (copied_total / max(total_bytes, 1)) * span
+        )
+        percent = min(base_percent + span, percent)
+        if percent > last_percent:
+            last_percent = percent
+            emit(
+                f"Windows fájlok másolása… {copied_total:,} / {total_bytes:,} bájt",
+                percent,
+            )
+
     for current, dirs, files in os.walk(source_root):
         current_path = Path(current)
         relative_dir = current_path.relative_to(source_root)
@@ -318,37 +348,86 @@ def copy_tree_progress(
         for filename in files:
             src = current_path / filename
             if src.is_symlink() or not src.is_file():
-                raise RuntimeError(f"Nem támogatott fájltípus az ISO-ban: {src.relative_to(source_root)}")
+                raise RuntimeError(
+                    f"Nem támogatott fájltípus az ISO-ban: {src.relative_to(source_root)}"
+                )
             relative = src.relative_to(source_root).as_posix()
             dst = destination_root / src.relative_to(source_root)
             dst.parent.mkdir(parents=True, exist_ok=True)
+            expected_size = src.stat().st_size
             digest = hashlib.sha256() if hash_files else None
-            file_size = 0
-            with src.open("rb") as read_file, dst.open("wb") as write_file:
-                while True:
-                    data = read_file.read(CHUNK)
+            file_copied = 0
+
+            # Unbuffered descriptors allow copy_file_range and the fallback
+            # reader/writer to share file positions without Python buffer drift.
+            with src.open("rb", buffering=0) as read_file, dst.open(
+                "wb", buffering=0
+            ) as write_file:
+                if fast_copy_enabled:
+                    while file_copied < expected_size:
+                        try:
+                            amount = os.copy_file_range(
+                                read_file.fileno(),
+                                write_file.fileno(),
+                                min(CHUNK, expected_size - file_copied),
+                            )
+                        except OSError as exc:
+                            if exc.errno in unsupported_copy_range:
+                                fast_copy_enabled = False
+                                emit(
+                                    "A kernel copy_file_range útvonal nem támogatott ezen a fájlrendszer-kombináción; "
+                                    "biztonságos streamelt másolásra váltok.",
+                                    log=str(exc),
+                                )
+                                break
+                            raise
+                        if amount == 0:
+                            # Treat an early EOF as a reason to use the normal
+                            # reader path, which will report a short source.
+                            break
+                        file_copied += amount
+                        copied_total += amount
+                        report_progress()
+
+                while file_copied < expected_size:
+                    data = read_file.read(min(CHUNK, expected_size - file_copied))
                     if not data:
-                        break
-                    write_file.write(data)
+                        raise RuntimeError(
+                            f"A forrásfájl másolás közben váratlanul véget ért: {relative}"
+                        )
                     if digest is not None:
                         digest.update(data)
-                    file_size += len(data)
-                    copied += len(data)
-                    percent = base_percent + int((copied / max(total_bytes, 1)) * span)
-                    emit(f"Windows fájlok másolása… {copied:,} / {total_bytes:,} bájt", percent)
-                # Let close() flush Python's buffers. The writer performs one
-                # batched sync after the complete tree is copied. fsync() per
-                # file can make slow USB 2.0 flash drives take tens of minutes.
-                write_file.flush()
-            if file_size != src.stat().st_size:
-                raise RuntimeError(f"Másolási mérethiba: {relative}")
-            if digest is not None:
-                manifest.append((relative, file_size, digest.hexdigest()))
-    if copied != total_bytes:
-        raise RuntimeError(f"A másolt adatmennyiség eltér az ISO előzetes méretétől ({copied} / {total_bytes} bájt).")
-    emit("Windows telepítőfájlok átmásolva.", base_percent + span)
-    return manifest
+                    view = memoryview(data)
+                    while view:
+                        written = write_file.write(view)
+                        if written is None or written <= 0:
+                            raise RuntimeError(
+                                f"Nem sikerült teljesen kiírni ezt a fájlt: {relative}"
+                            )
+                        view = view[written:]
+                    file_copied += len(data)
+                    copied_total += len(data)
+                    report_progress()
 
+                # Closing the unbuffered destination completes the per-file
+                # userspace I/O. A single syncfs of the USB filesystem follows.
+                if file_copied != expected_size:
+                    raise RuntimeError(f"Másolási mérethiba: {relative}")
+            if src.stat().st_size != expected_size:
+                raise RuntimeError(f"A forrásfájl mérete megváltozott másolás közben: {relative}")
+            if digest is not None:
+                manifest.append((relative, expected_size, digest.hexdigest()))
+
+    if copied_total != total_bytes:
+        raise RuntimeError(
+            f"A másolt adatmennyiség eltér az ISO előzetes méretétől "
+            f"({copied_total} / {total_bytes} bájt)."
+        )
+    if last_percent < base_percent + span:
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+    else:
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+    return manifest
 
 def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, str]]) -> None:
     total = sum(size for _, size, _ in manifest)
@@ -430,6 +509,43 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
         raise RuntimeError("Az UEFI:NTFS indítópartíció SHA-256 hash-e eltér a hivatalos képtől.")
     emit("UEFI:NTFS partíció SHA-1 és SHA-256 visszaolvasása sikeres.", 40)
 
+
+
+
+def validate_ntfs_boot_sector(partition: str, expected_start_sector: int) -> None:
+    """Verify critical NTFS BPB fields used by Windows boot code."""
+    with open(partition, "rb", buffering=0) as source:
+        boot = source.read(512)
+    if len(boot) != 512:
+        raise RuntimeError("Az NTFS rendszerindító szektor nem olvasható teljes hosszban.")
+    if boot[3:11] != b"NTFS    ":
+        raise RuntimeError("Az elkészült kötet boot szektorában nem található NTFS aláírás.")
+    bytes_per_sector = struct.unpack_from("<H", boot, 11)[0]
+    sectors_per_cluster = boot[13]
+    sectors_per_track = struct.unpack_from("<H", boot, 24)[0]
+    heads = struct.unpack_from("<H", boot, 26)[0]
+    hidden_sectors = struct.unpack_from("<I", boot, 28)[0]
+    if bytes_per_sector != 512:
+        raise RuntimeError(f"Az NTFS kötet szektormérete hibás: {bytes_per_sector}, elvárt 512.")
+    if sectors_per_cluster == 0 or sectors_per_cluster & (sectors_per_cluster - 1):
+        raise RuntimeError(f"Az NTFS klaszterméret mező hibás: {sectors_per_cluster}.")
+    if sectors_per_track != 63 or heads != 255:
+        raise RuntimeError(
+            f"Az NTFS BPB geometria hibás: heads={heads}, sectors/track={sectors_per_track}; "
+            "elvárt 255/63."
+        )
+    if hidden_sectors != expected_start_sector:
+        raise RuntimeError(
+            f"Az NTFS HiddenSectors mező hibás: {hidden_sectors}; "
+            f"elvárt {expected_start_sector}."
+        )
+    if boot[510:512] != b"\\x55\\xaa":
+        raise RuntimeError("Az NTFS boot szektor 0x55AA aláírása hiányzik.")
+
+
+def sync_filesystem(path: Path) -> None:
+    """Flush only the filesystem containing path, not every filesystem on host."""
+    command(["sync", "--file-system", str(path)], timeout=300)
 
 
 def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
@@ -535,7 +651,8 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
 
         emit("NTFS fájlrendszer létrehozása…", 25)
-        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", ntfs_partition], timeout=300)
+        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
+        validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
         write_uefi_ntfs_image(UEFI_NTFS_IMAGE, uefi_partition)
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
@@ -556,7 +673,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         # Commit all writes in one batch. Per-file fsync is particularly slow
         # on low-end USB 2.0 flash drives; unmount also performs final flushing.
         emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
-        command(["sync"])
+        sync_filesystem(usb_mount)
 
         # Recheck the boot chain files on the destination before unmounting.
         for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
@@ -573,10 +690,9 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             )
 
         emit("Fájlrendszer kiürítése és leválasztása…", 99)
-        command(["sync"])
+        sync_filesystem(usb_mount)
         command(["umount", "--", str(usb_mount)], timeout=120)
         mounted_usb = False
-        command(["sync"])
         command(["udevadm", "settle"], check=False, timeout=20)
         emit(
             "A Windows UEFI:NTFS telepítő USB elkészült.",
@@ -589,6 +705,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         )
     finally:
         if mounted_usb:
+            sync_filesystem(usb_mount)
             command(["umount", "--", str(usb_mount)], check=False, timeout=120)
         if mounted_iso:
             command(["umount", "--", str(iso_mount)], check=False, timeout=120)
