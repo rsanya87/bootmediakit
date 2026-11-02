@@ -23,7 +23,8 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Exercise best-effort `copy_file_range`, `sendfile` fallback, buffered fallback when both are unsupported, and throttled progress reporting.
 - Verify that the Windows SHA-256 checkbox value is passed from the CLI entry point to the writer.
 - Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
-- GPT Basic Data and EFI System partition type identifiers.
+- GPT Microsoft Basic Data type identifiers on both partitions.
+- The 1 MiB FAT helper partition's GUID:63 NoDriveLetter attribute (and that it is not typed as an EFI System Partition).
 - Linux `sdX` and NVMe partition naming.
 - Git object hash calculation used to pin the helper image.
 - Windows ISO scan for EFI bootloader, boot.wim and install image.
@@ -40,7 +41,7 @@ Current automated test suite: 34 unit tests plus dry-run checks using the real s
 2. Confirm the downloaded image is exactly 1,048,576 bytes and matches the pinned Git blob SHA-1.
 3. Use a disposable USB drive. Check the device path, model, capacity and all partitions before confirming.
 4. Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB from the same ISO used for the 0.1.1 failure report.
-5. Inspect the GPT layout: partition 1 must be Microsoft Basic Data / NTFS; partition 2 must be EFI System / FAT and contain the 1 MiB helper image.
+5. Inspect the GPT layout: both partitions must be Microsoft Basic Data; partition 1 is NTFS and partition 2 is FAT with GUID:63 NoDriveLetter and the 1 MiB helper image. The helper partition must not be typed as EFI System Partition.
 6. Confirm the install.esd is copied unchanged (same size and SHA-256 as the ISO source file).
 7. Boot the USB in UEFI mode on the same physical PC. Confirm UEFI:NTFS launches Windows Boot Manager and Windows Setup can load the installation image.
 8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
