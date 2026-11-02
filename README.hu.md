@@ -15,7 +15,7 @@
 - Windows telepítő ISO-k felismerése, hogy ne kerüljenek véletlenül nyers kiírásra.
 - Windows x64 UEFI telepítő készítése GPT lemezen, két partícióval:
   - egy nagy NTFS Microsoft Basic Data partíció az eredeti Windows ISO fájljainak;
-  - egy 1 MiB-os FAT EFI System Partition a pendrive végén, az UEFI:NTFS segédképpel.
+  - egy 1 MiB-os FAT UEFI:NTFS segédpartíció a pendrive végén. Ennek GPT típusa szándékosan Microsoft Basic Data (nem EFI System), és be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, a Rufus megoldásával megegyezően.
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
@@ -29,7 +29,7 @@
 
 ## Windows UEFI:NTFS – hogyan működik?
 
-A megoldás az UEFI:NTFS projekt és a Rufus által használt elrendezést követi: a pendrive első, nagy partíciója NTFS, és az eredeti Windows telepítőfájlokat tartalmazza. A második, kisméretű FAT partíció a lemez legvégére kerül.
+A megoldás az UEFI:NTFS projekt és a Rufus által használt elrendezést követi: a pendrive első, nagy partíciója NTFS, és az eredeti Windows telepítőfájlokat tartalmazza. A második, kisméretű FAT segédpartíció a lemez legvégére kerül. GPT esetén ezt a Rufus Microsoft Basic Data típusúnak jelöli és beállítja a NoDriveLetter attribútumot ahelyett, hogy második EFI System Partitionként deklarálná. Ez fontos: a Windows Setup hibázhat, ha ugyanazon a gépen két ESP-t talál.
 
 A gép UEFI firmware-e a FAT partícióról elindítja az UEFI:NTFS betöltőt. Az betölti az NTFS UEFI illesztőprogramot, megkeresi ugyanazon az USB-eszközön az NTFS partíciót, majd elindítja rajta a Windows x64 EFI bootloadert.
 
