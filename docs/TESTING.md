@@ -19,6 +19,9 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Windows ISO detection.
 - GPT partition layout calculation and alignment.
 - Parse the generated GPT layout with real `sfdisk --no-act` against a sparse image file.
+- Validate NTFS boot-sector OEM ID, bytes/sector, cluster geometry, HiddenSectors, heads/sectors-per-track and 0x55AA signature.
+- Exercise best-effort `copy_file_range`, cross-filesystem fallback and throttled progress reporting.
+- Verify that the Windows SHA-256 checkbox value is passed from the CLI entry point to the writer.
 - Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
 - GPT Basic Data and EFI System partition type identifiers.
 - Linux `sdX` and NVMe partition naming.
@@ -29,7 +32,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Dynamic copy-progress range when the optional SHA-256 second pass is disabled or enabled.
 - Detection of a changed copied file.
 
-Current automated test suite: 25 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 33 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
@@ -42,7 +45,8 @@ Current automated test suite: 25 unit tests plus dry-run checks using the real s
 7. Boot the USB in UEFI mode on the same physical PC. Confirm UEFI:NTFS launches Windows Boot Manager and Windows Setup can load the installation image.
 8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
 9. Record USB creation time and transfer rate on both a USB 2.0 stick and, if available, a USB 3.x stick. Compare the Windows verification checkbox off/on.
-10. Optionally repeat using a second USB stick and Windows ISO.
+10. If Setup reports `GetMachineInfo: Couldn't find info for boot disk` or `CanBeSystemVolume`, first confirm the 120 GB SSD's disk number and GPT status with `diskpart list disk`; repeat the installation with non-target internal HDDs temporarily disconnected.
+11. Optionally repeat using a second USB stick and Windows ISO.
 
 ## Test result discipline
 
