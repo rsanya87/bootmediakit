@@ -705,7 +705,10 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         )
     finally:
         if mounted_usb:
-            sync_filesystem(usb_mount)
+            try:
+                sync_filesystem(usb_mount)
+            except Exception:
+                pass
             command(["umount", "--", str(usb_mount)], check=False, timeout=120)
         if mounted_iso:
             command(["umount", "--", str(iso_mount)], check=False, timeout=120)
