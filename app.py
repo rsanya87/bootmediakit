@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from iso_utils import is_windows_install_iso
 
-APP_VERSION = "0.1.2-alpha"
+APP_VERSION = "0.1.2"
 APP_NAME = "BootMediaKit"
 WORKER = Path(__file__).with_name("worker.py")
 
@@ -390,8 +390,8 @@ class MainWindow(QMainWindow):
             self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
             self.mode_description.setText(
                 "Windows x64 UEFI telepítő készítése két GPT partícióval: nagy NTFS adatpartíció "
-                "az eredeti ISO-fájloknak, valamint 1 MiB FAT UEFI:NTFS segédpartíció a lemez végén. "
-                "A segédpartíció Microsoft Basic Data típusú, NoDriveLetter GUID:63 attribútummal; "
+                "az eredeti ISO-fájloknak, valamint 1 MiB FAT BMK_EFI UEFI:NTFS segédpartíció a lemez végén. "
+                "A BMK_EFI segédpartíció Microsoft Basic Data típusú, NoDriveLetter GUID:63 attribútummal; "
                 "szándékosan nem ESP, hogy a Windows Setup ne érzékeljen második EFI rendszerpartíciót. "
                 "Az install.esd és install.wim változatlanul kerül át, nincs WIM-konvertálás vagy darabolás. "
                 "A gyors alapbeállítás nem végez külön teljes SHA-256 visszaolvasást; ez a jelölőnégyzettel bekapcsolható. "
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
             "A célmeghajtó MINDEN partíciója és adata törlődni fog."
         )
         if mode == "windows":
-            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT UEFI:NTFS segédpartíciót a lemez végén. A kis FAT partíció Microsoft Basic Data típusú, GUID:63 NoDriveLetter attribútummal; szándékosan nem EFI System Partition, hogy a Windows Setup ne találjon második ESP-t. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ.\n\nFontos telepítési tanács: a Windows Setup több belső HDD/SSD mellett néha nem a kiválasztott céllemezt azonosítja rendszerindító lemezként. Ha a telepítés a rendszer/boot kötet előkészítésénél hibázik, próbáld ideiglenesen leválasztani a nem célként használt belső meghajtókat. A lemezek tartalmát ne töröld emiatt."
+            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT BMK_EFI UEFI:NTFS segédpartíciót a lemez végén. A kis FAT partíció Microsoft Basic Data típusú, GUID:63 NoDriveLetter attribútummal; szándékosan nem EFI System Partition, hogy a Windows Setup ne találjon második ESP-t. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ.\n\nFontos telepítési tanács: a Windows Setup több belső HDD/SSD mellett néha nem a kiválasztott céllemezt azonosítja rendszerindító lemezként. Ha a telepítés a rendszer/boot kötet előkészítésénél hibázik, próbáld ideiglenesen leválasztani a nem célként használt belső meghajtókat. A lemezek tartalmát ne töröld emiatt."
         reply = QMessageBox.warning(
             self,
             "Végleges megerősítés szükséges",
