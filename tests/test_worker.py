@@ -136,6 +136,24 @@ class CopyVerificationTests(unittest.TestCase):
             self.assertTrue((destination / "nested" / "install.esd").is_file())
             worker.verify_copied_files(destination, manifest)
 
+    def test_copy_without_hash_skips_manifest_and_per_file_fsync(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            (source / "boot.wim").write_bytes(b"boot payload")
+            total = (source / "boot.wim").stat().st_size
+
+            with patch("worker.os.fsync") as fsync:
+                manifest = worker.copy_tree_progress(
+                    source, destination, total, hash_files=False
+                )
+
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), b"boot payload")
+            fsync.assert_not_called()
+
     def test_copy_verification_detects_changed_file(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -147,6 +165,28 @@ class CopyVerificationTests(unittest.TestCase):
             manifest = [("boot.wim", len(b"original"), expected)]
             with self.assertRaisesRegex(RuntimeError, "mérethiba|SHA-256"):
                 worker.verify_copied_files(destination, manifest)
+
+
+class NtfsMountTests(unittest.TestCase):
+    def test_ntfs3_driver_is_preferred(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch("worker.command") as run:
+                driver = worker.mount_ntfs_volume("/dev/fake1", Path(temp))
+            self.assertEqual(driver, "ntfs3")
+            self.assertEqual(run.call_args.args[0][:3], ["mount", "-t", "ntfs3"])
+            self.assertEqual(run.call_count, 1)
+
+    def test_ntfs3_falls_back_to_ntfs3g_when_kernel_driver_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch(
+                "worker.command",
+                side_effect=[RuntimeError("unknown filesystem type ntfs3"), subprocess.CompletedProcess([], 0, "", "")],
+            ) as run, patch("worker.shutil.which", return_value="/usr/bin/ntfs-3g"):
+                driver = worker.mount_ntfs_volume("/dev/fake1", Path(temp))
+            self.assertEqual(driver, "ntfs-3g")
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[0].args[0][:3], ["mount", "-t", "ntfs3"])
+            self.assertEqual(run.call_args_list[1].args[0][:3], ["mount", "-t", "ntfs-3g"])
 
 
 class WindowsIsoScanTests(unittest.TestCase):
