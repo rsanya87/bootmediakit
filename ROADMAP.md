@@ -2,10 +2,11 @@
 
 A feature is complete only after automated checks and its relevant real-device tests are recorded.
 
-## 0.1.2-alpha — Windows UEFI:NTFS reliability
+## 0.1.2 — Windows UEFI:NTFS reliability
 
-- [x] Replace the single-partition GPT/FAT32 layout with GPT + large NTFS partition + 1 MiB FAT EFI helper partition at the end.
-- [x] Use the pinned Rufus UEFI:NTFS image with download-time hash verification.
+- [x] Replace the single-partition GPT/FAT32 layout with GPT + large NTFS partition + 1 MiB FAT UEFI:NTFS helper partition at the end.
+- [x] Use the pinned upstream UEFI:NTFS image with download-time size, SHA-1 and SHA-256 verification.
+- [x] Keep the downloaded upstream image pristine; label a temporary copy BMK_EFI with dosfstools and verify its content after USB write.
 - [x] Verify the helper image again before writing and read it back after writing.
 - [x] Keep the original install.esd / install.wim unchanged.
 - [x] Calculate the final GPT layout and check target capacity before erasing.
@@ -19,12 +20,14 @@ A feature is complete only after automated checks and its relevant real-device t
 - [x] Set and validate NTFS BPB partition offset and CHS geometry.
 - [x] Match Rufus's GPT UEFI:NTFS helper metadata: Microsoft Basic Data type plus NoDriveLetter GUID:63, avoiding a second ESP visible to Windows Setup.
 - [x] Read back and verify the actual GPT type, partition geometry and no-drive-letter attribute before formatting/copying.
-- [ ] Run the corrected 0.1.2 installer on CachyOS and confirm that the UEFI:NTFS helper image downloads and verifies.
-- [ ] Measure 0.1.2 USB creation time on both of the user's USB 2.0 sticks and compare with Rufus; test SHA-256 read-back both off and on.
-- [ ] Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB on a disposable drive.
-- [ ] Boot it on the same physical PC that failed with 0.1.1 and confirm Windows Setup can read the source without the missing-media-driver dialog.
+- [x] Run the corrected 0.1.2 installer on CachyOS and confirm that the UEFI:NTFS helper image downloads and verifies.
+- [x] Test creation on two USB 2.0 sticks after NTFS3/kernel-copy optimization; user reports a substantial speed improvement.
+- [ ] Record exact elapsed times and benchmark the optional SHA-256 pass against Rufus.
+- [x] Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB on a disposable drive.
+- [x] Boot it on the same Samsung RV511 in UEFI mode; Windows Setup read the source, copied files, passed the first reboot and continued from the internal SSD.
 - [ ] Test with Secure Boot enabled and disabled; document firmware-specific behavior.
-- [ ] Compare the resulting partition layout and boot sequence with a Rufus-created USB.
+- [x] Compare the UEFI:NTFS GPT metadata requirements against Rufus's public implementation and reproduce the Microsoft Basic Data + NoDriveLetter helper layout.
+- [ ] Compare the finished BMK_EFI-labelled USB byte-for-byte and boot-sequence behavior against a separately created Rufus USB.
 - [ ] Only close GitHub issue #2 after the same-machine test passes.
 
 ## Stabilize the Arch/CachyOS line
