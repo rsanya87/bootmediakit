@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
             "A célmeghajtó MINDEN partíciója és adata törlődni fog."
         )
         if mode == "windows":
-            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT UEFI:NTFS indítópartíciót a lemez végén. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ."
+            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT UEFI:NTFS indítópartíciót a lemez végén. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ.\n\nFontos telepítési tanács: a Windows Setup több belső HDD/SSD mellett néha nem a kiválasztott céllemezt azonosítja rendszerindító lemezként. Ha a telepítés a rendszer/boot kötet előkészítésénél hibázik, próbáld ideiglenesen leválasztani a nem célként használt belső meghajtókat. A lemezek tartalmát ne töröld emiatt."
         reply = QMessageBox.warning(
             self,
             "Végleges megerősítés szükséges",
