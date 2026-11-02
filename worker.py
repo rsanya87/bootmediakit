@@ -307,6 +307,13 @@ def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
                 f"{actual_start}+{actual_size}, várt: {expected_start}+{expected_size}."
             )
 
+    if first.get("name") != "BOOTMEDIA":
+        raise RuntimeError("Az első GPT partíció neve nem BOOTMEDIA.")
+    if helper.get("name") != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"Az UEFI segédpartíció GPT neve nem {BOOTMEDIA_FAT_VOLUME_LABEL}."
+        )
+
     first_type = str(first.get("type", "")).strip("{}").lower()
     helper_type = str(helper.get("type", "")).strip("{}").lower()
     expected_type = GPT_BASIC_DATA_GUID.lower()
