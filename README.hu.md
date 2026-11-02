@@ -19,7 +19,9 @@
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
-- Opcionális, alapértelmezésben bekapcsolt SHA-256 visszaellenőrzés minden átmásolt Windows fájlra.
+- A kernel NTFS3 driverét részesíti előnyben, az ntfs-3g tartalék lehetőséggel.
+- A fájlok kiírását kötegelt lemezre ürítéssel végzi, nem minden fájl után külön fsync művelettel.
+- Opcionális SHA-256 visszaellenőrzés minden átmásolt Windows fájlra. A Windows mód gyorsabb induló beállítása miatt ez alapértelmezésben ki van kapcsolva, de a grafikus felületen bármikor bekapcsolható.
 - Grafikus folyamatjelző és napló.
 - Rendszergazdai engedélykérés csak a tényleges, romboló lemezművelethez.
 
@@ -31,7 +33,7 @@ A gép UEFI firmware-e a FAT partícióról elindítja az UEFI:NTFS betöltőt. 
 
 Az UEFI:NTFS segédképet telepítéskor az alkalmazás a Rufus hivatalos GitHub-forrásából, rögzített commitból tölti le. A letöltő ellenőrzi a fájl pontos méretét, Git-blob SHA-1 és SHA-256 azonosítóját. Az írás közben ugyanezeket a feltételeket ellenőrzi, majd a segédpartíciót vissza is olvassa.
 
-A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani.
+A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani. CachyOS-on a program először a Linux kernel NTFS3 driverét használja; ha az nem érhető el vagy nem tudja csatolni a kötetet, az ntfs-3g a kompatibilitási tartalék. A fájlok kiírását egyetlen kötegelt sync követi, nem minden egyes fájl után fsync. A teljes SHA-256 visszaolvasás a teljes adatmennyiséget újra elolvassa, ezért lassabb USB 2.0 pendrive-oknál jelentős időt adhat hozzá; emiatt alapértelmezésben kikapcsolt, de opcionálisan kérhető.
 
 ### Secure Boot
 
