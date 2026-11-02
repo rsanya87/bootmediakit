@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a narrowly scoped privileged worker.
 
-**Development version:** `0.1.2-alpha`  
+**Version:** `0.1.2`  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> This is an alpha release candidate for hardware testing, not a stable Rufus replacement. The new Windows UEFI:NTFS path has automated tests, but must still be validated with real USB devices, UEFI firmware and Windows Setup.
+> Version 0.1.2 has been tested on real USB 2.0 devices and on the reported Samsung RV511: Windows Setup passed the first reboot and continued from the internal SSD. Linux raw/DD writing has also been tested in Legacy/MBR mode. UEFI firmware, Secure Boot and additional Windows ISO/device combinations still need broader testing; this is not a full Rufus feature replacement.
 
 ## Current capabilities
 
@@ -15,7 +15,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Detect common Windows installation ISOs to help prevent accidental raw writing.
 - Prepare x64 UEFI Windows installation media using a GPT disk with:
   - a large NTFS Basic Data partition containing the original Windows ISO files;
-  - a 1 MiB FAT UEFI:NTFS helper partition at the end of the drive. It is deliberately typed as Microsoft Basic Data (not GPT EFI System) and marked NoDriveLetter (GUID-specific bit 63), matching Rufus's workaround for Windows Setup's handling of multiple ESPs.
+  - a 1 MiB FAT `BMK_EFI` UEFI:NTFS helper partition at the end of the drive. Its GPT type is Microsoft Basic Data (not EFI System), with NoDriveLetter (GUID-specific bit 63); its GPT partition name and FAT volume label are both `BMK_EFI`.
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
 - Prefer the in-kernel NTFS3 driver for Windows ISO file copying, with ntfs-3g as a compatibility fallback.
@@ -30,7 +30,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 
 The application follows the same general layout described by the UEFI:NTFS project and used by Rufus: a large NTFS data partition, then a small FAT helper partition at the very end of the USB device. On GPT, Rufus marks that helper partition as Microsoft Basic Data (not EFI System Partition) and sets the NoDriveLetter attribute (GUID-specific bit 63). This avoids a documented Windows Setup failure when a second ESP is present. UEFI first runs the FAT-side UEFI:NTFS loader; that loader loads its NTFS UEFI driver, locates the NTFS partition on the same device and starts the Windows x64 EFI bootloader there.
 
-The helper image is downloaded during installation from the official Rufus repository at a pinned commit. The installer checks the exact byte size, Git blob SHA-1 and SHA-256 before installing it. At write time, BootMediaKit checks the same values and performs a read-back check after writing the helper partition.
+The pristine helper image is downloaded during installation from the official Rufus repository at a pinned commit and verified by exact size, Git blob SHA-1 and SHA-256. When preparing a USB, BootMediaKit copies that verified image to a temporary file and changes only its FAT volume label from the upstream `RUFUS_BOOT` to `BMK_EFI` using `fatlabel`; the signed EFI binaries are not modified. The temporary image is SHA-256 checked against a read-back of the written helper partition, and the partition label is read back as `BMK_EFI`.
 
 The Windows files are copied without converting the install image. This avoids the FAT32 4 GiB file-size limit and avoids changing Microsoft's ESD/WIM payload. The kernel NTFS3 driver is preferred on CachyOS/Linux kernels that provide it; ntfs-3g remains a fallback for compatibility. When the extra SHA-256 pass is disabled, BootMediaKit attempts Linux `copy_file_range`, then `sendfile`, for kernel-assisted file copies; filesystems that do not support either cross-filesystem path transparently fall back to regular streaming copy. Progress output is throttled and only the USB filesystem is synced, not every filesystem on the host. A second SHA-256 read-back pass is optional because it reads the full USB payload again and can significantly increase time on low-end USB 2.0 sticks.
 
@@ -69,6 +69,7 @@ Arch dependencies:
 - `parted` — `partprobe` to notify the kernel about the new partition table
 - `ntfs-3g` — mounting NTFS volumes from Linux
 - `ntfsprogs` — `mkfs.ntfs` formatter (Arch split package)
+- `dosfstools` — `fatlabel` to set and verify the `BMK_EFI` FAT volume label
 - `polkit` — narrowly scoped privilege elevation
 - `7zip` — Windows ISO detection
 
@@ -98,4 +99,4 @@ Writing to a USB device erases its contents. Always check the selected device pa
 
 ## Third-party components
 
-The UEFI:NTFS helper image is retrieved from the pinned upstream Rufus source, not re-licensed as BootMediaKit code. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for upstream locations and license notes.
+BootMediaKit does not contain copied Rufus application source code. It downloads a separately licensed UEFI:NTFS helper image from the pinned upstream Rufus repository at install time; that image contains third-party UEFI bootloader and filesystem-driver binaries. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution, source repositories and license references.
