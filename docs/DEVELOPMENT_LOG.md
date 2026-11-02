@@ -11,7 +11,7 @@
 
 - Replaced the Windows GPT/FAT32 writer with a two-partition GPT/NTFS + FAT helper layout.
 - The large partition is GPT Microsoft Basic Data and is formatted NTFS. The NTFS volume receives the correct partition-start sector.
-- The 1 MiB helper partition is placed after the NTFS partition at the end of the disk and has the GPT EFI System type. The verified upstream UEFI:NTFS image is copied there byte-for-byte.
+- The 1 MiB helper partition is placed after the NTFS partition at the end of the disk. It is Microsoft Basic Data (not GPT EFI System) with NoDriveLetter GUID:63, matching Rufus. The verified upstream UEFI:NTFS image is copied there byte-for-byte.
 - The UEFI helper is fetched by an installer script from a pinned Rufus source commit. The downloader checks the exact file size, Git blob SHA-1 and SHA-256; the writer checks the same image and verifies the partition after writing.
 - Windows ISO content is copied without converting or splitting `install.esd` / `install.wim`.
 - The source files are hashed during copy when full verification is selected; the UI offers a complete SHA-256 read-back verification, off by default in Windows mode to avoid a second full pass over slow USB media.
@@ -78,3 +78,12 @@ See [Microsoft UEFI/GPT partition guidance](https://learn.microsoft.com/en-us/wi
 
 
 The copy fast path now tries `copy_file_range` first. On cross-filesystem errors such as `EXDEV`, it tries Linux `sendfile` before falling back to the buffered stream loop. The GitHub Actions runner exercises the cross-filesystem fallback path; actual ISO9660-loop to USB-NTFS3 throughput still has to be measured on the user's CachyOS system.
+
+
+## 2026-11-02 — Windows Setup duplicate-ESP compatibility fix
+
+The user confirmed that the 0.1.2 UEFI:NTFS USB boots into Windows Setup but fails during next-phase system-volume preparation. Review found that the 1 MiB FAT UEFI:NTFS helper partition had been incorrectly assigned the GPT EFI System Partition type.
+
+Rufus's source explicitly warns not to declare the UEFI:NTFS helper partition as an ESP on GPT media: Windows Setup may fail when it sees two ESPs on one system. Rufus instead uses Microsoft Basic Data for the helper and sets GPT_BASIC_DATA_ATTRIBUTE_NO_DRIVE_LETTER (GUID-specific attribute bit 63).
+
+BootMediaKit now follows that layout and reads the GPT back after creation to validate the two partition ranges, Microsoft Basic Data types, and GUID:63 NoDriveLetter attribute. The FAT helper still contains the upstream UEFI:NTFS boot image and is intended for the removable-media UEFI boot path; it is deliberately not declared as a second GPT ESP. This fix is strongly supported by the Rufus source and the user's Windows Setup failure, but must still be confirmed by the same-PC physical test.
