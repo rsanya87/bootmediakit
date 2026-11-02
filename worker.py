@@ -300,8 +300,9 @@ def copy_tree_progress(
     *,
     base_percent: int = 42,
     span: int = 43,
+    hash_files: bool = True,
 ) -> list[tuple[str, int, str]]:
-    """Copy all regular ISO files and return a size/SHA-256 manifest."""
+    """Copy regular ISO files; optionally compute source SHA-256 hashes while copying."""
     copied = 0
     manifest: list[tuple[str, int, str]] = []
     for current, dirs, files in os.walk(source_root):
@@ -316,7 +317,7 @@ def copy_tree_progress(
             relative = src.relative_to(source_root).as_posix()
             dst = destination_root / src.relative_to(source_root)
             dst.parent.mkdir(parents=True, exist_ok=True)
-            digest = hashlib.sha256()
+            digest = hashlib.sha256() if hash_files else None
             file_size = 0
             with src.open("rb") as read_file, dst.open("wb") as write_file:
                 while True:
@@ -324,16 +325,20 @@ def copy_tree_progress(
                     if not data:
                         break
                     write_file.write(data)
-                    digest.update(data)
+                    if digest is not None:
+                        digest.update(data)
                     file_size += len(data)
                     copied += len(data)
                     percent = base_percent + int((copied / max(total_bytes, 1)) * span)
                     emit(f"Windows fájlok másolása… {copied:,} / {total_bytes:,} bájt", percent)
+                # Let close() flush Python's buffers. The writer performs one
+                # batched sync after the complete tree is copied. fsync() per
+                # file can make slow USB 2.0 flash drives take tens of minutes.
                 write_file.flush()
-                os.fsync(write_file.fileno())
             if file_size != src.stat().st_size:
                 raise RuntimeError(f"Másolási mérethiba: {relative}")
-            manifest.append((relative, file_size, digest.hexdigest()))
+            if digest is not None:
+                manifest.append((relative, file_size, digest.hexdigest()))
     if copied != total_bytes:
         raise RuntimeError(f"A másolt adatmennyiség eltér az ISO előzetes méretétől ({copied} / {total_bytes} bájt).")
     emit("Windows telepítőfájlok átmásolva.", base_percent + span)
@@ -351,6 +356,13 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
             raise RuntimeError(f"Visszaellenőrzési mérethiba: {relative}")
         digest = hashlib.sha256()
         with target.open("rb") as source:
+            # The caller syncs the filesystem before verification. Ask Linux
+            # to evict clean cached pages so this pass re-reads the USB media.
+            if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
+                try:
+                    os.posix_fadvise(source.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+                except OSError:
+                    pass
             while True:
                 data = source.read(CHUNK)
                 if not data:
@@ -414,11 +426,35 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
     emit("UEFI:NTFS partíció SHA-1 és SHA-256 visszaolvasása sikeres.", 40)
 
 
+
+def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
+    """Prefer the in-kernel NTFS3 driver; fall back to ntfs-3g for compatibility."""
+    common = ["-o", "rw,nosuid,nodev", partition, str(mountpoint)]
+    try:
+        command(["mount", "-t", "ntfs3", *common], timeout=120)
+        emit("NTFS kötet csatolása a Linux kernel NTFS3 driverével…", 41)
+        return "ntfs3"
+    except RuntimeError as kernel_error:
+        if not shutil.which("ntfs-3g"):
+            raise RuntimeError(
+                "A kernel NTFS3 illesztőprogram nem tudta csatolni a pendrive-ot, "
+                "és az ntfs-3g tartalék driver sem érhető el. "
+                f"NTFS3 hiba: {kernel_error}"
+            ) from kernel_error
+        emit(
+            "A kernel NTFS3 driver nem érhető el; kompatibilitási tartalék: ntfs-3g…",
+            41,
+            log=str(kernel_error),
+        )
+        command(["mount", "-t", "ntfs-3g", *common], timeout=120)
+        return "ntfs-3g"
+
+
 def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
     global TARGET_MODIFIED
     require_programs((
         "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
-        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "ntfs-3g",
+        "mount", "partprobe", "sfdisk", "mkfs.ntfs",
     ))
 
     # Validate both the removable target and the upstream boot image before
@@ -499,9 +535,16 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
         usb_mount.mkdir(parents=True, exist_ok=True)
-        command(["mount", "-t", "ntfs-3g", "-o", "rw,nosuid,nodev", ntfs_partition, str(usb_mount)], timeout=120)
+        mount_ntfs_volume(ntfs_partition, usb_mount)
         mounted_usb = True
-        manifest = copy_tree_progress(iso_mount, usb_mount, total_copy_bytes)
+        manifest = copy_tree_progress(
+            iso_mount, usb_mount, total_copy_bytes, hash_files=verify
+        )
+
+        # Commit all writes in one batch. Per-file fsync is particularly slow
+        # on low-end USB 2.0 flash drives; unmount also performs final flushing.
+        emit("A másolt adatok kiírása a pendrive-ra…", 85)
+        command(["sync"])
 
         # Recheck the boot chain files on the destination before unmounting.
         for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
