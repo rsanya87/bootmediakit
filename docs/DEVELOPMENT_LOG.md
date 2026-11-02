@@ -50,3 +50,28 @@ The real USB speed test remains outstanding. The target user's measured creation
 ## 2026-11-02 — Dynamic progress bar
 
 The user noticed that Windows file copy completed around 85% and jumped towards completion even when the optional full SHA-256 read-back was disabled. The copy progress range is now calculated from the selected mode: copy reaches 96% with verification disabled; with verification enabled it ends at 85% and the second full read-back pass uses the remaining progress range. Added unit tests for both ranges.
+
+
+## 2026-11-02 — Windows boot and copy-path review
+
+A second review of the current `dev/0.1.2-alpha` branch identified additional validation and performance improvements:
+
+- The NTFS formatter now receives an explicit partition-start sector, 512-byte sector size, 255 heads, 63 sectors per track and 4096-byte clusters. The generated NTFS boot sector is read back and checked for OEM ID, sector size, cluster geometry, HiddenSectors, geometry and the 0x55AA marker.
+- When full SHA-256 read-back is disabled, the file copier attempts Linux `copy_file_range` for kernel-assisted copies. Unsupported cross-filesystem combinations fall back to streaming I/O without losing bytes. Hash-enabled copies continue to stream and calculate the source SHA-256 at the same time.
+- Progress events are throttled to percentage changes.
+- The writer uses `sync --file-system <USB mountpoint>` instead of flushing every mounted filesystem on the computer.
+- The final cleanup now attempts to unmount the USB even if a targeted sync fails.
+
+### User's Windows Setup log — interpretation
+
+The user confirmed that the Windows installation target is a separate 120 GB SSD. The log also enumerates a WDC WD3200BEVT 320 GB HDD as another internal disk; this secondary disk is not the chosen installation target and its first area is intentionally left unused due to a bad sector region.
+
+The photographed log includes:
+- `GetMachineInfo: Couldn't find info for boot disk [2]`
+- repeated `CanBeSystemVolume` blocks for candidate disk regions
+- `PrepareSystemVolume: Failed to prepare boot disk and system volume`
+- The WDC WD3200BEVT appears as another enumerated disk (disk 1 in the photographed DiskInfo section).
+
+This resembles a known Windows Setup failure pattern where Windows PE misidentifies the system/boot disk when several internal HDDs/SSDs are present. This is not yet proven to be the root cause on this laptop. The next safe diagnostic is to verify the 120 GB SSD's disk number and GPT status using `diskpart list disk`, then repeat the install with the non-target WDC HDD temporarily disconnected. Do not clean or format the secondary HDD for this test.
+
+See [Microsoft UEFI/GPT partition guidance](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11) and the Windows Setup multiple-disk diagnostic case documented in the issue discussion. The user must still confirm the same-machine physical installation test before the 0.1.2 PR can be merged.
