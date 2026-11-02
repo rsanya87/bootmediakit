@@ -26,9 +26,10 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Windows ISO scan for EFI bootloader, boot.wim and install image.
 - File-copy manifest generation, no-hash fast-copy path, and SHA-256 read-back verification.
 - Kernel NTFS3 mount preference and ntfs-3g fallback.
+- Dynamic copy-progress range when the optional SHA-256 second pass is disabled or enabled.
 - Detection of a changed copied file.
 
-Current automated test suite: 23 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 25 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
