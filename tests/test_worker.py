@@ -370,8 +370,34 @@ class KernelCopyTests(unittest.TestCase):
             self.assertEqual(manifest, [])
             self.assertEqual((destination / "boot.wim").read_bytes(), payload)
 
+    @unittest.skipUnless(
+        hasattr(os, "copy_file_range") and hasattr(os, "sendfile"),
+        "copy_file_range/sendfile are unavailable",
+    )
+    def test_copy_file_range_uses_sendfile_fallback_on_cross_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"sendfile fallback test" * 3000
+            (source / "boot.wim").write_bytes(payload)
+            real_sendfile = os.sendfile
+
+            with patch(
+                "worker.os.copy_file_range",
+                side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
+            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile:
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertGreater(sendfile.call_count, 0)
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
     @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
-    def test_kernel_copy_falls_back_on_cross_filesystem_error(self):
+    def test_kernel_copy_falls_back_to_streaming_when_both_syscalls_fail(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "source"
@@ -383,6 +409,9 @@ class KernelCopyTests(unittest.TestCase):
             with patch(
                 "worker.os.copy_file_range",
                 side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
+            ), patch(
+                "worker.os.sendfile",
+                side_effect=OSError(errno.EXDEV, "sendfile cross-device copy not supported"),
             ):
                 manifest = worker.copy_tree_progress(
                     source, destination, len(payload), hash_files=False
