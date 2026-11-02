@@ -18,7 +18,7 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 printf '\nA BootMediaKit működéséhez szükséges csomagok telepítése…\n'
-pacman -S --needed pyside6 util-linux parted ntfs-3g ntfsprogs polkit 7zip
+pacman -S --needed pyside6 util-linux parted ntfs-3g ntfsprogs dosfstools polkit 7zip
 
 UEFI_DIR="/usr/share/bootmediakit/uefi"
 install -d -m 0755 "$UEFI_DIR"
