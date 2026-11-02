@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, rendszergazdai jogosultsággal futó háttérfolyamat végzi.
 
-**Fejlesztői verzió:** `0.1.2-alpha`  
+**Verzió:** `0.1.2`  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> Ez alfa verzió, tesztelésre készült. Nem állítjuk, hogy már teljes Rufus-helyettesítő. Az új Windows UEFI:NTFS eljárás automatikus tesztekkel ellenőrzött, de valódi pendrive-on, UEFI firmware-rel és Windows Telepítővel még tesztelni kell.
+> A 0.1.2-es verziót valódi USB 2.0 pendrive-okon is teszteltük. A Samsung RV511 gépen a Windows Telepítő eljutott az első újraindításig, majd a belső SSD-ről folytatta a telepítést. A Linux RAW/DD írás Legacy/MBR módban szintén tesztelve van. További UEFI firmware-, Secure Boot-, Windows ISO- és eszköztesztek még szükségesek; a program nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 
@@ -15,7 +15,7 @@
 - Windows telepítő ISO-k felismerése, hogy ne kerüljenek véletlenül nyers kiírásra.
 - Windows x64 UEFI telepítő készítése GPT lemezen, két partícióval:
   - egy nagy NTFS Microsoft Basic Data partíció az eredeti Windows ISO fájljainak;
-  - egy 1 MiB-os FAT UEFI:NTFS segédpartíció a pendrive végén. Ennek GPT típusa szándékosan Microsoft Basic Data (nem EFI System), és be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, a Rufus megoldásával megegyezően.
+  - egy 1 MiB-os FAT `BMK_EFI` UEFI:NTFS segédpartíció a pendrive végén. A GPT-típusa Microsoft Basic Data (nem EFI System), be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, és a GPT partíciónév, valamint a FAT kötetcímke is `BMK_EFI`.
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
@@ -33,7 +33,7 @@ A megoldás az UEFI:NTFS projekt és a Rufus által használt elrendezést köve
 
 A gép UEFI firmware-e a FAT partícióról elindítja az UEFI:NTFS betöltőt. Az betölti az NTFS UEFI illesztőprogramot, megkeresi ugyanazon az USB-eszközön az NTFS partíciót, majd elindítja rajta a Windows x64 EFI bootloadert.
 
-Az UEFI:NTFS segédképet telepítéskor az alkalmazás a Rufus hivatalos GitHub-forrásából, rögzített commitból tölti le. A letöltő ellenőrzi a fájl pontos méretét, Git-blob SHA-1 és SHA-256 azonosítóját. Az írás közben ugyanezeket a feltételeket ellenőrzi, majd a segédpartíciót vissza is olvassa.
+A tiszta UEFI:NTFS segédképet a telepítő a Rufus hivatalos GitHub-forrásából, rögzített commitból tölti le, majd ellenőrzi a pontos méretét, Git-blob SHA-1 és SHA-256 azonosítóját. USB-készítéskor a program egy ideiglenes másolat FAT kötetcímkéjét `RUFUS_BOOT` értékről `BMK_EFI` értékre állítja a `fatlabel` eszközzel. A hitelesített upstream képfájl változatlan marad, az aláírt EFI binárisokhoz nem nyúlunk. Az elkészült ideiglenes képet SHA-256 alapján visszaellenőrzi a pendrive-ról, és külön ellenőrzi a `BMK_EFI` kötetcímkét is.
 
 A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani. CachyOS-on a program először a Linux kernel NTFS3 driverét használja; ha az nem érhető el vagy nem tudja csatolni a kötetet, az ntfs-3g a kompatibilitási tartalék. A fájlok kiírása után csak a cél USB fájlrendszerét szinkronizálja. Kikapcsolt SHA-256 módban először kernel-assisted `copy_file_range`, majd szükség esetén `sendfile` másolást próbál használni. Csak akkor vált a biztonságos streamelt másolásra, ha egyik gyors útvonal sem támogatott. A teljes SHA-256 visszaolvasás a teljes adatmennyiséget újra elolvassa, ezért lassabb USB 2.0 pendrive-oknál jelentős időt adhat hozzá; emiatt alapértelmezésben kikapcsolt, de opcionálisan kérhető.
 
@@ -72,6 +72,7 @@ Szükséges Arch csomagok:
 - `parted` — `partprobe`, hogy a kernel újraolvassa a partíciós táblát
 - `ntfs-3g` — NTFS csatolás
 - `ntfsprogs` — `mkfs.ntfs` formázó (Arch külön csomag)
+- `dosfstools` — `fatlabel` a BMK_EFI FAT kötetcímkéjének beállításához és ellenőrzéséhez
 - `polkit` — jogosultságemelés
 - `7zip` — Windows ISO felismerése
 
@@ -101,4 +102,4 @@ Az USB teljes tartalma törlődik. Mindig ellenőrizd a meghajtó eszköznevét,
 
 ## Külső összetevők
 
-Az UEFI:NTFS segédképet a program a Rufus rögzített upstream forrásából tölti le. A segédkép és az abban található külső kódok licence nem változik. Lásd: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+A BootMediaKit nem tartalmaz átmásolt Rufus alkalmazás-forráskódot. Telepítéskor a hivatalos Rufus tárolóból külön licencű UEFI:NTFS segédképet tölt le; ez harmadik féltől származó UEFI bootloader- és fájlrendszer-driver binárisokat tartalmaz. A forrásokra, szerzői jogokra és licencekre vonatkozó részletek: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
