@@ -28,7 +28,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 
 ## Windows UEFI:NTFS workflow
 
-The application follows the same general layout described by the UEFI:NTFS project and used by Rufus: a large NTFS data partition, then a small FAT partition at the very end of the USB device. UEFI first runs the FAT-side UEFI:NTFS loader; that loader loads its NTFS UEFI driver, locates the NTFS partition on the same device and starts the Windows x64 EFI bootloader there.
+The application follows the same general layout described by the UEFI:NTFS project and used by Rufus: a large NTFS data partition, then a small FAT helper partition at the very end of the USB device. On GPT, Rufus marks that helper partition as Microsoft Basic Data (not EFI System Partition) and sets the NoDriveLetter attribute (GUID-specific bit 63). This avoids a documented Windows Setup failure when a second ESP is present. UEFI first runs the FAT-side UEFI:NTFS loader; that loader loads its NTFS UEFI driver, locates the NTFS partition on the same device and starts the Windows x64 EFI bootloader there.
 
 The helper image is downloaded during installation from the official Rufus repository at a pinned commit. The installer checks the exact byte size, Git blob SHA-1 and SHA-256 before installing it. At write time, BootMediaKit checks the same values and performs a read-back check after writing the helper partition.
 
