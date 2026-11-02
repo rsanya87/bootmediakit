@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.2-alpha — 2026-11-01 (development branch)
+## 0.1.2-alpha — 2026-11-02 (development branch)
 
 ### Windows UEFI media rewrite
 
@@ -8,10 +8,12 @@
 - Use the Rufus UEFI:NTFS helper image from a pinned upstream Rufus commit, with file-size, Git blob SHA-1 and SHA-256 verification.
 - Read back and verify the written UEFI:NTFS helper image before continuing.
 - Keep the original Windows `install.esd` / `install.wim` file unchanged; remove the ESD-to-WIM conversion and SWM splitting from the Windows path.
-- Add full optional SHA-256 verification of the copied Windows ISO files (enabled by default).
+- Add optional full SHA-256 verification of copied Windows ISO files (off by default in Windows mode to avoid an unnecessary second full USB read).
 - Preflight the ISO, the target geometry, helper image, and capacity before erasing the target device.
 - Format NTFS with the correct partition-start sector required for Windows boot.
-- Add tests for GPT layout, partition identifiers, ISO structure scanning, copy manifests and SHA-256 verification.
+- Prefer kernel NTFS3 for writing the USB payload, with ntfs-3g fallback.
+- Replace per-file fsync calls with one batched sync; optionally drop clean cached pages before SHA-256 read-back.
+- Add tests for GPT layout, partition identifiers, ISO structure scanning, copy manifests, mount-driver fallback and SHA-256 verification.
 - Update the Arch installer to include the split `ntfsprogs` package and fetch the pinned UEFI helper image.
 
 ### Important status
