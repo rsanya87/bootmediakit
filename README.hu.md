@@ -20,6 +20,8 @@
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
 - A kernel NTFS3 driverét részesíti előnyben, az ntfs-3g tartalék lehetőséggel.
+- Kikapcsolt SHA-256 visszaellenőrzésnél megpróbálja a kernel `copy_file_range` fájlmásolást használni; ha az ISO9660 és NTFS3 közötti másolást a kernel nem támogatja, automatikusan visszaáll a streamelt másolásra.
+- Ritkítja a grafikus folyamatfrissítéseket, és csak az USB fájlrendszerét üríti ki, nem a gép összes meghajtóját.
 - A fájlok kiírását kötegelt lemezre ürítéssel végzi, nem minden fájl után külön fsync művelettel.
 - Opcionális SHA-256 visszaellenőrzés minden átmásolt Windows fájlra. A Windows mód gyorsabb induló beállítása miatt ez alapértelmezésben ki van kapcsolva, de a grafikus felületen bármikor bekapcsolható.
 - Grafikus folyamatjelző és napló.
@@ -33,7 +35,7 @@ A gép UEFI firmware-e a FAT partícióról elindítja az UEFI:NTFS betöltőt. 
 
 Az UEFI:NTFS segédképet telepítéskor az alkalmazás a Rufus hivatalos GitHub-forrásából, rögzített commitból tölti le. A letöltő ellenőrzi a fájl pontos méretét, Git-blob SHA-1 és SHA-256 azonosítóját. Az írás közben ugyanezeket a feltételeket ellenőrzi, majd a segédpartíciót vissza is olvassa.
 
-A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani. CachyOS-on a program először a Linux kernel NTFS3 driverét használja; ha az nem érhető el vagy nem tudja csatolni a kötetet, az ntfs-3g a kompatibilitási tartalék. A fájlok kiírását egyetlen kötegelt sync követi, nem minden egyes fájl után fsync. A teljes SHA-256 visszaolvasás a teljes adatmennyiséget újra elolvassa, ezért lassabb USB 2.0 pendrive-oknál jelentős időt adhat hozzá; emiatt alapértelmezésben kikapcsolt, de opcionálisan kérhető.
+A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a FAT32 4 GiB-os fájlkorlátja nem érvényesül, és az ESD/WIM képfájlt sem kell módosítani. CachyOS-on a program először a Linux kernel NTFS3 driverét használja; ha az nem érhető el vagy nem tudja csatolni a kötetet, az ntfs-3g a kompatibilitási tartalék. A fájlok kiírása után csak a cél USB fájlrendszerét szinkronizálja. Kikapcsolt SHA-256 módban kernel-assisted `copy_file_range` másolást próbál használni, majd támogatás hiányában a biztonságos streamelt másolásra vált. A teljes SHA-256 visszaolvasás a teljes adatmennyiséget újra elolvassa, ezért lassabb USB 2.0 pendrive-oknál jelentős időt adhat hozzá; emiatt alapértelmezésben kikapcsolt, de opcionálisan kérhető.
 
 ### Secure Boot
 
@@ -88,6 +90,10 @@ Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a GPT partícióelrende
 ## Fejlesztési irány
 
 Elsőként az Arch/CachyOS változatot stabilizáljuk. Debian/Ubuntu és Fedora csak ezután következik. Részletek: [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Windows Telepítő több belső meghajtó esetén
+
+Ha a `setupact.log` naplóban `GetMachineInfo: Couldn't find info for boot disk`, `CanBeSystemVolume` vagy „The selected disk is not the computer's boot disk” jelenik meg, előfordulhat, hogy a Windows PE több belső HDD/SSD mellett rosszul azonosítja a boot-/rendszerlemezt. Ez nem feltétlenül a telepítő pendrive hibája. A `Shift+F10` után futtasd a `diskpart`, majd `list disk` parancsot, és a kapacitás alapján azonosítsd a céllemezt. Diagnosztikai próbához ideiglenesen válaszd le a nem célként használt belső meghajtókat, és csak a cél SSD maradjon csatlakoztatva a telepítő USB mellett. **Ne futtass `clean` parancsot a másodlagos lemezen.** UEFI-s Windows telepítéshez a céllemeznek GPT partíciós táblát kell használnia. [Microsoft UEFI/GPT útmutató](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11).
 
 ## Biztonság
 
