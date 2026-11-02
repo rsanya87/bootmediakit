@@ -293,6 +293,11 @@ def scan_windows_iso(iso_root: Path) -> tuple[Path, Path, int]:
     return install_image, boot_wim, total_bytes
 
 
+def windows_copy_progress_span(verify: bool) -> int:
+    """Reserve the second pass only when full file verification is enabled."""
+    return 43 if verify else 54
+
+
 def copy_tree_progress(
     source_root: Path,
     destination_root: Path,
@@ -537,13 +542,20 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         usb_mount.mkdir(parents=True, exist_ok=True)
         mount_ntfs_volume(ntfs_partition, usb_mount)
         mounted_usb = True
+        copy_span = windows_copy_progress_span(verify)
+        copy_end_percent = 42 + copy_span
         manifest = copy_tree_progress(
-            iso_mount, usb_mount, total_copy_bytes, hash_files=verify
+            iso_mount,
+            usb_mount,
+            total_copy_bytes,
+            base_percent=42,
+            span=copy_span,
+            hash_files=verify,
         )
 
         # Commit all writes in one batch. Per-file fsync is particularly slow
         # on low-end USB 2.0 flash drives; unmount also performs final flushing.
-        emit("A másolt adatok kiírása a pendrive-ra…", 85)
+        emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
         command(["sync"])
 
         # Recheck the boot chain files on the destination before unmounting.
@@ -555,7 +567,10 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86)
             verify_copied_files(usb_mount, manifest)
         else:
-            emit("A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.", 96)
+            emit(
+                "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.",
+                copy_end_percent,
+            )
 
         emit("Fájlrendszer kiürítése és leválasztása…", 99)
         command(["sync"])
