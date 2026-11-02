@@ -19,7 +19,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
 - Prefer the in-kernel NTFS3 driver for Windows ISO file copying, with ntfs-3g as a compatibility fallback.
-- Use a best-effort in-kernel `copy_file_range` path when full SHA-256 verification is disabled; fall back to streaming copies when the source/destination filesystems do not support it.
+- Use best-effort in-kernel `copy_file_range`, then `sendfile`, when full SHA-256 verification is disabled; fall back to streaming copies when the source/destination filesystems do not support either fast path.
 - Throttle progress events and flush only the USB filesystem rather than calling a host-wide sync.
 - Copy Windows files with batched disk flushing rather than forcing an fsync after every file.
 - Optionally read back every copied Windows setup file and compare its SHA-256 hash. To keep Windows USB creation faster, this extra full read-back is off by default in Windows mode and can be enabled in the GUI.
@@ -32,7 +32,7 @@ The application follows the same general layout described by the UEFI:NTFS proje
 
 The helper image is downloaded during installation from the official Rufus repository at a pinned commit. The installer checks the exact byte size, Git blob SHA-1 and SHA-256 before installing it. At write time, BootMediaKit checks the same values and performs a read-back check after writing the helper partition.
 
-The Windows files are copied without converting the install image. This avoids the FAT32 4 GiB file-size limit and avoids changing Microsoft's ESD/WIM payload. The kernel NTFS3 driver is preferred on CachyOS/Linux kernels that provide it; ntfs-3g remains a fallback for compatibility. When the extra SHA-256 pass is disabled, BootMediaKit attempts Linux `copy_file_range` for kernel-assisted file copies; filesystems that do not support cross-filesystem copies transparently fall back to the regular streaming copy. Progress output is throttled and only the USB filesystem is synced, not every filesystem on the host. A second SHA-256 read-back pass is optional because it reads the full USB payload again and can significantly increase time on low-end USB 2.0 sticks.
+The Windows files are copied without converting the install image. This avoids the FAT32 4 GiB file-size limit and avoids changing Microsoft's ESD/WIM payload. The kernel NTFS3 driver is preferred on CachyOS/Linux kernels that provide it; ntfs-3g remains a fallback for compatibility. When the extra SHA-256 pass is disabled, BootMediaKit attempts Linux `copy_file_range`, then `sendfile`, for kernel-assisted file copies; filesystems that do not support either cross-filesystem path transparently fall back to regular streaming copy. Progress output is throttled and only the USB filesystem is synced, not every filesystem on the host. A second SHA-256 read-back pass is optional because it reads the full USB payload again and can significantly increase time on low-end USB 2.0 sticks.
 
 ### Secure Boot
 
