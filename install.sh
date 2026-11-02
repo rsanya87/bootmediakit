@@ -18,7 +18,12 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 printf '\nA BootMediaKit működéséhez szükséges csomagok telepítése…\n'
-pacman -S --needed pyside6 parted dosfstools wimlib polkit 7zip
+pacman -S --needed pyside6 util-linux parted ntfs-3g ntfsprogs dosfstools polkit 7zip
+
+UEFI_DIR="/usr/share/bootmediakit/uefi"
+install -d -m 0755 "$UEFI_DIR"
+printf '\nA hivatalos, verzióhoz rögzített UEFI:NTFS indítókép letöltése és ellenőrzése…\n'
+/usr/bin/python3 "$SCRIPT_DIR/fetch_uefi_ntfs.py" "$UEFI_DIR/uefi-ntfs.img"
 
 install -d -m 0755 "$APP_DIR"
 install -d -m 0755 "$(dirname "$ICON_PATH")" "$(dirname "$DESKTOP_PATH")"

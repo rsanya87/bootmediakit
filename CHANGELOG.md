@@ -1,17 +1,33 @@
 # Changelog
 
+## 0.1.2 — 2026-11-02
+
+### Windows UEFI media rewrite
+
+- Replace the single GPT/FAT32 Windows USB layout with a GPT layout containing a large NTFS Basic Data partition and a 1 MiB FAT UEFI:NTFS helper partition at the end of the device.
+- Mark the helper partition as Microsoft Basic Data, not EFI System Partition, and set GPT NoDriveLetter (GUID:63), avoiding the Windows Setup multiple-ESP issue.
+- Set both the GPT helper-partition name and FAT volume label to `BMK_EFI`; change only a temporary copy of the verified upstream FAT image, preserving the pristine source and signed EFI binaries.
+- Use the Rufus UEFI:NTFS helper image from a pinned upstream Rufus commit, with file-size, Git blob SHA-1 and SHA-256 verification.
+- Read back and verify the written UEFI:NTFS helper image before continuing.
+- Keep the original Windows `install.esd` / `install.wim` file unchanged; remove the ESD-to-WIM conversion and SWM splitting from the Windows path.
+- Add optional full SHA-256 verification of copied Windows ISO files (off by default in Windows mode to avoid an unnecessary second full USB read).
+- Preflight the ISO, the target geometry, helper image, and capacity before erasing the target device.
+- Format NTFS with the correct partition-start sector required for Windows boot; explicitly set conventional 255/63 BPB geometry and 4 KiB clusters, then validate the NTFS boot sector signature and geometry before copying files.
+- Prefer kernel NTFS3 for writing the USB payload, with ntfs-3g fallback.
+- Use best-effort kernel `copy_file_range`, then `sendfile`, when hashing is disabled, with transparent streaming fallback if both cross-filesystem paths are unsupported.
+- Throttle progress output and sync only the target USB filesystem.
+- Scale the copy progress bar to the selected verification mode: without SHA-256 the copy itself reaches 96%; when verification is enabled, space is reserved for the second pass.
+- Replace per-file fsync calls with one batched sync; optionally drop clean cached pages before SHA-256 read-back.
+- Add tests for GPT layout, partition identifiers, ISO structure scanning, NTFS BPB geometry, copy_file_range fallback, progress throttling, mount-driver fallback and SHA-256 verification.
+- Update Arch dependencies (`ntfsprogs`, `dosfstools`) and fetch/verify the pinned upstream UEFI helper image.
+- Record the upstream helper components and their separate source/license references in `THIRD_PARTY_NOTICES.md`.
+
+### Validation status
+
+The user tested Windows 10 IoT Enterprise LTSC 2021 x64 media on the same Samsung RV511: Windows Setup copied files, passed the first reboot, and continued from the internal SSD to the next installation phase. Two USB 2.0 devices showed a substantial speed improvement after the NTFS3/kernel-copy optimizations. Linux raw/DD mode was also tested in Legacy/MBR mode. Secure Boot and broader hardware/ISO coverage remain future validation items.
+
 ## 0.1.1-alpha — 2026-11-01
 
-Baseline import from the internal CachyUSB 0.1.1-alpha build. This repository import applies a project-name and installation-identifier change to BootMediaKit; the application workflow is otherwise kept at the 0.1.1 baseline.
-
-- Convert oversized, non-encrypted `install.esd` files to LZX-compressed WIM, validate the converted image, and split it into FAT32-compatible SWM parts.
-- Process large WIM/ESD content before changing the USB partition table.
-- Check actual split-file sizes and target-drive capacity before erasing the USB drive.
-- Use `/var/tmp` for large WIM/ESD processing and check available scratch space first.
-- Make the GUI content scrollable to support smaller windows and displays.
-- Add automated tests for ESD export and SWM splitting.
-- Rename the application, executable, desktop entry, temporary-file prefixes, and install paths from CachyUSB to BootMediaKit.
-
-## Earlier development
-
-The original 0.1.0-alpha internal baseline provided raw image writing and the first Windows UEFI/FAT32 workflow. It is not tagged in this repository; the maintained Git history begins with the 0.1.1-alpha baseline.
+- Baseline import of the original BootMediaKit GUI, raw writer and Windows FAT32/SWM workflow.
+- ESD conversion to WIM and SWM splitting.
+- Scrollable GUI and Arch-based installation.

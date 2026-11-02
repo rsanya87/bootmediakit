@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Privileged, narrowly-scoped disk writer for BootMediaKit.
+"""Privileged disk writer for BootMediaKit.
 
-This file accepts only whole USB/removable block devices. It refuses the
-physical devices backing /, /boot or /efi before it can unmount or erase them.
-All status messages are JSON lines for the unprivileged Qt frontend.
+The Qt front-end stays unprivileged. This worker is started with pkexec only
+after a destructive-operation confirmation. It validates the target twice
+and keeps Windows ISO inspection/capacity checks ahead of all disk writes.
 """
 
 from __future__ import annotations
 
-import gzip
+import errno
+import hashlib
 import json
+import struct
 import os
-import re
 import shutil
 import stat
 import subprocess
@@ -21,8 +22,20 @@ import time
 from pathlib import Path
 from typing import Iterable
 
-CHUNK = 4 * 1024 * 1024
-FAT32_MAX_FILE = 4 * 1024 * 1024 * 1024 - 1
+CHUNK = 8 * 1024 * 1024
+UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
+UEFI_NTFS_IMAGE_SIZE = 1_048_576
+UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
+UEFI_NTFS_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
+UPSTREAM_FAT_VOLUME_LABEL = "RUFUS_BOOT"
+BOOTMEDIA_FAT_VOLUME_LABEL = "BMK_EFI"
+GPT_BASIC_DATA_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+# GPT GUID-specific attribute bit 63: do not automatically assign a drive letter.
+# Rufus uses Microsoft Basic Data (not EFI System) for its UEFI:NTFS helper
+# partition because Windows Setup can fail when it sees a second ESP.
+GPT_NO_DRIVE_LETTER_ATTR = "GUID:63"
+GPT_ALIGNMENT_SECTORS = 2048
+GPT_RESERVED_SECTORS = 34
 TARGET_MODIFIED = False
 
 
@@ -38,10 +51,22 @@ def emit(message: str, percent: int | None = None, *, log: str | None = None,
     print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
-def command(args: list[str], *, check: bool = True, timeout: int | None = None) -> subprocess.CompletedProcess[str]:
+def command(
+    args: list[str],
+    *,
+    check: bool = True,
+    timeout: int | None = None,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, timeout=timeout)
+        result = subprocess.run(
+            args,
+            input=input_text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
     except FileNotFoundError as exc:
         raise RuntimeError(f"Hiányzó rendszerprogram: {args[0]}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -55,7 +80,7 @@ def command(args: list[str], *, check: bool = True, timeout: int | None = None) 
 def require_programs(programs: Iterable[str]) -> None:
     missing = [name for name in programs if shutil.which(name) is None]
     if missing:
-        raise RuntimeError("Hiányzó csomag/program: " + ", ".join(missing))
+        raise RuntimeError("Hiányzó rendszerprogram/csomag: " + ", ".join(missing))
 
 
 def canonical(path: str) -> str:
@@ -68,7 +93,7 @@ def lsblk_one(path: str, columns: str) -> list[str]:
 
 
 def protected_physical_devices() -> set[str]:
-    """Return the selected source disk(s) backing system-critical mounts."""
+    """Return devices backing critical system mountpoints and their parents."""
     protected: set[str] = set()
     for target in ("/", "/boot", "/boot/efi", "/efi"):
         result = command(["findmnt", "-nro", "SOURCE", "--target", target], check=False)
@@ -84,6 +109,7 @@ def protected_physical_devices() -> set[str]:
 
 
 def validate_target(device: str) -> int:
+    """Validate the whole target disk and return its byte capacity."""
     if not device.startswith("/dev/"):
         raise RuntimeError("A cél nem érvényes /dev eszköz.")
     try:
@@ -106,33 +132,747 @@ def validate_target(device: str) -> int:
 
     size_text = command(["blockdev", "--getsize64", device]).stdout.strip()
     try:
-        size = int(size_text)
+        return int(size_text)
     except ValueError as exc:
         raise RuntimeError("Nem sikerült lekérdezni a célmeghajtó kapacitását.") from exc
-    return size
 
 
 def unmount_disk(device: str) -> None:
     result = command(["lsblk", "-nrpo", "PATH,TYPE", device])
-    partitions = []
+    partitions: list[str] = []
     for line in result.stdout.splitlines():
         columns = line.split()
         if len(columns) >= 2 and columns[1] == "part":
             partitions.append(columns[0])
-    # Unmount child filesystems from their mount points, deepest mount first.
     for partition in partitions:
-        mounts = command(["findmnt", "-rn", "-S", partition, "-o", "TARGET"], check=False).stdout.splitlines()
+        mounts = command(
+            ["findmnt", "-rn", "-S", partition, "-o", "TARGET"], check=False
+        ).stdout.splitlines()
         for mountpoint in sorted((m.strip() for m in mounts if m.strip()), key=len, reverse=True):
             emit(f"Partíció leválasztása: {mountpoint}", 1)
             command(["umount", "--", mountpoint])
     command(["udevadm", "settle"], check=False, timeout=15)
 
 
-def wipe_signatures(device: str) -> None:
-    # The user already confirmed total erasure in the GUI. Removing stale
-    # signatures also prevents an old backup GPT at the end of a larger stick.
-    command(["wipefs", "--all", "--force", device])
-    command(["sync"])
+def find_case_insensitive(root: Path, relative: str) -> Path | None:
+    current = root
+    for component in relative.replace("\\", "/").strip("/").split("/"):
+        if not current.is_dir():
+            return None
+        try:
+            match = next(
+                (entry for entry in current.iterdir() if entry.name.lower() == component.lower()),
+                None,
+            )
+        except OSError:
+            return None
+        if match is None:
+            return None
+        current = match
+    return current
+
+
+def git_blob_sha1(path: Path) -> str:
+    """Compute the Git object SHA-1 used to pin the upstream UEFI helper image."""
+    size = path.stat().st_size
+    digest = hashlib.sha1()
+    digest.update(f"blob {size}\0".encode("ascii"))
+    with path.open("rb") as source:
+        while True:
+            data = source.read(CHUNK)
+            if not data:
+                break
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def verify_uefi_ntfs_image(path: Path = UEFI_NTFS_IMAGE) -> None:
+    if not path.is_file():
+        raise RuntimeError(
+            "Hiányzik az UEFI:NTFS indítópartíció képfájlja. "
+            "Telepítsd újra a BootMediaKit-et, hogy letöltse és ellenőrizze a hivatalos fájlt."
+        )
+    actual_size = path.stat().st_size
+    if actual_size != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError(
+            f"Hibás UEFI:NTFS képméret: {actual_size} bájt; "
+            f"elvárt: {UEFI_NTFS_IMAGE_SIZE} bájt."
+        )
+    actual_hash = git_blob_sha1(path)
+    if actual_hash != UEFI_NTFS_GIT_BLOB_SHA1:
+        raise RuntimeError(
+            "Az UEFI:NTFS segédkép Git-blob azonosítója nem egyezik a rögzített hivatalos verzióval. "
+            "A biztonság kedvéért nem írok a pendrive-ra."
+        )
+    sha256 = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(CHUNK), b""):
+            sha256.update(block)
+    if sha256.hexdigest() != UEFI_NTFS_SHA256:
+        raise RuntimeError(
+            "Az UEFI:NTFS segédkép SHA-256 ellenőrzőösszege nem egyezik a rögzített hivatalos verzióval. "
+            "A biztonság kedvéért nem írok a pendrive-ra."
+        )
+
+
+def calculate_gpt_layout(total_sectors: int, image_size: int = UEFI_NTFS_IMAGE_SIZE) -> dict[str, int]:
+    """Calculate aligned GPT partitions in 512-byte logical sectors.
+
+    Both partitions use Microsoft Basic Data. Partition 1 contains the NTFS
+    Windows files; partition 2 contains the FAT UEFI:NTFS helper image and has
+    the GUID-specific no-drive-letter attribute. Rufus deliberately does not
+    mark this helper partition as an ESP: Windows Setup can fail when it sees
+    two ESPs on one machine.
+    """
+    sector_size = 512
+    if total_sectors <= 0 or image_size <= 0:
+        raise ValueError("A lemez- és képméretnek pozitívnak kell lennie.")
+    if image_size % sector_size:
+        raise ValueError("Az UEFI:NTFS kép mérete nem egész szektorszám.")
+    image_sectors = image_size // sector_size
+    last_usable = total_sectors - GPT_RESERVED_SECTORS
+    latest_start = last_usable - image_sectors + 1
+    second_start = (latest_start // GPT_ALIGNMENT_SECTORS) * GPT_ALIGNMENT_SECTORS
+    first_start = GPT_ALIGNMENT_SECTORS
+    first_size = second_start - first_start
+    if first_size <= 0 or second_start + image_sectors - 1 > last_usable:
+        raise ValueError("A meghajtó túl kicsi az UEFI:NTFS kétpartíciós elrendezéshez.")
+    return {
+        "first_start": first_start,
+        "first_size": first_size,
+        "second_start": second_start,
+        "second_size": image_sectors,
+        "first_bytes": first_size * sector_size,
+        "second_bytes": image_sectors * sector_size,
+    }
+
+
+def partition_path(device: str, number: int) -> str:
+    """Resolve /dev/sdX1 and /dev/nvme0n1p1 style partition names."""
+    base = os.path.basename(device)
+    separator = "p" if base and base[-1].isdigit() else ""
+    return f"{device}{separator}{number}"
+
+
+def make_sfdisk_script(layout: dict[str, int]) -> str:
+    return (
+        "label: gpt\n"
+        "unit: sectors\n"
+        f"first-lba: {GPT_ALIGNMENT_SECTORS}\n"
+        f"start={layout['first_start']}, size={layout['first_size']}, "
+        f"type={GPT_BASIC_DATA_GUID}, name=\"BOOTMEDIA\"\n"
+        f"start={layout['second_start']}, size={layout['second_size']}, "
+        f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"BMK_EFI\"\n"
+    )
+
+
+
+def _attribute_has_no_drive_letter(value: object) -> bool:
+    """Accept sfdisk's textual GPT attribute representations for bit 63."""
+    text = str(value or "").lower().replace(" ", "").replace(",", "")
+    return (
+        "guid:63" in text
+        or "0x8000000000000000" in text
+        or "9223372036854775808" in text
+    )
+
+
+def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
+    """Read back the GPT and reject an ESP-typed UEFI:NTFS helper partition."""
+    command(["sfdisk", "--verify", device])
+    result = command(["sfdisk", "--json", device])
+    try:
+        partition_table = json.loads(result.stdout)["partitiontable"]
+        partitions = sorted(
+            partition_table["partitions"],
+            key=lambda part: int(part["start"]),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Nem sikerült visszaolvasni az elkészült GPT partíciós táblát.") from exc
+
+    if partition_table.get("label", "").lower() != "gpt" or len(partitions) != 2:
+        raise RuntimeError("A létrehozott USB nem a várt, kétpartíciós GPT elrendezést tartalmazza.")
+
+    first, helper = partitions
+    expected_ranges = (
+        (int(first.get("start", -1)), int(first.get("size", -1)),
+         layout["first_start"], layout["first_size"], "1. NTFS"),
+        (int(helper.get("start", -1)), int(helper.get("size", -1)),
+         layout["second_start"], layout["second_size"], "UEFI:NTFS"),
+    )
+    for actual_start, actual_size, expected_start, expected_size, label in expected_ranges:
+        if actual_start != expected_start or actual_size != expected_size:
+            raise RuntimeError(
+                f"A(z) {label} GPT partíció mérete/kezdete eltér a tervezettől: "
+                f"{actual_start}+{actual_size}, várt: {expected_start}+{expected_size}."
+            )
+
+    if first.get("name") != "BOOTMEDIA":
+        raise RuntimeError("Az első GPT partíció neve nem BOOTMEDIA.")
+    if helper.get("name") != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"Az UEFI segédpartíció GPT neve nem {BOOTMEDIA_FAT_VOLUME_LABEL}."
+        )
+
+    first_type = str(first.get("type", "")).strip("{}").lower()
+    helper_type = str(helper.get("type", "")).strip("{}").lower()
+    expected_type = GPT_BASIC_DATA_GUID.lower()
+    if first_type != expected_type:
+        raise RuntimeError("Az első USB-partíció GPT típusa nem Microsoft Basic Data.")
+    if helper_type != expected_type:
+        raise RuntimeError(
+            "Az UEFI:NTFS segédpartíció hibás GPT típust kapott. "
+            "Microsoft Basic Data szükséges, nem EFI System Partition (ESP), "
+            "különben a Windows Setup több ESP-t érzékelhet."
+        )
+
+    attributes = helper.get("attrs")
+    if not _attribute_has_no_drive_letter(attributes):
+        attributes = command(["sfdisk", "--part-attrs", device, "2"]).stdout.strip()
+    if not _attribute_has_no_drive_letter(attributes):
+        raise RuntimeError(
+            "Az UEFI:NTFS segédpartícióról hiányzik a GPT NoDriveLetter (GUID:63) attribútum."
+        )
+
+
+def mount_iso(image: Path, mountpoint: Path) -> None:
+    mountpoint.mkdir(parents=True, exist_ok=True)
+    command(["mount", "-o", "loop,ro,nosuid,nodev", str(image), str(mountpoint)])
+
+
+def scan_windows_iso(iso_root: Path) -> tuple[Path, Path, int]:
+    """Validate essential x64 Windows Setup files and return install image + size."""
+    efi_loader = find_case_insensitive(iso_root, "efi/boot/bootx64.efi")
+    if efi_loader is None or not efi_loader.is_file():
+        raise RuntimeError("Az ISO nem tartalmazza az EFI/BOOT/BOOTX64.EFI x64 UEFI indítófájlt.")
+    boot_wim = find_case_insensitive(iso_root, "sources/boot.wim")
+    if boot_wim is None or not boot_wim.is_file():
+        raise RuntimeError("Nem található a sources/boot.wim Windows PE indítókép.")
+    install_image: Path | None = None
+    for name in ("sources/install.wim", "sources/install.esd", "sources/install.swm"):
+        candidate = find_case_insensitive(iso_root, name)
+        if candidate is not None and candidate.is_file():
+            install_image = candidate
+            break
+    if install_image is None:
+        raise RuntimeError("Nem található install.wim, install.esd vagy install.swm a sources könyvtárban.")
+    total_bytes = 0
+    for current, dirs, files in os.walk(iso_root):
+        current_path = Path(current)
+        for name in list(dirs):
+            if (current_path / name).is_symlink():
+                raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+        for name in files:
+            file_path = current_path / name
+            if file_path.is_symlink():
+                raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+            if not file_path.is_file():
+                raise RuntimeError(f"Nem szabályos fájl található az ISO-ban: {file_path.relative_to(iso_root)}")
+            total_bytes += file_path.stat().st_size
+    return install_image, boot_wim, total_bytes
+
+
+def windows_copy_progress_span(verify: bool) -> int:
+    """Reserve the second pass only when full file verification is enabled."""
+    return 43 if verify else 54
+
+
+def copy_tree_progress(
+    source_root: Path,
+    destination_root: Path,
+    total_bytes: int,
+    *,
+    base_percent: int = 42,
+    span: int = 43,
+    hash_files: bool = True,
+) -> list[tuple[str, int, str]]:
+    """Copy ISO files, using in-kernel copy_file_range when hashing is disabled.
+
+    copy_file_range is best-effort: cross-filesystem or unsupported NTFS3/ISO9660
+    combinations transparently fall back to the buffered streaming path.
+    Progress messages are throttled to at most one per percentage point.
+    """
+    copied_total = 0
+    manifest: list[tuple[str, int, str]] = []
+    last_percent = -1
+    fast_copy_method = None
+    if not hash_files:
+        if hasattr(os, "copy_file_range"):
+            fast_copy_method = "copy_file_range"
+        elif hasattr(os, "sendfile"):
+            fast_copy_method = "sendfile"
+    unsupported_copy_errors = {
+        errno.EXDEV,
+        errno.EINVAL,
+        errno.ENOSYS,
+        errno.EOPNOTSUPP,
+        getattr(errno, "ENOTSUP", errno.EOPNOTSUPP),
+    }
+
+    def report_progress() -> None:
+        nonlocal last_percent
+        percent = base_percent + int(
+            (copied_total / max(total_bytes, 1)) * span
+        )
+        percent = min(base_percent + span, percent)
+        if percent > last_percent:
+            last_percent = percent
+            emit(
+                f"Windows fájlok másolása… {copied_total:,} / {total_bytes:,} bájt",
+                percent,
+            )
+
+    for current, dirs, files in os.walk(source_root):
+        current_path = Path(current)
+        relative_dir = current_path.relative_to(source_root)
+        target_dir = destination_root / relative_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for filename in files:
+            src = current_path / filename
+            if src.is_symlink() or not src.is_file():
+                raise RuntimeError(
+                    f"Nem támogatott fájltípus az ISO-ban: {src.relative_to(source_root)}"
+                )
+            relative = src.relative_to(source_root).as_posix()
+            dst = destination_root / src.relative_to(source_root)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            expected_size = src.stat().st_size
+            digest = hashlib.sha256() if hash_files else None
+            file_copied = 0
+
+            # Unbuffered descriptors allow copy_file_range and the fallback
+            # reader/writer to share file positions without Python buffer drift.
+            with src.open("rb", buffering=0) as read_file, dst.open(
+                "wb", buffering=0
+            ) as write_file:
+                while fast_copy_method is not None and file_copied < expected_size:
+                    try:
+                        remaining = min(CHUNK, expected_size - file_copied)
+                        if fast_copy_method == "copy_file_range":
+                            amount = os.copy_file_range(
+                                read_file.fileno(),
+                                write_file.fileno(),
+                                remaining,
+                            )
+                        else:
+                            # sendfile() supports file-to-file copies on Linux
+                            # and may work where copy_file_range returns EXDEV
+                            # for an ISO9660 loop mount -> NTFS volume pair.
+                            amount = os.sendfile(
+                                write_file.fileno(),
+                                read_file.fileno(),
+                                None,
+                                remaining,
+                            )
+                    except OSError as exc:
+                        if exc.errno not in unsupported_copy_errors:
+                            raise
+                        if fast_copy_method == "copy_file_range" and hasattr(os, "sendfile"):
+                            fast_copy_method = "sendfile"
+                            emit(
+                                "A kernel copy_file_range útvonal nem támogatott; megpróbálom a sendfile másolást…",
+                                log=str(exc),
+                            )
+                            continue
+                        fast_copy_method = None
+                        emit(
+                            "A kerneles másolási útvonal nem támogatott ezen a fájlrendszer-kombináción; "
+                            "biztonságos streamelt másolásra váltok.",
+                            log=str(exc),
+                        )
+                        break
+                    if amount == 0:
+                        # Treat an early EOF as a reason to use the normal
+                        # reader path, which will report a short source.
+                        break
+                    file_copied += amount
+                    copied_total += amount
+                    report_progress()
+
+                while file_copied < expected_size:
+                    data = read_file.read(min(CHUNK, expected_size - file_copied))
+                    if not data:
+                        raise RuntimeError(
+                            f"A forrásfájl másolás közben váratlanul véget ért: {relative}"
+                        )
+                    if digest is not None:
+                        digest.update(data)
+                    view = memoryview(data)
+                    while view:
+                        written = write_file.write(view)
+                        if written is None or written <= 0:
+                            raise RuntimeError(
+                                f"Nem sikerült teljesen kiírni ezt a fájlt: {relative}"
+                            )
+                        view = view[written:]
+                    file_copied += len(data)
+                    copied_total += len(data)
+                    report_progress()
+
+                # Closing the unbuffered destination completes the per-file
+                # userspace I/O. A single syncfs of the USB filesystem follows.
+                if file_copied != expected_size:
+                    raise RuntimeError(f"Másolási mérethiba: {relative}")
+            if src.stat().st_size != expected_size:
+                raise RuntimeError(f"A forrásfájl mérete megváltozott másolás közben: {relative}")
+            if digest is not None:
+                manifest.append((relative, expected_size, digest.hexdigest()))
+
+    if copied_total != total_bytes:
+        raise RuntimeError(
+            f"A másolt adatmennyiség eltér az ISO előzetes méretétől "
+            f"({copied_total} / {total_bytes} bájt)."
+        )
+    if last_percent < base_percent + span:
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+    else:
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+    return manifest
+
+def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, str]]) -> None:
+    total = sum(size for _, size, _ in manifest)
+    checked = 0
+    for relative, expected_size, expected_hash in manifest:
+        target = destination_root / Path(relative)
+        if not target.is_file():
+            raise RuntimeError(f"Az USB-ről hiányzik egy átmásolt fájl: {relative}")
+        if target.stat().st_size != expected_size:
+            raise RuntimeError(f"Visszaellenőrzési mérethiba: {relative}")
+        digest = hashlib.sha256()
+        with target.open("rb") as source:
+            # The caller syncs the filesystem before verification. Ask Linux
+            # to evict clean cached pages so this pass re-reads the USB media.
+            if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
+                try:
+                    os.posix_fadvise(source.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+                except OSError:
+                    pass
+            while True:
+                data = source.read(CHUNK)
+                if not data:
+                    break
+                digest.update(data)
+                checked += len(data)
+                emit(f"SHA-256 visszaellenőrzés… {checked:,} / {total:,} bájt",
+                     86 + int((checked / max(total, 1)) * 12))
+        if digest.hexdigest() != expected_hash:
+            raise RuntimeError(f"SHA-256 eltérés az USB-n: {relative}")
+    emit("Minden telepítőfájl SHA-256 ellenőrzése sikeres.", 98)
+
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def prepare_bmk_uefi_ntfs_image(upstream_image: Path, destination: Path) -> Path:
+    """Make a temporary copy with BMK_EFI FAT volume label; preserve upstream."""
+    if not upstream_image.is_file() or upstream_image.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError("Hiányzik vagy hibás méretű az ellenőrzött upstream UEFI:NTFS segédkép.")
+    upstream_label = command(["fatlabel", str(upstream_image)]).stdout.strip().upper()
+    if upstream_label != UPSTREAM_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"Az upstream FAT segédkép címkéje {upstream_label!r}; "
+            f"elvárt: {UPSTREAM_FAT_VOLUME_LABEL}."
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(upstream_image, destination)
+    command(["fatlabel", str(destination), BOOTMEDIA_FAT_VOLUME_LABEL])
+    actual_label = command(["fatlabel", str(destination)]).stdout.strip().upper()
+    if actual_label != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError("Nem sikerült a FAT segédpartíció kötetcímkéjét BMK_EFI értékre állítani.")
+    if destination.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError("A BMK_EFI címkézett segédkép mérete megváltozott.")
+    emit(
+        "Az UEFI:NTFS FAT kötetcímkéje BMK_EFI lett; az upstream EFI binárisok változatlanok.",
+        log=f"Eredeti címke: {UPSTREAM_FAT_VOLUME_LABEL}; új címke: {BOOTMEDIA_FAT_VOLUME_LABEL}.",
+    )
+    return destination
+
+
+
+def write_uefi_ntfs_image(image: Path, partition: str) -> None:
+    """Write the BMK_EFI-labelled FAT helper image and verify its exact bytes."""
+    expected = image.stat().st_size
+    if expected != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError(
+            f"A BMK_EFI segédkép mérete hibás: {expected}; elvárt: {UEFI_NTFS_IMAGE_SIZE}."
+        )
+    expected_sha256 = sha256_file(image)
+    actual = int(command(["blockdev", "--getsize64", partition]).stdout.strip())
+    if actual != expected:
+        raise RuntimeError(
+            f"Az UEFI:NTFS partíció mérete ({actual}) nem egyezik a segédkép méretével ({expected})."
+        )
+    emit("BMK_EFI FAT indítópartíció telepítése…", 38)
+    fd = os.open(partition, os.O_WRONLY)
+    try:
+        with image.open("rb", buffering=0) as source:
+            remaining = expected
+            while remaining:
+                data = source.read(min(CHUNK, remaining))
+                if not data:
+                    raise RuntimeError("A BMK_EFI segédkép váratlanul véget ért.")
+                view = memoryview(data)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise RuntimeError("Nem sikerült a BMK_EFI segédképet a partícióra írni.")
+                    view = view[written:]
+                remaining -= len(data)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+    digest = hashlib.sha256()
+    fd = os.open(partition, os.O_RDONLY)
+    try:
+        remaining = expected
+        while remaining:
+            data = os.read(fd, min(CHUNK, remaining))
+            if not data:
+                raise RuntimeError("A BMK_EFI partíció visszaolvasása váratlanul véget ért.")
+            digest.update(data)
+            remaining -= len(data)
+    finally:
+        os.close(fd)
+    if digest.hexdigest() != expected_sha256:
+        raise RuntimeError("A BMK_EFI partíció SHA-256 visszaolvasása nem egyezik a címkézett képpel.")
+
+    actual_label = command(["fatlabel", partition]).stdout.strip().upper()
+    if actual_label != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"A pendrive FAT segédpartíciójának címkéje hibás: {actual_label!r}; "
+            f"elvárt: {BOOTMEDIA_FAT_VOLUME_LABEL}."
+        )
+    emit("BMK_EFI FAT segédpartíció SHA-256 és kötetcímke visszaellenőrzése sikeres.", 40)
+
+
+
+def validate_ntfs_boot_sector(partition: str, expected_start_sector: int) -> None:
+    """Verify critical NTFS BPB fields used by Windows boot code."""
+    with open(partition, "rb", buffering=0) as source:
+        boot = source.read(512)
+    if len(boot) != 512:
+        raise RuntimeError("Az NTFS rendszerindító szektor nem olvasható teljes hosszban.")
+    if boot[3:11] != b"NTFS    ":
+        raise RuntimeError("Az elkészült kötet boot szektorában nem található NTFS aláírás.")
+    bytes_per_sector = struct.unpack_from("<H", boot, 11)[0]
+    sectors_per_cluster = boot[13]
+    sectors_per_track = struct.unpack_from("<H", boot, 24)[0]
+    heads = struct.unpack_from("<H", boot, 26)[0]
+    hidden_sectors = struct.unpack_from("<I", boot, 28)[0]
+    if bytes_per_sector != 512:
+        raise RuntimeError(f"Az NTFS kötet szektormérete hibás: {bytes_per_sector}, elvárt 512.")
+    if sectors_per_cluster == 0 or sectors_per_cluster & (sectors_per_cluster - 1):
+        raise RuntimeError(f"Az NTFS klaszterméret mező hibás: {sectors_per_cluster}.")
+    if sectors_per_track != 63 or heads != 255:
+        raise RuntimeError(
+            f"Az NTFS BPB geometria hibás: heads={heads}, sectors/track={sectors_per_track}; "
+            "elvárt 255/63."
+        )
+    if hidden_sectors != expected_start_sector:
+        raise RuntimeError(
+            f"Az NTFS HiddenSectors mező hibás: {hidden_sectors}; "
+            f"elvárt {expected_start_sector}."
+        )
+    if boot[510:512] != b"\x55\xaa":
+        raise RuntimeError("Az NTFS boot szektor 0x55AA aláírása hiányzik.")
+
+
+def sync_filesystem(path: Path) -> None:
+    """Flush only the filesystem containing path, not every filesystem on host."""
+    command(["sync", "--file-system", str(path)], timeout=300)
+
+
+def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
+    """Prefer the in-kernel NTFS3 driver; fall back to ntfs-3g for compatibility."""
+    common = ["-o", "rw,nosuid,nodev", partition, str(mountpoint)]
+    try:
+        command(["mount", "-t", "ntfs3", *common], timeout=120)
+        emit("NTFS kötet csatolása a Linux kernel NTFS3 driverével…", 41)
+        return "ntfs3"
+    except RuntimeError as kernel_error:
+        if not shutil.which("ntfs-3g"):
+            raise RuntimeError(
+                "A kernel NTFS3 illesztőprogram nem tudta csatolni a pendrive-ot, "
+                "és az ntfs-3g tartalék driver sem érhető el. "
+                f"NTFS3 hiba: {kernel_error}"
+            ) from kernel_error
+        emit(
+            "A kernel NTFS3 driver nem érhető el; kompatibilitási tartalék: ntfs-3g…",
+            41,
+            log=str(kernel_error),
+        )
+        command(["mount", "-t", "ntfs-3g", *common], timeout=120)
+        return "ntfs-3g"
+
+
+def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
+    global TARGET_MODIFIED
+    require_programs((
+        "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
+        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel",
+    ))
+
+    # Validate both the removable target and the upstream boot image before
+    # making any changes to the user's USB drive.
+    target_size = validate_target(device)
+    verify_uefi_ntfs_image()
+    sector_size = int(command(["blockdev", "--getss", device]).stdout.strip())
+    if sector_size != 512:
+        raise RuntimeError(
+            f"Ez a verzió 512 bájtos logikai szektort vár; a célmeghajtó {sector_size} bájtos szektorokat jelez."
+        )
+    total_sectors = int(command(["blockdev", "--getsz", device]).stdout.strip())
+    layout = calculate_gpt_layout(total_sectors)
+    if layout["first_bytes"] + layout["second_bytes"] > target_size:
+        raise RuntimeError("A partíciók számított mérete nagyobb, mint a célmeghajtó kapacitása.")
+
+    temp_root = Path(tempfile.mkdtemp(prefix="bootmediakit-", dir="/run"))
+    iso_mount = temp_root / "iso"
+    usb_mount = temp_root / "usb"
+    mounted_iso = False
+    mounted_usb = False
+    try:
+        # Inspect the entire ISO and determine the exact data size while the
+        # target remains untouched.
+        emit("Windows ISO és UEFI:NTFS segédkép ellenőrzése…", 1)
+        mount_iso(image, iso_mount)
+        mounted_iso = True
+        install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount)
+        reserve_bytes = 128 * 1024 * 1024
+        if total_copy_bytes + reserve_bytes > layout["first_bytes"]:
+            raise RuntimeError(
+                "Kevés a pendrive kapacitása a Windows ISO fájljaihoz. "
+                f"Szükséges legalább {total_copy_bytes + reserve_bytes:,} bájt, "
+                f"az NTFS partíció mérete {layout['first_bytes']:,} bájt. "
+                "A pendrive tartalmához még nem nyúltam."
+            )
+
+        # Preserve the hash-pinned upstream image and alter only a temporary FAT label.
+        bmk_efi_image = prepare_bmk_uefi_ntfs_image(
+            UEFI_NTFS_IMAGE, temp_root / "uefi-ntfs-bmk-efi.img"
+        )
+        emit(
+            "ISO előellenőrzés kész; a pendrive-ot még nem módosítottam.",
+            8,
+            log=(
+                f"Windows PE: {boot_wim.relative_to(iso_mount)}; "
+                f"telepítőkép: {install_image.relative_to(iso_mount)}; "
+                f"másolandó fájlméret: {total_copy_bytes:,} bájt."
+            ),
+        )
+
+        # From this point on, disk contents will be modified. The device was
+        # validated before preflight; validate it once more immediately before
+        # unmounting/wiping to catch a device swap or stale selection.
+        validate_target(device)
+        emit("USB lemez leválasztása és GPT partíciók létrehozása…", 10)
+        unmount_disk(device)
+        TARGET_MODIFIED = True
+        command(["wipefs", "--all", "--force", device])
+        script = make_sfdisk_script(layout)
+        command(["sfdisk", "--wipe", "never", device], input_text=script)
+        command(["blockdev", "--rereadpt", device], check=False)
+        command(["partprobe", device], check=False)
+        command(["udevadm", "settle"], check=False, timeout=20)
+        verify_gpt_layout(device, layout)
+        emit(
+            "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
+            "az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.",
+            22,
+        )
+
+        ntfs_partition = partition_path(device, 1)
+        uefi_partition = partition_path(device, 2)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if os.path.exists(ntfs_partition) and os.path.exists(uefi_partition):
+                try:
+                    if stat.S_ISBLK(os.stat(ntfs_partition).st_mode) and stat.S_ISBLK(os.stat(uefi_partition).st_mode):
+                        break
+                except OSError:
+                    pass
+            time.sleep(0.25)
+        else:
+            raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
+
+        emit("NTFS fájlrendszer létrehozása…", 25)
+        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
+        validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
+        write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
+
+        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
+        usb_mount.mkdir(parents=True, exist_ok=True)
+        mount_ntfs_volume(ntfs_partition, usb_mount)
+        mounted_usb = True
+        copy_span = windows_copy_progress_span(verify)
+        copy_end_percent = 42 + copy_span
+        manifest = copy_tree_progress(
+            iso_mount,
+            usb_mount,
+            total_copy_bytes,
+            base_percent=42,
+            span=copy_span,
+            hash_files=verify,
+        )
+
+        # Commit all writes in one batch. Per-file fsync is particularly slow
+        # on low-end USB 2.0 flash drives; unmount also performs final flushing.
+        emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
+        sync_filesystem(usb_mount)
+
+        # Recheck the boot chain files on the destination before unmounting.
+        for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
+            copied = find_case_insensitive(usb_mount, relative)
+            if copied is None or not copied.is_file():
+                raise RuntimeError(f"A Windows UEFI indításhoz szükséges fájl hiányzik az USB-ről: {relative}")
+        if verify:
+            emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86)
+            verify_copied_files(usb_mount, manifest)
+        else:
+            emit(
+                "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.",
+                copy_end_percent,
+            )
+
+        emit("Fájlrendszer kiürítése és leválasztása…", 99)
+        sync_filesystem(usb_mount)
+        command(["umount", "--", str(usb_mount)], timeout=120)
+        mounted_usb = False
+        command(["udevadm", "settle"], check=False, timeout=20)
+        emit(
+            "A Windows UEFI:NTFS telepítő USB elkészült.",
+            100,
+            log=(
+                "GPT: 1. partíció Microsoft Basic Data / NTFS (Windows fájlok); "
+                "2. partíció BMK_EFI nevű Microsoft Basic Data / FAT UEFI:NTFS segédpartíció, "
+                "NoDriveLetter GUID:63 attribútummal. A segédpartíció szándékosan nem ESP, "
+                "hogy a Windows Setup ne találjon második EFI System Partitiont. "
+                "A Windows ISO fájljai eredeti formájukban kerültek át."
+            ),
+        )
+    finally:
+        if mounted_usb:
+            try:
+                sync_filesystem(usb_mount)
+            except Exception:
+                pass
+            command(["umount", "--", str(usb_mount)], check=False, timeout=120)
+        if mounted_iso:
+            command(["umount", "--", str(iso_mount)], check=False, timeout=120)
+        if TARGET_MODIFIED:
+            try:
+                unmount_disk(device)
+            except Exception:
+                pass
+        shutil.rmtree(temp_root, ignore_errors=True)
+        command(["udevadm", "settle"], check=False, timeout=20)
 
 
 def write_raw(image: Path, device: str, verify: bool) -> None:
@@ -143,13 +883,15 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
         raise RuntimeError("A lemezkép üres.")
     if source_size > target_size:
         raise RuntimeError("A lemezkép nagyobb, mint a célmeghajtó.")
-
     require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"))
-    emit("Célmeghajtó ellenőrzése…", 1, log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)")
+
+    emit("Célmeghajtó ellenőrzése…", 1,
+         log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)")
     unmount_disk(device)
     emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
     TARGET_MODIFIED = True
-    wipe_signatures(device)
+    command(["wipefs", "--all", "--force", device])
+    command(["sync"])
 
     emit("Lemezkép kiírása…", 3)
     offset = 0
@@ -186,8 +928,14 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
                         break
                     actual = os.read(target_fd, len(expected))
                     if actual != expected:
-                        mismatch = next((i for i, (a, b) in enumerate(zip(actual, expected)) if a != b), min(len(actual), len(expected)))
-                        raise RuntimeError(f"Visszaolvasási hiba a(z) {compared + mismatch:,}. bájtnál. A meghajtó vagy az USB-kapcsolat hibás lehet.")
+                        mismatch = next(
+                            (i for i, (a, b) in enumerate(zip(actual, expected)) if a != b),
+                            min(len(actual), len(expected)),
+                        )
+                        raise RuntimeError(
+                            f"Visszaolvasási hiba a(z) {compared + mismatch:,}. bájtnál. "
+                            "A meghajtó vagy az USB-kapcsolat hibás lehet."
+                        )
                     compared += len(expected)
                     percent = 61 + int((compared / source_size) * 38)
                     emit(f"Ellenőrzés… {compared:,} / {source_size:,} bájt", percent)
@@ -198,307 +946,6 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
     command(["sync"])
     emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
 
-
-def find_case_insensitive(root: Path, relative: str) -> Path | None:
-    current = root
-    for component in relative.replace("\\", "/").strip("/").split("/"):
-        if not current.is_dir():
-            return None
-        try:
-            match = next((entry for entry in current.iterdir() if entry.name.lower() == component.lower()), None)
-        except OSError:
-            return None
-        if match is None:
-            return None
-        current = match
-    return current
-
-
-def mount_iso(image: Path, mountpoint: Path) -> None:
-    mountpoint.mkdir(parents=True, exist_ok=True)
-    command(["mount", "-o", "loop,ro,nosuid,nodev", str(image), str(mountpoint)])
-
-
-def copy_tree_progress(source_root: Path, destination_root: Path, skipped: set[str], total_bytes: int, *, base_percent: int = 40, span: int = 45) -> None:
-    copied = 0
-    for current, dirs, files in os.walk(source_root):
-        current_path = Path(current)
-        relative_dir = current_path.relative_to(source_root)
-        target_dir = destination_root / relative_dir
-        target_dir.mkdir(parents=True, exist_ok=True)
-        # Do not follow symlinked directories from ISO content.
-        dirs[:] = [name for name in dirs if not (current_path / name).is_symlink()]
-        for filename in files:
-            src = current_path / filename
-            relative = src.relative_to(source_root).as_posix()
-            if relative.lower() in skipped:
-                continue
-            if src.is_symlink():
-                raise RuntimeError(f"A telepítő ISO szimbolikus linket tartalmaz, ezt a FAT32 cél nem tudja biztonságosan kezelni: {relative}")
-            dst = destination_root / src.relative_to(source_root)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            with src.open("rb") as read_file, dst.open("wb") as write_file:
-                while True:
-                    data = read_file.read(CHUNK)
-                    if not data:
-                        break
-                    write_file.write(data)
-                    copied += len(data)
-                    percent = base_percent + int((copied / max(total_bytes, 1)) * span)
-                    emit(f"Windows fájlok másolása… {copied:,} / {total_bytes:,} bájt", percent)
-            # Windows installer only needs file data; do not carry Unix mode bits.
-    emit("Windows telepítőfájlok átmásolva.", base_percent + span)
-
-
-def run_wimlib(args: list[str], *, title: str, percent: int) -> None:
-    """Run wimlib while forwarding its progress output to the GUI."""
-    try:
-        proc = subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("A Windows telepítő WIM/ESD feldolgozásához telepítsd a wimlib csomagot.") from exc
-    assert proc.stdout is not None
-    recent_output: list[str] = []
-    for line in proc.stdout:
-        cleaned = line.strip()
-        if cleaned:
-            recent_output.append(cleaned)
-            recent_output = recent_output[-6:]
-            emit(title, percent, log=cleaned)
-    code = proc.wait()
-    if code != 0:
-        detail = " | ".join(recent_output)
-        suffix = f" Részletek: {detail}" if detail else ""
-        raise RuntimeError(f"A wimlib művelet hibával leállt (kód: {code}).{suffix}")
-
-
-def split_wim(wim_path: Path, output_path: Path) -> list[Path]:
-    emit("A Windows telepítő WIM feldarabolása…", 29,
-         log="A FAT32 fájlméretkorlát miatt legfeljebb 3500 MiB-os .swm részek készülnek.")
-    run_wimlib(
-        ["wimlib-imagex", "split", str(wim_path), str(output_path), "3500", "--include-integrity"],
-        title="WIM feldarabolása…", percent=30,
-    )
-    # A temporary work directory is newly created for each operation, so no
-    # stale files can be mistaken for output from this split operation.
-    parts = sorted(
-        (p for p in output_path.parent.glob("install*.swm")
-         if p.is_file() and re.fullmatch(r"install(?:\d+)?\.swm", p.name, re.IGNORECASE)),
-        key=lambda p: (0 if p.name.lower() == "install.swm" else int(''.join(ch for ch in p.stem if ch.isdigit()) or 0)),
-    )
-    if not parts or not any(p.name.lower() == "install.swm" for p in parts):
-        raise RuntimeError("A wimlib nem hozta létre az install.swm fájlokat.")
-    too_large = [p.name for p in parts if p.stat().st_size > FAT32_MAX_FILE]
-    if too_large:
-        raise RuntimeError("A WIM egyetlen belső adatblokkja miatt a bontott fájl is 4 GiB fölé került: " + ", ".join(too_large))
-    return parts
-
-
-def export_esd_to_wim(esd_path: Path, output_wim: Path) -> None:
-    """Convert a non-encrypted solid ESD to a regular LZX-compressed WIM."""
-    emit("A nagy install.esd átalakítása hagyományos WIM formátumba…", 12,
-         log="A wimlib minden telepítőképet megtart; a kimenet a munkatárhelyre kerül.")
-    run_wimlib(
-        ["wimlib-imagex", "export", str(esd_path), "all", str(output_wim), "--compress=LZX"],
-        title="install.esd átalakítása WIM-mé…", percent=14,
-    )
-    if not output_wim.is_file() or output_wim.stat().st_size == 0:
-        raise RuntimeError("A wimlib nem hozta létre az átalakított install.wim fájlt.")
-    emit("Az átalakított WIM integritásának ellenőrzése…", 24)
-    run_wimlib(
-        ["wimlib-imagex", "verify", str(output_wim)],
-        title="WIM integritásellenőrzése…", percent=25,
-    )
-
-
-def copy_split_parts(parts: list[Path], destination: Path) -> None:
-    total = sum(p.stat().st_size for p in parts)
-    copied = 0
-    for part in parts:
-        target = destination / part.name
-        with part.open("rb") as src, target.open("wb") as dst:
-            while True:
-                data = src.read(CHUNK)
-                if not data:
-                    break
-                dst.write(data)
-                copied += len(data)
-                percent = 86 + int((copied / max(total, 1)) * 10)
-                emit(f"SWM fájlok másolása… {copied:,} / {total:,} bájt", percent)
-    emit("A darabolt Windows képfájlok átmásolva.", 96)
-
-
-def write_windows_uefi(image: Path, device: str) -> None:
-    global TARGET_MODIFIED
-    target_size = validate_target(device)
-    require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
-                      "mount", "parted", "partprobe", "mkfs.fat"))
-    iso_mount: Path | None = None
-    usb_mount: Path | None = None
-    mounted_iso = False
-    mounted_usb = False
-    temp_root = Path(tempfile.mkdtemp(prefix="bootmediakit-", dir="/run"))
-    work_root: Path | None = None
-    try:
-        # Keep the target mounted and untouched while all ISO conversion and
-        # capacity checks run. It is unmounted only immediately before writing.
-        iso_mount = temp_root / "iso"
-        usb_mount = temp_root / "usb"
-        emit("Windows ISO ellenőrzése…", 1)
-        mount_iso(image, iso_mount)
-        mounted_iso = True
-
-        efi_loader = find_case_insensitive(iso_mount, "efi/boot/bootx64.efi")
-        if efi_loader is None or not efi_loader.is_file():
-            raise RuntimeError("Ez az ISO nem tartalmaz szabványos x64 UEFI indítófájlt (EFI/BOOT/BOOTX64.EFI).")
-        sources_dir = find_case_insensitive(iso_mount, "sources")
-        if sources_dir is None or not sources_dir.is_dir():
-            raise RuntimeError("Nem található a Windows ISO sources könyvtára.")
-        wim = find_case_insensitive(sources_dir, "install.wim")
-        esd = find_case_insensitive(sources_dir, "install.esd")
-        if wim is None and esd is None:
-            raise RuntimeError("Nem található install.wim vagy install.esd a Windows ISO-ban.")
-        if wim is not None and esd is not None:
-            raise RuntimeError("Az ISO egyszerre tartalmaz install.wim és install.esd fájlt. A biztonságos automatikus kiválasztás nem lehetséges.")
-
-        oversized_wim: Path | None = None
-        oversized_esd: Path | None = None
-        copy_bytes = 0
-        for current, dirs, files in os.walk(iso_mount):
-            current_path = Path(current)
-            for directory in list(dirs):
-                if (current_path / directory).is_symlink():
-                    raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz, ez a változat nem támogatja.")
-            for name in files:
-                path = current_path / name
-                if path.is_symlink():
-                    raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz, ez a változat nem támogatja.")
-                size = path.stat().st_size
-                if size > FAT32_MAX_FILE:
-                    if wim is not None and path == wim:
-                        oversized_wim = wim
-                    elif esd is not None and path == esd:
-                        oversized_esd = esd
-                    else:
-                        raise RuntimeError(f"A FAT32 4 GiB fájlkorlátja miatt ez a fájl nem másolható: {path.relative_to(iso_mount)}")
-                else:
-                    copy_bytes += size
-
-        oversized_source = oversized_wim or oversized_esd
-        split_parts: list[Path] = []
-        if oversized_source:
-            require_programs(("wimlib-imagex",))
-            # /var/tmp is used rather than /run: converting an ESD can require
-            # several gigabytes and /run is commonly a small RAM-backed tmpfs.
-            scratch_base = Path("/var/tmp")
-            if not scratch_base.is_dir():
-                raise RuntimeError("A /var/tmp munkatárhely nem érhető el a nagy Windows képfájl feldolgozásához.")
-            source_size = oversized_source.stat().st_size
-            free_space = shutil.disk_usage(scratch_base).free
-            # Peak use is the converted WIM plus its split SWM output. A
-            # conservative estimate prevents filling the root filesystem.
-            required_scratch = source_size * 3 + 1024 * 1024 * 1024
-            if free_space < required_scratch:
-                raise RuntimeError(
-                    "Nincs elég szabad ideiglenes tárhely a nagy Windows képfájl biztonságos feldolgozásához. "
-                    f"Becsült szükséglet: {required_scratch / (1024**3):.1f} GiB; "
-                    f"szabad hely a /var/tmp fájlrendszeren: {free_space / (1024**3):.1f} GiB."
-                )
-            work_root = Path(tempfile.mkdtemp(prefix="bootmediakit-wim-", dir=str(scratch_base)))
-            if oversized_esd:
-                converted_wim = work_root / "install.wim"
-                export_esd_to_wim(oversized_esd, converted_wim)
-                required_for_split = converted_wim.stat().st_size + 1024 * 1024 * 1024
-                remaining = shutil.disk_usage(work_root).free
-                if remaining < required_for_split:
-                    raise RuntimeError(
-                        "Az ESD átalakítása elkészült, de nincs elég szabad hely a daraboláshoz. "
-                        f"Szükséges még: {required_for_split / (1024**3):.1f} GiB; "
-                        f"szabad hely: {remaining / (1024**3):.1f} GiB. A pendrive-hoz még nem nyúltam."
-                    )
-                split_parts = split_wim(converted_wim, work_root / "install.swm")
-                converted_wim.unlink(missing_ok=True)
-            else:
-                assert oversized_wim is not None
-                split_parts = split_wim(oversized_wim, work_root / "install.swm")
-
-        split_bytes = sum(p.stat().st_size for p in split_parts)
-        required = copy_bytes + split_bytes + 128 * 1024 * 1024
-        if required > target_size:
-            raise RuntimeError(
-                "Kevés a pendrive kapacitása az elkészült Windows telepítőhöz. "
-                f"Becsült igény tartalékkal: {required / (1024**3):.2f} GiB; "
-                f"a meghajtó kapacitása: {target_size / (1024**3):.2f} GiB. "
-                "A pendrive tartalmát még nem töröltem."
-            )
-
-        emit("USB-meghajtó GPT/FAT32 előkészítése…", 35)
-        unmount_disk(device)
-        TARGET_MODIFIED = True
-        wipe_signatures(device)
-        command(["parted", "-s", device, "mklabel", "gpt"])
-        command(["parted", "-s", device, "mkpart", "primary", "fat32", "1MiB", "100%"])
-        command(["parted", "-s", device, "set", "1", "esp", "on"])
-        command(["partprobe", device], check=False)
-        command(["udevadm", "settle"], check=False, timeout=15)
-
-        partition = None
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            result = command(["lsblk", "-nrpo", "PATH,TYPE", device], check=False)
-            for line in result.stdout.splitlines():
-                fields = line.split()
-                if len(fields) >= 2 and fields[1] == "part":
-                    partition = fields[0]
-                    break
-            if partition:
-                break
-            time.sleep(0.5)
-        if not partition:
-            raise RuntimeError("A GPT partíció elkészült, de a kernel nem találja az USB partícióját.")
-
-        emit("FAT32 fájlrendszer létrehozása…", 38)
-        command(["mkfs.fat", "-F", "32", "-n", "BOOTMEDIA", partition])
-        command(["udevadm", "settle"], check=False, timeout=15)
-        unmount_disk(device)
-        usb_mount.mkdir(parents=True, exist_ok=True)
-        command(["mount", partition, str(usb_mount)])
-        mounted_usb = True
-
-        skipped: set[str] = set()
-        if oversized_source:
-            skipped.add(oversized_source.relative_to(iso_mount).as_posix().lower())
-        copy_tree_progress(iso_mount, usb_mount, skipped, copy_bytes, base_percent=40, span=45)
-
-        if split_parts:
-            dest_sources = find_case_insensitive(usb_mount, "sources")
-            if dest_sources is None:
-                raise RuntimeError("A másolás után nem található a cél sources könyvtára.")
-            copy_split_parts(split_parts, dest_sources)
-
-        emit("Fájlrendszer kiürítése és leválasztása…", 98)
-        command(["sync"])
-        command(["umount", "--", str(usb_mount)])
-        mounted_usb = False
-        command(["sync"])
-        emit("A Windows UEFI telepítő USB elkészült.", 100,
-             log="GPT + FAT32, x64 UEFI. A célmeghajtó adatai törlődtek.")
-    finally:
-        if mounted_usb and usb_mount:
-            command(["umount", "--", str(usb_mount)], check=False)
-        if mounted_iso and iso_mount:
-            command(["umount", "--", str(iso_mount)], check=False)
-        if TARGET_MODIFIED:
-            try:
-                unmount_disk(device)
-            except Exception:
-                pass
-        shutil.rmtree(temp_root, ignore_errors=True)
-        if work_root:
-            shutil.rmtree(work_root, ignore_errors=True)
-        command(["udevadm", "settle"], check=False, timeout=15)
 
 def main(argv: list[str]) -> int:
     global TARGET_MODIFIED
@@ -514,22 +961,22 @@ def main(argv: list[str]) -> int:
     if not image.is_file() or not os.access(image, os.R_OK):
         emit("A forrásfájl nem olvasható.", error=str(image))
         return 1
+    verify = len(argv) >= 5 and argv[4] == "1"
     try:
         if mode == "raw":
-            verify = len(argv) >= 5 and argv[4] == "1"
             write_raw(image, device, verify)
         elif mode == "windows":
             if image.suffix.lower() != ".iso":
                 raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
-            write_windows_uefi(image, device)
+            write_windows_uefi(image, device, verify)
         else:
             raise RuntimeError("Ismeretlen írási mód.")
         return 0
-    except Exception as exc:  # all failures must reach the GUI as one clean event
+    except Exception as exc:
         if TARGET_MODIFIED:
             state_log = "A célmeghajtó állapota részleges lehet; ellenőrizd újracsatlakoztatás után."
         else:
-            state_log = "A célmeghajtó tartalmának módosítása nem kezdődött el; legfeljebb a csatolási állapota változhatott."
+            state_log = "A célmeghajtó tartalmát nem módosítottam; az előellenőrzés állította le a műveletet."
         emit("A művelet megszakadt.", error=str(exc), log=state_log)
         return 1
 

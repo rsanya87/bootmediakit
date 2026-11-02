@@ -1,12 +1,19 @@
+import errno
+import hashlib
+import os
+import struct
+import subprocess
+import shutil
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
-import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import worker
+from iso_utils import is_windows_install_iso
 
 
 class WorkerSafetyTests(unittest.TestCase):
@@ -30,72 +37,472 @@ class WorkerSafetyTests(unittest.TestCase):
 
     def test_missing_iso_path_returns_none(self):
         with tempfile.TemporaryDirectory() as temp:
-            self.assertIsNone(worker.find_case_insensitive(Path(temp), "sources/install.wim"))
+            self.assertIsNone(
+                worker.find_case_insensitive(Path(temp), "sources/install.wim")
+            )
 
     def test_windows_iso_detector_recognizes_install_wim(self):
-        result = subprocess.CompletedProcess(["7z"], 0, "Path = test.iso\nPath = sources\\install.wim\n", "")
-        with patch("shutil.which", return_value="/usr/bin/7z"), patch("subprocess.run", return_value=result):
-            from iso_utils import is_windows_install_iso
+        result = subprocess.CompletedProcess(
+            ["7z"], 0, "Path = test.iso\nPath = sources\\install.wim\n", ""
+        )
+        with patch("shutil.which", return_value="/usr/bin/7z"), patch(
+            "subprocess.run", return_value=result
+        ):
             self.assertTrue(is_windows_install_iso(Path("fake.iso")))
 
     def test_windows_iso_detector_ignores_regular_linux_iso(self):
-        result = subprocess.CompletedProcess(["7z"], 0, "Path = test.iso\nPath = casper/filesystem.squashfs\n", "")
-        with patch("shutil.which", return_value="/usr/bin/7z"), patch("subprocess.run", return_value=result):
-            from iso_utils import is_windows_install_iso
+        result = subprocess.CompletedProcess(
+            ["7z"], 0, "Path = test.iso\nPath = casper/filesystem.squashfs\n", ""
+        )
+        with patch("shutil.which", return_value="/usr/bin/7z"), patch(
+            "subprocess.run", return_value=result
+        ):
             self.assertFalse(is_windows_install_iso(Path("fake.iso")))
 
 
-class WimHandlingTests(unittest.TestCase):
-    def test_esd_export_uses_all_images_and_lzx_wim_output(self):
+class UefiNtfsLayoutTests(unittest.TestCase):
+    def test_gpt_layout_reserves_exact_one_mib_efi_partition_at_end(self):
+        sectors = (32 * 1024 * 1024 * 1024) // 512
+        layout = worker.calculate_gpt_layout(sectors)
+        self.assertEqual(layout["second_size"], 2048)
+        self.assertEqual(layout["second_bytes"], 1024 * 1024)
+        self.assertEqual(layout["first_start"], 2048)
+        self.assertEqual(layout["second_start"] % 2048, 0)
+        self.assertEqual(
+            layout["first_start"] + layout["first_size"],
+            layout["second_start"],
+        )
+        self.assertLessEqual(
+            layout["second_start"] + layout["second_size"] - 1,
+            sectors - worker.GPT_RESERVED_SECTORS,
+        )
+
+    def test_too_small_drive_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "túl kicsi"):
+            worker.calculate_gpt_layout(4096)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_accepts_generated_gpt_script_on_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input=worker.make_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_writes_and_reads_back_rufus_compatible_helper_attributes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--wipe", "always", str(image)],
+                input=worker.make_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+            # Run the same post-write validation that the USB worker executes,
+            # but only against a temporary sparse image file, never a device.
+            worker.verify_gpt_layout(str(image), layout)
+
+    def test_sfdisk_script_uses_basic_data_and_no_drive_letter_for_both_partitions(self):
+        layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
+        script = worker.make_sfdisk_script(layout)
+        self.assertIn("label: gpt", script)
+        self.assertEqual(script.count(f"type={worker.GPT_BASIC_DATA_GUID}"), 2)
+        self.assertIn(f"attrs={worker.GPT_NO_DRIVE_LETTER_ATTR}", script)
+        self.assertNotIn("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", script)
+        self.assertIn('name="BOOTMEDIA"', script)
+        self.assertIn('name="BMK_EFI"', script)
+
+    def test_partition_path_handles_sd_and_nvme_names(self):
+        self.assertEqual(worker.partition_path("/dev/sdb", 1), "/dev/sdb1")
+        self.assertEqual(worker.partition_path("/dev/nvme1n1", 2), "/dev/nvme1n1p2")
+
+    def test_git_blob_sha1_matches_git_object_format(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "sample.bin"
+            payload = b"BootMediaKit"
+            path.write_bytes(payload)
+            expected = hashlib.sha1(b"blob 12\0" + payload).hexdigest()
+            self.assertEqual(worker.git_blob_sha1(path), expected)
+
+
+class ProgressCalculationTests(unittest.TestCase):
+    def test_windows_copy_progress_uses_full_range_without_sha256(self):
+        self.assertEqual(worker.windows_copy_progress_span(False), 54)
+        self.assertEqual(42 + worker.windows_copy_progress_span(False), 96)
+
+    def test_windows_copy_progress_reserves_range_for_sha256(self):
+        self.assertEqual(worker.windows_copy_progress_span(True), 43)
+        self.assertEqual(42 + worker.windows_copy_progress_span(True), 85)
+
+
+class CopyVerificationTests(unittest.TestCase):
+    def test_copy_creates_manifest_and_files(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            esd = root / "install.esd"
-            output = root / "install.wim"
-            esd.write_bytes(b"source")
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            (source / "boot.wim").write_bytes(b"windows setup boot image")
+            (source / "nested").mkdir()
+            (source / "nested" / "install.esd").write_bytes(b"windows install image")
+            total = sum(p.stat().st_size for p in source.rglob("*") if p.is_file())
 
-            def fake_run(args, *, title, percent):
-                if args[1] == "export":
-                    output.write_bytes(b"converted-wim")
+            manifest = worker.copy_tree_progress(source, destination, total)
+            self.assertEqual(len(manifest), 2)
+            self.assertTrue((destination / "boot.wim").is_file())
+            self.assertTrue((destination / "nested" / "install.esd").is_file())
+            worker.verify_copied_files(destination, manifest)
 
-            with patch("worker.run_wimlib", side_effect=fake_run) as run:
-                worker.export_esd_to_wim(esd, output)
-
-            self.assertTrue(output.is_file())
-            first_call = run.call_args_list[0].args[0]
-            self.assertEqual(first_call[1], "export")
-            self.assertEqual(first_call[3], "all")
-            self.assertIn("--compress=LZX", first_call)
-
-    def test_split_wim_returns_ordered_swm_parts(self):
+    def test_copy_without_hash_skips_manifest_and_per_file_fsync(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            wim = root / "install.wim"
-            out = root / "install.swm"
-            wim.write_bytes(b"wim")
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            (source / "boot.wim").write_bytes(b"boot payload")
+            total = (source / "boot.wim").stat().st_size
 
-            def fake_run(args, *, title, percent):
-                (root / "install2.swm").write_bytes(b"second")
-                (root / "install.swm").write_bytes(b"first")
+            with patch("worker.os.fsync") as fsync:
+                manifest = worker.copy_tree_progress(
+                    source, destination, total, hash_files=False
+                )
 
-            with patch("worker.run_wimlib", side_effect=fake_run):
-                parts = worker.split_wim(wim, out)
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), b"boot payload")
+            fsync.assert_not_called()
 
-            self.assertEqual([p.name for p in parts], ["install.swm", "install2.swm"])
-
-    def test_split_wim_rejects_parts_over_fat32_limit(self):
+    def test_copy_verification_detects_changed_file(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            wim = root / "install.wim"
-            out = root / "install.swm"
-            wim.write_bytes(b"wim")
+            destination = root / "destination"
+            destination.mkdir()
+            target = destination / "boot.wim"
+            target.write_bytes(b"changed")
+            expected = hashlib.sha256(b"original").hexdigest()
+            manifest = [("boot.wim", len(b"original"), expected)]
+            with self.assertRaisesRegex(RuntimeError, "mérethiba|SHA-256"):
+                worker.verify_copied_files(destination, manifest)
 
-            def fake_run(args, *, title, percent):
-                with (root / "install.swm").open("wb") as f:
-                    f.truncate(worker.FAT32_MAX_FILE + 1)
 
-            with patch("worker.run_wimlib", side_effect=fake_run):
-                with self.assertRaisesRegex(RuntimeError, "4 GiB fölé"):
-                    worker.split_wim(wim, out)
+class NtfsMountTests(unittest.TestCase):
+    def test_ntfs3_driver_is_preferred(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch("worker.command") as run:
+                driver = worker.mount_ntfs_volume("/dev/fake1", Path(temp))
+            self.assertEqual(driver, "ntfs3")
+            self.assertEqual(run.call_args.args[0][:3], ["mount", "-t", "ntfs3"])
+            self.assertEqual(run.call_count, 1)
+
+    def test_ntfs3_falls_back_to_ntfs3g_when_kernel_driver_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch(
+                "worker.command",
+                side_effect=[RuntimeError("unknown filesystem type ntfs3"), subprocess.CompletedProcess([], 0, "", "")],
+            ) as run, patch("worker.shutil.which", return_value="/usr/bin/ntfs-3g"):
+                driver = worker.mount_ntfs_volume("/dev/fake1", Path(temp))
+            self.assertEqual(driver, "ntfs-3g")
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[0].args[0][:3], ["mount", "-t", "ntfs3"])
+            self.assertEqual(run.call_args_list[1].args[0][:3], ["mount", "-t", "ntfs-3g"])
+
+
+class WindowsIsoScanTests(unittest.TestCase):
+    def test_scan_accepts_case_insensitive_uefi_and_install_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "EFI" / "BOOT"
+            efi.mkdir(parents=True)
+            (efi / "BOOTX64.EFI").write_bytes(b"efi-loader")
+            sources = root / "Sources"
+            sources.mkdir()
+            (sources / "Boot.WIM").write_bytes(b"boot-image")
+            (sources / "Install.ESD").write_bytes(b"install-image")
+            expected_total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+            install_image, boot_wim, total = worker.scan_windows_iso(root)
+
+            self.assertEqual(install_image.name, "Install.ESD")
+            self.assertEqual(boot_wim.name, "Boot.WIM")
+            self.assertEqual(total, expected_total)
+
+    def test_scan_rejects_missing_boot_wim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "efi" / "boot"
+            efi.mkdir(parents=True)
+            (efi / "bootx64.efi").write_bytes(b"efi-loader")
+            sources = root / "sources"
+            sources.mkdir()
+            (sources / "install.esd").write_bytes(b"install")
+            with self.assertRaisesRegex(RuntimeError, "boot.wim"):
+                worker.scan_windows_iso(root)
+
+    def test_scan_rejects_missing_install_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            efi = root / "efi" / "boot"
+            efi.mkdir(parents=True)
+            (efi / "bootx64.efi").write_bytes(b"efi-loader")
+            sources = root / "sources"
+            sources.mkdir()
+            (sources / "boot.wim").write_bytes(b"boot")
+            with self.assertRaisesRegex(RuntimeError, "install.wim"):
+                worker.scan_windows_iso(root)
+
+
+class UefiNtfsLabelTests(unittest.TestCase):
+    def test_prepare_renamed_helper_preserves_verified_upstream_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            upstream = root / "uefi-ntfs-upstream.img"
+            destination = root / "uefi-ntfs-bmk-efi.img"
+            original = b"pinned upstream helper image"
+            upstream.write_bytes(original)
+            responses = [
+                subprocess.CompletedProcess(["fatlabel"], 0, "RUFUS_BOOT\n", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "BMK_EFI\n", ""),
+            ]
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", len(original)), patch(
+                "worker.command", side_effect=responses
+            ) as run:
+                result = worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+
+            self.assertEqual(result, destination)
+            self.assertEqual(upstream.read_bytes(), original)
+            self.assertEqual(destination.read_bytes(), original)
+            self.assertEqual(run.call_args_list[0].args[0], ["fatlabel", str(upstream)])
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["fatlabel", str(destination), "BMK_EFI"],
+            )
+            self.assertEqual(run.call_args_list[2].args[0], ["fatlabel", str(destination)])
+
+    def test_prepare_rejects_unexpected_upstream_label(self):
+        with tempfile.TemporaryDirectory() as temp:
+            upstream = Path(temp) / "uefi-ntfs.img"
+            destination = Path(temp) / "bmk-efi.img"
+            upstream.write_bytes(b"pinned helper")
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", upstream.stat().st_size), patch(
+                "worker.command",
+                return_value=subprocess.CompletedProcess(["fatlabel"], 0, "UNKNOWN\n", ""),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "elvárt: RUFUS_BOOT"):
+                    worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+            self.assertFalse(destination.exists())
+
+
+class UefiNtfsImageTests(unittest.TestCase):
+    def test_helper_image_size_and_hash_are_checked(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"BootMediaKit helper")
+            size = path.stat().st_size
+            digest = worker.git_blob_sha1(path)
+            sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", digest
+            ), patch.object(worker, "UEFI_NTFS_SHA256", sha256):
+                worker.verify_uefi_ntfs_image(path)
+
+    def test_helper_image_with_wrong_hash_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"tampered helper")
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", path.stat().st_size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", "0" * 40
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Git-blob"):
+                    worker.verify_uefi_ntfs_image(path)
+
+
+    def test_helper_image_with_wrong_sha256_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "uefi-ntfs.img"
+            path.write_bytes(b"correct git hash but bad sha256 pin")
+            git_hash = worker.git_blob_sha1(path)
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", path.stat().st_size), patch.object(
+                worker, "UEFI_NTFS_GIT_BLOB_SHA1", git_hash
+            ), patch.object(worker, "UEFI_NTFS_SHA256", "0" * 64):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256"):
+                    worker.verify_uefi_ntfs_image(path)
+
+
+
+
+class NtfsBootSectorTests(unittest.TestCase):
+    def make_valid_boot_sector(self, start_sector=2048):
+        boot = bytearray(512)
+        boot[3:11] = b"NTFS    "
+        struct.pack_into("<H", boot, 11, 512)
+        boot[13] = 8
+        struct.pack_into("<H", boot, 24, 63)
+        struct.pack_into("<H", boot, 26, 255)
+        struct.pack_into("<I", boot, 28, start_sector)
+        boot[510:512] = b"\x55\xaa"
+        return bytes(boot)
+
+    def test_valid_ntfs_bpb_geometry_and_hidden_sectors_are_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partition.img"
+            path.write_bytes(self.make_valid_boot_sector())
+            worker.validate_ntfs_boot_sector(str(path), 2048)
+
+    def test_wrong_hidden_sector_offset_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partition.img"
+            path.write_bytes(self.make_valid_boot_sector(start_sector=0))
+            with self.assertRaisesRegex(RuntimeError, "HiddenSectors"):
+                worker.validate_ntfs_boot_sector(str(path), 2048)
+
+    def test_wrong_chs_geometry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            boot = bytearray(self.make_valid_boot_sector())
+            struct.pack_into("<H", boot, 24, 0)
+            path = Path(temp) / "partition.img"
+            path.write_bytes(boot)
+            with self.assertRaisesRegex(RuntimeError, "BPB geometria"):
+                worker.validate_ntfs_boot_sector(str(path), 2048)
+
+
+class WindowsVerifyArgumentTests(unittest.TestCase):
+    def test_main_passes_disabled_verification_to_windows_writer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"ISO test")
+            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+                "worker.write_windows_uefi"
+            ) as write:
+                result = worker.main(
+                    ["worker.py", "windows", str(image), "/dev/sdb", "0"]
+                )
+            self.assertEqual(result, 0)
+            write.assert_called_once_with(image, "/dev/sdb", False)
+
+    def test_main_passes_enabled_verification_to_windows_writer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"ISO test")
+            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+                "worker.write_windows_uefi"
+            ) as write:
+                result = worker.main(
+                    ["worker.py", "windows", str(image), "/dev/sdb", "1"]
+                )
+            self.assertEqual(result, 0)
+            write.assert_called_once_with(image, "/dev/sdb", True)
+
+
+class KernelCopyTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
+    def test_unverified_copy_uses_kernel_copy_file_range_when_supported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"kernel-assisted copy test" * 1000
+            (source / "boot.wim").write_bytes(payload)
+            real_copy_file_range = os.copy_file_range
+
+            with patch(
+                "worker.os.copy_file_range", wraps=real_copy_file_range
+            ) as copy_range:
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertGreater(copy_range.call_count, 0)
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
+    @unittest.skipUnless(
+        hasattr(os, "copy_file_range") and hasattr(os, "sendfile"),
+        "copy_file_range/sendfile are unavailable",
+    )
+    def test_copy_file_range_uses_sendfile_fallback_on_cross_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"sendfile fallback test" * 3000
+            (source / "boot.wim").write_bytes(payload)
+            real_sendfile = os.sendfile
+
+            with patch(
+                "worker.os.copy_file_range",
+                side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
+            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile:
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertGreater(sendfile.call_count, 0)
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
+    @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
+    def test_kernel_copy_falls_back_to_streaming_when_both_syscalls_fail(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"fallback copy test" * 1000
+            (source / "boot.wim").write_bytes(payload)
+
+            with patch(
+                "worker.os.copy_file_range",
+                side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
+            ), patch(
+                "worker.os.sendfile",
+                side_effect=OSError(errno.EXDEV, "sendfile cross-device copy not supported"),
+            ):
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
+    def test_progress_messages_are_throttled_to_percentage_changes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = bytes(range(100))
+            (source / "boot.wim").write_bytes(payload)
+
+            with patch.object(worker, "CHUNK", 1), patch("worker.emit") as emit:
+                worker.copy_tree_progress(
+                    source, destination, len(payload),
+                    base_percent=0, span=10, hash_files=True,
+                )
+
+            percent_events = [
+                call for call in emit.call_args_list
+                if len(call.args) >= 2 and call.args[1] is not None
+            ]
+            self.assertLessEqual(len(percent_events), 12)
 
 
 if __name__ == "__main__":
