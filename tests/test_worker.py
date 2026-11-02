@@ -118,6 +118,16 @@ class UefiNtfsLayoutTests(unittest.TestCase):
             self.assertEqual(worker.git_blob_sha1(path), expected)
 
 
+class ProgressCalculationTests(unittest.TestCase):
+    def test_windows_copy_progress_uses_full_range_without_sha256(self):
+        self.assertEqual(worker.windows_copy_progress_span(False), 54)
+        self.assertEqual(42 + worker.windows_copy_progress_span(False), 96)
+
+    def test_windows_copy_progress_reserves_range_for_sha256(self):
+        self.assertEqual(worker.windows_copy_progress_span(True), 43)
+        self.assertEqual(42 + worker.windows_copy_progress_span(True), 85)
+
+
 class CopyVerificationTests(unittest.TestCase):
     def test_copy_creates_manifest_and_files(self):
         with tempfile.TemporaryDirectory() as temp:
