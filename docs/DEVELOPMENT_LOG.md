@@ -75,3 +75,6 @@ The photographed log includes:
 This resembles a known Windows Setup failure pattern where Windows PE misidentifies the system/boot disk when several internal HDDs/SSDs are present. This is not yet proven to be the root cause on this laptop. The next safe diagnostic is to verify the 120 GB SSD's disk number and GPT status using `diskpart list disk`, then repeat the install with the non-target WDC HDD temporarily disconnected. Do not clean or format the secondary HDD for this test.
 
 See [Microsoft UEFI/GPT partition guidance](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11) and the Windows Setup multiple-disk diagnostic case documented in the issue discussion. The user must still confirm the same-machine physical installation test before the 0.1.2 PR can be merged.
+
+
+The copy fast path now tries `copy_file_range` first. On cross-filesystem errors such as `EXDEV`, it tries Linux `sendfile` before falling back to the buffered stream loop. The GitHub Actions runner exercises the cross-filesystem fallback path; actual ISO9660-loop to USB-NTFS3 throughput still has to be measured on the user's CachyOS system.
