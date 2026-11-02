@@ -1,6 +1,6 @@
 # Testing
 
-## 0.1.2-alpha development checks
+## 0.1.2 release validation
 
 Run from the repository root:
 
@@ -24,7 +24,8 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Verify that the Windows SHA-256 checkbox value is passed from the CLI entry point to the writer.
 - Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
 - GPT Microsoft Basic Data type identifiers on both partitions.
-- The 1 MiB FAT helper partition's GUID:63 NoDriveLetter attribute (and that it is not typed as an EFI System Partition).
+- The 1 MiB FAT BMK_EFI helper partition's GPT name, volume label and GUID:63 NoDriveLetter attribute (and that it is not typed as an EFI System Partition).
+- Creating a temporary BMK_EFI-labelled helper image from a hash-verified pristine upstream source image; ensure the original source remains unchanged.
 - Linux `sdX` and NVMe partition naming.
 - Git object hash calculation used to pin the helper image.
 - Windows ISO scan for EFI bootloader, boot.wim and install image.
@@ -33,22 +34,22 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Dynamic copy-progress range when the optional SHA-256 second pass is disabled or enabled.
 - Detection of a changed copied file.
 
-Current automated test suite: 35 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 37 unit tests plus GitHub Actions checks using the real sfdisk, mkfs.ntfs and fatlabel utilities. CI downloads the pinned UEFI helper image, verifies its exact size and both hashes, then changes only a temporary copy's FAT label from RUFUS_BOOT to BMK_EFI. Unit tests use temporary files and mocked tools; CI's FAT-label check uses the real dosfstools command. These checks do not write to a real USB drive.
 
-## Required manual tests before merge/release
+## Physical test results and remaining validation
 
-1. Install the branch on a clean/current CachyOS system. Confirm that `ntfs-3g`, `ntfsprogs`, and other dependencies are present and that the UEFI helper image downloads with the pinned hash.
-2. Confirm the downloaded image is exactly 1,048,576 bytes and matches the pinned Git blob SHA-1.
+1. Install on CachyOS. Confirm that `ntfs-3g`, `ntfsprogs`, `dosfstools` and other dependencies are present and the pristine helper image downloads with the pinned hashes. **User test passed.**
+2. Confirm the downloaded image is exactly 1,048,576 bytes and matches the pinned Git blob SHA-1 and SHA-256. **CI passed.**
 3. Use a disposable USB drive. Check the device path, model, capacity and all partitions before confirming.
 4. Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB from the same ISO used for the 0.1.1 failure report.
-5. Inspect the GPT layout: both partitions must be Microsoft Basic Data; partition 1 is NTFS and partition 2 is FAT with GUID:63 NoDriveLetter and the 1 MiB helper image. The helper partition must not be typed as EFI System Partition.
+5. Inspect the GPT layout: both partitions must be Microsoft Basic Data; partition 1 is NTFS and partition 2 is FAT named BMK_EFI with GUID:63 NoDriveLetter and the 1 MiB helper image. The helper partition must not be typed as EFI System Partition.
 6. Confirm the install.esd is copied unchanged (same size and SHA-256 as the ISO source file).
-7. Boot the USB in UEFI mode on the same physical PC. Confirm UEFI:NTFS launches Windows Boot Manager and Windows Setup can load the installation image.
+7. **User test passed through first reboot:** on the Samsung RV511, boot the USB in UEFI mode, Windows Setup loaded the installation image, copied files, passed the first reboot and continued from the 120 GB internal SSD. Final desktop/first-login confirmation is still desirable.
 8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
-9. Record USB creation time and transfer rate on both a USB 2.0 stick and, if available, a USB 3.x stick. Compare the Windows verification checkbox off/on.
+9. The user reports significantly faster creation on two USB 2.0 sticks after the kernel NTFS3/copy optimizations. Exact elapsed times and USB 3.x comparison remain outstanding.
 10. If Setup reports `GetMachineInfo: Couldn't find info for boot disk` or `CanBeSystemVolume`, first confirm the 120 GB SSD's disk number and GPT status with `diskpart list disk`; repeat the installation with non-target internal HDDs temporarily disconnected.
 11. Optionally repeat using a second USB stick and Windows ISO.
 
 ## Test result discipline
 
-Do not describe mocked unit tests as proof that media creation works on physical hardware. Do not close GitHub issue #2 until the same-machine test passes. Do not merge to `main` or publish a 0.1.2 release before the user confirms successful boot and Windows Setup source access.
+Do not describe mocked unit tests as proof that media creation works on physical hardware. The same-machine Windows Setup source-access and first-reboot test has passed. Keep issue #2 open for final install confirmation and Secure Boot follow-up; broader platform coverage is still future work.
