@@ -35,10 +35,18 @@ jobs:
       - name: Install NTFS format utility for a dry-run check
         run: |
           sudo apt-get update
-          sudo apt-get install -y ntfs-3g
+          sudo apt-get install -y ntfs-3g dosfstools
       - name: Validate NTFS formatting arguments on a temporary image
         run: |
           truncate -s 64M "$RUNNER_TEMP/ntfs-test.img"
           mkfs.ntfs --no-action --fast --force --label BOOTMEDIA --partition-start 2048 --sector-size 512 --heads 255 --sectors-per-track 63 --cluster-size 4096 "$RUNNER_TEMP/ntfs-test.img"
+      - name: Verify upstream FAT helper label can be branded without changing the source image
+        run: |
+          cp "$RUNNER_TEMP/uefi-ntfs.img" "$RUNNER_TEMP/uefi-ntfs-bmk.img"
+          test "$(fatlabel "$RUNNER_TEMP/uefi-ntfs.img")" = "RUFUS_BOOT"
+          fatlabel "$RUNNER_TEMP/uefi-ntfs-bmk.img" BMK_EFI
+          test "$(fatlabel "$RUNNER_TEMP/uefi-ntfs-bmk.img")" = "BMK_EFI"
+          test "$(stat -c %s "$RUNNER_TEMP/uefi-ntfs-bmk.img")" = "1048576"
+          sha256sum "$RUNNER_TEMP/uefi-ntfs.img" "$RUNNER_TEMP/uefi-ntfs-bmk.img"
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
