@@ -24,10 +24,11 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Linux `sdX` and NVMe partition naming.
 - Git object hash calculation used to pin the helper image.
 - Windows ISO scan for EFI bootloader, boot.wim and install image.
-- File-copy manifest generation and SHA-256 read-back verification.
+- File-copy manifest generation, no-hash fast-copy path, and SHA-256 read-back verification.
+- Kernel NTFS3 mount preference and ntfs-3g fallback.
 - Detection of a changed copied file.
 
-Current automated test suite: 20 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 22 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
@@ -39,7 +40,8 @@ Current automated test suite: 20 unit tests plus dry-run checks using the real s
 6. Confirm the install.esd is copied unchanged (same size and SHA-256 as the ISO source file).
 7. Boot the USB in UEFI mode on the same physical PC. Confirm UEFI:NTFS launches Windows Boot Manager and Windows Setup can load the installation image.
 8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
-9. Optionally repeat using a second USB stick and Windows ISO.
+9. Record USB creation time and transfer rate on both a USB 2.0 stick and, if available, a USB 3.x stick. Compare the Windows verification checkbox off/on.
+10. Optionally repeat using a second USB stick and Windows ISO.
 
 ## Test result discipline
 
