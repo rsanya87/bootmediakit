@@ -14,7 +14,7 @@
 - The 1 MiB helper partition is placed after the NTFS partition at the end of the disk and has the GPT EFI System type. The verified upstream UEFI:NTFS image is copied there byte-for-byte.
 - The UEFI helper is fetched by an installer script from a pinned Rufus source commit. The downloader checks the exact file size, Git blob SHA-1 and SHA-256; the writer checks the same image and verifies the partition after writing.
 - Windows ISO content is copied without converting or splitting `install.esd` / `install.wim`.
-- The source files are hashed during copy; the UI offers a complete SHA-256 read-back verification, enabled by default.
+- The source files are hashed during copy when full verification is selected; the UI offers a complete SHA-256 read-back verification, off by default in Windows mode to avoid a second full pass over slow USB media.
 - Added layout and copy/verification unit tests.
 - The user-reported 0.1.1 Windows Setup error remains unresolved until a new physical USB boots on the same target PC and Windows Setup can read the source.
 
