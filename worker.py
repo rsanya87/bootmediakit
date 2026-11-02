@@ -27,8 +27,11 @@ UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
 UEFI_NTFS_IMAGE_SIZE = 1_048_576
 UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
 UEFI_NTFS_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
-GPT_ESP_GUID = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 GPT_BASIC_DATA_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
+# GPT GUID-specific attribute bit 63: do not automatically assign a drive letter.
+# Rufus uses Microsoft Basic Data (not EFI System) for its UEFI:NTFS helper
+# partition because Windows Setup can fail when it sees a second ESP.
+GPT_NO_DRIVE_LETTER_ATTR = "GUID:63"
 GPT_ALIGNMENT_SECTORS = 2048
 GPT_RESERVED_SECTORS = 34
 TARGET_MODIFIED = False
@@ -213,8 +216,11 @@ def verify_uefi_ntfs_image(path: Path = UEFI_NTFS_IMAGE) -> None:
 def calculate_gpt_layout(total_sectors: int, image_size: int = UEFI_NTFS_IMAGE_SIZE) -> dict[str, int]:
     """Calculate aligned GPT partitions in 512-byte logical sectors.
 
-    Partition 1 is Microsoft Basic Data (NTFS); partition 2 is the EFI System
-    Partition containing the exact 1 MiB upstream UEFI:NTFS FAT image.
+    Both partitions use Microsoft Basic Data. Partition 1 contains the NTFS
+    Windows files; partition 2 contains the FAT UEFI:NTFS helper image and has
+    the GUID-specific no-drive-letter attribute. Rufus deliberately does not
+    mark this helper partition as an ESP: Windows Setup can fail when it sees
+    two ESPs on one machine.
     """
     sector_size = 512
     if total_sectors <= 0 or image_size <= 0:
@@ -254,8 +260,70 @@ def make_sfdisk_script(layout: dict[str, int]) -> str:
         f"start={layout['first_start']}, size={layout['first_size']}, "
         f"type={GPT_BASIC_DATA_GUID}, name=\"BOOTMEDIA\"\n"
         f"start={layout['second_start']}, size={layout['second_size']}, "
-        f"type={GPT_ESP_GUID}, name=\"BOOTMEDIA_EFI\"\n"
+        f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"UEFI_NTFS\"\n"
     )
+
+
+
+def _attribute_has_no_drive_letter(value: object) -> bool:
+    """Accept sfdisk's textual GPT attribute representations for bit 63."""
+    text = str(value or "").lower().replace(" ", "").replace(",", "")
+    return (
+        "guid:63" in text
+        or "0x8000000000000000" in text
+        or "9223372036854775808" in text
+    )
+
+
+def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
+    """Read back the GPT and reject an ESP-typed UEFI:NTFS helper partition."""
+    command(["sfdisk", "--verify", device])
+    result = command(["sfdisk", "--json", device])
+    try:
+        partition_table = json.loads(result.stdout)["partitiontable"]
+        partitions = sorted(
+            partition_table["partitions"],
+            key=lambda part: int(part["start"]),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Nem sikerült visszaolvasni az elkészült GPT partíciós táblát.") from exc
+
+    if partition_table.get("label", "").lower() != "gpt" or len(partitions) != 2:
+        raise RuntimeError("A létrehozott USB nem a várt, kétpartíciós GPT elrendezést tartalmazza.")
+
+    first, helper = partitions
+    expected_ranges = (
+        (int(first.get("start", -1)), int(first.get("size", -1)),
+         layout["first_start"], layout["first_size"], "1. NTFS"),
+        (int(helper.get("start", -1)), int(helper.get("size", -1)),
+         layout["second_start"], layout["second_size"], "UEFI:NTFS"),
+    )
+    for actual_start, actual_size, expected_start, expected_size, label in expected_ranges:
+        if actual_start != expected_start or actual_size != expected_size:
+            raise RuntimeError(
+                f"A(z) {label} GPT partíció mérete/kezdete eltér a tervezettől: "
+                f"{actual_start}+{actual_size}, várt: {expected_start}+{expected_size}."
+            )
+
+    first_type = str(first.get("type", "")).strip("{}").lower()
+    helper_type = str(helper.get("type", "")).strip("{}").lower()
+    expected_type = GPT_BASIC_DATA_GUID.lower()
+    if first_type != expected_type:
+        raise RuntimeError("Az első USB-partíció GPT típusa nem Microsoft Basic Data.")
+    if helper_type != expected_type:
+        raise RuntimeError(
+            "Az UEFI:NTFS segédpartíció hibás GPT típust kapott. "
+            "Microsoft Basic Data szükséges, nem EFI System Partition (ESP), "
+            "különben a Windows Setup több ESP-t érzékelhet."
+        )
+
+    attributes = helper.get("attrs")
+    if not _attribute_has_no_drive_letter(attributes):
+        attributes = command(["sfdisk", "--part-attrs", device, "2"]).stdout.strip()
+    if not _attribute_has_no_drive_letter(attributes):
+        raise RuntimeError(
+            "Az UEFI:NTFS segédpartícióról hiányzik a GPT NoDriveLetter (GUID:63) attribútum."
+        )
 
 
 def mount_iso(image: Path, mountpoint: Path) -> None:
@@ -658,6 +726,12 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         command(["blockdev", "--rereadpt", device], check=False)
         command(["partprobe", device], check=False)
         command(["udevadm", "settle"], check=False, timeout=20)
+        verify_gpt_layout(device, layout)
+        emit(
+            "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
+            "az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.",
+            22,
+        )
 
         ntfs_partition = partition_path(device, 1)
         uefi_partition = partition_path(device, 2)
@@ -722,7 +796,9 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             100,
             log=(
                 "GPT: 1. partíció Microsoft Basic Data / NTFS (Windows fájlok); "
-                "2. partíció EFI System / FAT (UEFI:NTFS v2.8 boot image). "
+                "2. partíció Microsoft Basic Data / FAT (UEFI:NTFS v2.8 helper), "
+                "NoDriveLetter GUID:63 attribútummal. A segédpartíció szándékosan nem ESP, "
+                "hogy a Windows Setup ne találjon második EFI System Partitiont. "
                 "A Windows ISO fájljai eredeti formájukban kerültek át."
             ),
         )
