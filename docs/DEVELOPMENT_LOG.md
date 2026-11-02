@@ -45,3 +45,8 @@ The user's physical test showed that a Windows USB on two USB 2.0 sticks took ap
 The optional SHA-256 read-back pass reads the entire Windows payload a second time. It is now off by default in Windows mode to reduce creation time, but can be enabled by the user. If enabled, the writer syncs before verification and requests eviction of clean file-cache pages before the read-back pass.
 
 The real USB speed test remains outstanding. The target user's measured creation time should be recorded after this optimization on the same 8 GB USB 2.0 sticks.
+
+
+## 2026-11-02 — Dynamic progress bar
+
+The user noticed that Windows file copy completed around 85% and jumped towards completion even when the optional full SHA-256 read-back was disabled. The copy progress range is now calculated from the selected mode: copy reaches 96% with verification disabled; with verification enabled it ends at 85% and the second full read-back pass uses the remaining progress range. Added unit tests for both ranges.
