@@ -74,7 +74,7 @@ def main() -> int:
     try:
         request = urllib.request.Request(
             UPSTREAM_URL,
-            headers={"User-Agent": "BootMediaKit/0.1.2-alpha"},
+            headers={"User-Agent": "BootMediaKit/0.1.2"},
         )
         with urllib.request.urlopen(request, timeout=60) as response:
             with temporary.open("wb") as output:
