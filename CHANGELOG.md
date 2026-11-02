@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.1.2-alpha — 2026-11-02 (development branch)
+## 0.1.2 — 2026-11-02
 
 ### Windows UEFI media rewrite
 
 - Replace the single GPT/FAT32 Windows USB layout with a GPT layout containing a large NTFS Basic Data partition and a 1 MiB FAT UEFI:NTFS helper partition at the end of the device.
-- Mark the helper partition as Microsoft Basic Data, not EFI System Partition, and set GPT NoDriveLetter (GUID:63), matching Rufus's documented Windows Setup workaround for multiple ESPs.
+- Mark the helper partition as Microsoft Basic Data, not EFI System Partition, and set GPT NoDriveLetter (GUID:63), avoiding the Windows Setup multiple-ESP issue.
+- Set both the GPT helper-partition name and FAT volume label to `BMK_EFI`; change only a temporary copy of the verified upstream FAT image, preserving the pristine source and signed EFI binaries.
 - Use the Rufus UEFI:NTFS helper image from a pinned upstream Rufus commit, with file-size, Git blob SHA-1 and SHA-256 verification.
 - Read back and verify the written UEFI:NTFS helper image before continuing.
 - Keep the original Windows `install.esd` / `install.wim` file unchanged; remove the ESD-to-WIM conversion and SWM splitting from the Windows path.
@@ -18,11 +19,12 @@
 - Scale the copy progress bar to the selected verification mode: without SHA-256 the copy itself reaches 96%; when verification is enabled, space is reserved for the second pass.
 - Replace per-file fsync calls with one batched sync; optionally drop clean cached pages before SHA-256 read-back.
 - Add tests for GPT layout, partition identifiers, ISO structure scanning, NTFS BPB geometry, copy_file_range fallback, progress throttling, mount-driver fallback and SHA-256 verification.
-- Update the Arch installer to include the split `ntfsprogs` package and fetch the pinned UEFI helper image.
+- Update Arch dependencies (`ntfsprogs`, `dosfstools`) and fetch/verify the pinned upstream UEFI helper image.
+- Record the upstream helper components and their separate source/license references in `THIRD_PARTY_NOTICES.md`.
 
-### Important status
+### Validation status
 
-This is an alpha test build. The previous 0.1.1-alpha Windows Setup failure is still open until a real UEFI boot and Windows Setup run on the reported target PC confirms the fix. No stable release is being declared.
+The user tested Windows 10 IoT Enterprise LTSC 2021 x64 media on the same Samsung RV511: Windows Setup copied files, passed the first reboot, and continued from the internal SSD to the next installation phase. Two USB 2.0 devices showed a substantial speed improvement after the NTFS3/kernel-copy optimizations. Linux raw/DD mode was also tested in Legacy/MBR mode. Secure Boot and broader hardware/ISO coverage remain future validation items.
 
 ## 0.1.1-alpha — 2026-11-01
 
