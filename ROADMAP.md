@@ -12,8 +12,10 @@ A feature is complete only after automated checks and its relevant real-device t
 - [x] Create NTFS with the correct partition-start sector value.
 - [x] Copy the original Windows ISO files and optionally verify every file using SHA-256.
 - [x] Update Arch dependencies for the ntfs-3g / ntfsprogs package split.
-- [x] Add automated tests for layout arithmetic, partition types, ISO structure and file verification.
+- [x] Add automated tests for layout arithmetic, partition types, ISO structure, file verification, and NTFS driver fallback.
+- [x] Prefer kernel NTFS3 and batch writes to improve low-end USB performance; retain ntfs-3g fallback.
 - [ ] Run the 0.1.2 installer on CachyOS and confirm that the UEFI:NTFS helper image downloads and verifies.
+- [ ] Measure 0.1.2 USB creation time on both of the user's USB 2.0 sticks and compare with Rufus; test SHA-256 read-back both off and on.
 - [ ] Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB on a disposable drive.
 - [ ] Boot it on the same physical PC that failed with 0.1.1 and confirm Windows Setup can read the source without the missing-media-driver dialog.
 - [ ] Test with Secure Boot enabled and disabled; document firmware-specific behavior.
