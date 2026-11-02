@@ -27,6 +27,8 @@ UEFI_NTFS_IMAGE = Path("/usr/share/bootmediakit/uefi/uefi-ntfs.img")
 UEFI_NTFS_IMAGE_SIZE = 1_048_576
 UEFI_NTFS_GIT_BLOB_SHA1 = "ac50eed9730af847c43c145a5c17678f54128b33"
 UEFI_NTFS_SHA256 = "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e"
+UPSTREAM_FAT_VOLUME_LABEL = "RUFUS_BOOT"
+BOOTMEDIA_FAT_VOLUME_LABEL = "BMK_EFI"
 GPT_BASIC_DATA_GUID = "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"
 # GPT GUID-specific attribute bit 63: do not automatically assign a drive letter.
 # Rufus uses Microsoft Basic Data (not EFI System) for its UEFI:NTFS helper
@@ -260,7 +262,7 @@ def make_sfdisk_script(layout: dict[str, int]) -> str:
         f"start={layout['first_start']}, size={layout['first_size']}, "
         f"type={GPT_BASIC_DATA_GUID}, name=\"BOOTMEDIA\"\n"
         f"start={layout['second_start']}, size={layout['second_size']}, "
-        f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"UEFI_NTFS\"\n"
+        f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"BMK_EFI\"\n"
     )
 
 
@@ -551,15 +553,55 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
     emit("Minden telepítőfájl SHA-256 ellenőrzése sikeres.", 98)
 
 
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def prepare_bmk_uefi_ntfs_image(upstream_image: Path, destination: Path) -> Path:
+    """Make a temporary copy with BMK_EFI FAT volume label; preserve upstream."""
+    if not upstream_image.is_file() or upstream_image.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError("Hiányzik vagy hibás méretű az ellenőrzött upstream UEFI:NTFS segédkép.")
+    upstream_label = command(["fatlabel", str(upstream_image)]).stdout.strip().upper()
+    if upstream_label != UPSTREAM_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"Az upstream FAT segédkép címkéje {upstream_label!r}; "
+            f"elvárt: {UPSTREAM_FAT_VOLUME_LABEL}."
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(upstream_image, destination)
+    command(["fatlabel", str(destination), BOOTMEDIA_FAT_VOLUME_LABEL])
+    actual_label = command(["fatlabel", str(destination)]).stdout.strip().upper()
+    if actual_label != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError("Nem sikerült a FAT segédpartíció kötetcímkéjét BMK_EFI értékre állítani.")
+    if destination.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError("A BMK_EFI címkézett segédkép mérete megváltozott.")
+    emit(
+        "Az UEFI:NTFS FAT kötetcímkéje BMK_EFI lett; az upstream EFI binárisok változatlanok.",
+        log=f"Eredeti címke: {UPSTREAM_FAT_VOLUME_LABEL}; új címke: {BOOTMEDIA_FAT_VOLUME_LABEL}.",
+    )
+    return destination
+
+
+
 def write_uefi_ntfs_image(image: Path, partition: str) -> None:
-    """Write and verify the prepared FAT UEFI:NTFS partition image."""
+    """Write the BMK_EFI-labelled FAT helper image and verify its exact bytes."""
     expected = image.stat().st_size
+    if expected != UEFI_NTFS_IMAGE_SIZE:
+        raise RuntimeError(
+            f"A BMK_EFI segédkép mérete hibás: {expected}; elvárt: {UEFI_NTFS_IMAGE_SIZE}."
+        )
+    expected_sha256 = sha256_file(image)
     actual = int(command(["blockdev", "--getsize64", partition]).stdout.strip())
     if actual != expected:
         raise RuntimeError(
             f"Az UEFI:NTFS partíció mérete ({actual}) nem egyezik a segédkép méretével ({expected})."
         )
-    emit("UEFI:NTFS indítópartíció telepítése…", 38)
+    emit("BMK_EFI FAT indítópartíció telepítése…", 38)
     fd = os.open(partition, os.O_WRONLY)
     try:
         with image.open("rb", buffering=0) as source:
@@ -567,39 +609,40 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
             while remaining:
                 data = source.read(min(CHUNK, remaining))
                 if not data:
-                    raise RuntimeError("Az UEFI:NTFS segédkép váratlanul véget ért.")
+                    raise RuntimeError("A BMK_EFI segédkép váratlanul véget ért.")
                 view = memoryview(data)
                 while view:
                     written = os.write(fd, view)
                     if written <= 0:
-                        raise RuntimeError("Nem sikerült az UEFI:NTFS segédképet a partícióra írni.")
+                        raise RuntimeError("Nem sikerült a BMK_EFI segédképet a partícióra írni.")
                     view = view[written:]
                 remaining -= len(data)
         os.fsync(fd)
     finally:
         os.close(fd)
 
-    digest = hashlib.sha1()
-    digest.update(f"blob {expected}\0".encode("ascii"))
-    sha256 = hashlib.sha256()
+    digest = hashlib.sha256()
     fd = os.open(partition, os.O_RDONLY)
     try:
         remaining = expected
         while remaining:
             data = os.read(fd, min(CHUNK, remaining))
             if not data:
-                raise RuntimeError("Az UEFI:NTFS partíció visszaolvasása váratlanul véget ért.")
+                raise RuntimeError("A BMK_EFI partíció visszaolvasása váratlanul véget ért.")
             digest.update(data)
-            sha256.update(data)
             remaining -= len(data)
     finally:
         os.close(fd)
-    if digest.hexdigest() != UEFI_NTFS_GIT_BLOB_SHA1:
-        raise RuntimeError("Az UEFI:NTFS indítópartíció Git-blob hash-e eltér a hivatalos képtől.")
-    if sha256.hexdigest() != UEFI_NTFS_SHA256:
-        raise RuntimeError("Az UEFI:NTFS indítópartíció SHA-256 hash-e eltér a hivatalos képtől.")
-    emit("UEFI:NTFS partíció SHA-1 és SHA-256 visszaolvasása sikeres.", 40)
+    if digest.hexdigest() != expected_sha256:
+        raise RuntimeError("A BMK_EFI partíció SHA-256 visszaolvasása nem egyezik a címkézett képpel.")
 
+    actual_label = command(["fatlabel", partition]).stdout.strip().upper()
+    if actual_label != BOOTMEDIA_FAT_VOLUME_LABEL:
+        raise RuntimeError(
+            f"A pendrive FAT segédpartíciójának címkéje hibás: {actual_label!r}; "
+            f"elvárt: {BOOTMEDIA_FAT_VOLUME_LABEL}."
+        )
+    emit("BMK_EFI FAT segédpartíció SHA-256 és kötetcímke visszaellenőrzése sikeres.", 40)
 
 
 
@@ -666,7 +709,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
     global TARGET_MODIFIED
     require_programs((
         "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
-        "mount", "partprobe", "sfdisk", "mkfs.ntfs",
+        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel",
     ))
 
     # Validate both the removable target and the upstream boot image before
@@ -703,6 +746,11 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
                 f"az NTFS partíció mérete {layout['first_bytes']:,} bájt. "
                 "A pendrive tartalmához még nem nyúltam."
             )
+
+        # Preserve the hash-pinned upstream image and alter only a temporary FAT label.
+        bmk_efi_image = prepare_bmk_uefi_ntfs_image(
+            UEFI_NTFS_IMAGE, temp_root / "uefi-ntfs-bmk-efi.img"
+        )
         emit(
             "ISO előellenőrzés kész; a pendrive-ot még nem módosítottam.",
             8,
@@ -750,7 +798,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         emit("NTFS fájlrendszer létrehozása…", 25)
         command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
         validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
-        write_uefi_ntfs_image(UEFI_NTFS_IMAGE, uefi_partition)
+        write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
         usb_mount.mkdir(parents=True, exist_ok=True)
@@ -796,7 +844,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             100,
             log=(
                 "GPT: 1. partíció Microsoft Basic Data / NTFS (Windows fájlok); "
-                "2. partíció Microsoft Basic Data / FAT (UEFI:NTFS v2.8 helper), "
+                "2. partíció BMK_EFI nevű Microsoft Basic Data / FAT UEFI:NTFS segédpartíció, "
                 "NoDriveLetter GUID:63 attribútummal. A segédpartíció szándékosan nem ESP, "
                 "hogy a Windows Setup ne találjon második EFI System Partitiont. "
                 "A Windows ISO fájljai eredeti formájukban kerültek át."
