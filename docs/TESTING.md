@@ -28,7 +28,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Kernel NTFS3 mount preference and ntfs-3g fallback.
 - Detection of a changed copied file.
 
-Current automated test suite: 22 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 23 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
