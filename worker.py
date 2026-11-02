@@ -318,8 +318,13 @@ def copy_tree_progress(
     copied_total = 0
     manifest: list[tuple[str, int, str]] = []
     last_percent = -1
-    fast_copy_enabled = not hash_files and hasattr(os, "copy_file_range")
-    unsupported_copy_range = {
+    fast_copy_method = None
+    if not hash_files:
+        if hasattr(os, "copy_file_range"):
+            fast_copy_method = "copy_file_range"
+        elif hasattr(os, "sendfile"):
+            fast_copy_method = "sendfile"
+    unsupported_copy_errors = {
         errno.EXDEV,
         errno.EINVAL,
         errno.ENOSYS,
@@ -363,31 +368,49 @@ def copy_tree_progress(
             with src.open("rb", buffering=0) as read_file, dst.open(
                 "wb", buffering=0
             ) as write_file:
-                if fast_copy_enabled:
-                    while file_copied < expected_size:
-                        try:
+                while fast_copy_method is not None and file_copied < expected_size:
+                    try:
+                        remaining = min(CHUNK, expected_size - file_copied)
+                        if fast_copy_method == "copy_file_range":
                             amount = os.copy_file_range(
                                 read_file.fileno(),
                                 write_file.fileno(),
-                                min(CHUNK, expected_size - file_copied),
+                                remaining,
                             )
-                        except OSError as exc:
-                            if exc.errno in unsupported_copy_range:
-                                fast_copy_enabled = False
-                                emit(
-                                    "A kernel copy_file_range útvonal nem támogatott ezen a fájlrendszer-kombináción; "
-                                    "biztonságos streamelt másolásra váltok.",
-                                    log=str(exc),
-                                )
-                                break
+                        else:
+                            # sendfile() supports file-to-file copies on Linux
+                            # and may work where copy_file_range returns EXDEV
+                            # for an ISO9660 loop mount -> NTFS volume pair.
+                            amount = os.sendfile(
+                                write_file.fileno(),
+                                read_file.fileno(),
+                                None,
+                                remaining,
+                            )
+                    except OSError as exc:
+                        if exc.errno not in unsupported_copy_errors:
                             raise
-                        if amount == 0:
-                            # Treat an early EOF as a reason to use the normal
-                            # reader path, which will report a short source.
-                            break
-                        file_copied += amount
-                        copied_total += amount
-                        report_progress()
+                        if fast_copy_method == "copy_file_range" and hasattr(os, "sendfile"):
+                            fast_copy_method = "sendfile"
+                            emit(
+                                "A kernel copy_file_range útvonal nem támogatott; megpróbálom a sendfile másolást…",
+                                log=str(exc),
+                            )
+                            continue
+                        fast_copy_method = None
+                        emit(
+                            "A kerneles másolási útvonal nem támogatott ezen a fájlrendszer-kombináción; "
+                            "biztonságos streamelt másolásra váltok.",
+                            log=str(exc),
+                        )
+                        break
+                    if amount == 0:
+                        # Treat an early EOF as a reason to use the normal
+                        # reader path, which will report a short source.
+                        break
+                    file_copied += amount
+                    copied_total += amount
+                    report_progress()
 
                 while file_copied < expected_size:
                     data = read_file.read(min(CHUNK, expected_size - file_copied))
