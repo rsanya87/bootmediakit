@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self.process: QProcess | None = None
         self.output_buffer = ""
         self.current_device: dict[str, Any] | None = None
+        self._selected_mode = "raw"
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -372,6 +373,12 @@ class MainWindow(QMainWindow):
         self.raw_button.setChecked(raw)
         self.windows_button.setChecked(not raw)
         self.verify_checkbox.setEnabled(True)
+        if mode != self._selected_mode:
+            # Raw image mode keeps full read-back verification enabled by
+            # default. Windows mode defaults to faster writing; SHA-256
+            # read-back remains available as an explicit opt-in.
+            self.verify_checkbox.setChecked(raw)
+            self._selected_mode = mode
         if raw:
             self.verify_checkbox.setText("Kiírás utáni teljes visszaolvasás és ellenőrzés")
             self.mode_description.setText(
@@ -380,14 +387,15 @@ class MainWindow(QMainWindow):
                 "A kiírás után opcionális teljes visszaolvasás ellenőrzi az adatokat."
             )
         else:
+            self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
             self.mode_description.setText(
                 "Windows x64 UEFI telepítő készítése két GPT partícióval: nagy NTFS adatpartíció "
                 "az eredeti ISO-fájloknak, valamint 1 MiB FAT UEFI:NTFS indítópartíció a lemez végén. "
                 "Az install.esd és install.wim változatlanul kerül át, nincs WIM-konvertálás vagy darabolás. "
-                "Másolás után opcionális teljes SHA-256 visszaellenőrzés. Secure Boot működése a firmware "
+                "A gyors alapbeállítás nem végez külön teljes SHA-256 visszaolvasást; ez a jelölőnégyzettel bekapcsolható. "
+                "Az NTFS másolás a kernel NTFS3 driverét részesíti előnyben. Secure Boot működése a firmware "
                 "megbízható tanúsítványaitól és visszavonási listájától is függ. Legacy BIOS és Windows To Go még nem támogatott."
             )
-            self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
 
     def append_log(self, text: str) -> None:
         if text:
