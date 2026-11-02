@@ -18,7 +18,9 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
   - a 1 MiB FAT EFI System Partition at the end of the drive, containing the UEFI:NTFS boot image.
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
-- Optionally read back every copied Windows setup file and compare its SHA-256 hash (enabled by default in the GUI).
+- Prefer the in-kernel NTFS3 driver for Windows ISO file copying, with ntfs-3g as a compatibility fallback.
+- Copy Windows files with batched disk flushing rather than forcing an fsync after every file.
+- Optionally read back every copied Windows setup file and compare its SHA-256 hash. To keep Windows USB creation faster, this extra full read-back is off by default in Windows mode and can be enabled in the GUI.
 - Show progress and operation logs in the GUI.
 - Use polkit elevation only for the destructive disk-writing worker.
 
@@ -28,7 +30,7 @@ The application follows the same general layout described by the UEFI:NTFS proje
 
 The helper image is downloaded during installation from the official Rufus repository at a pinned commit. The installer checks the exact byte size, Git blob SHA-1 and SHA-256 before installing it. At write time, BootMediaKit checks the same values and performs a read-back check after writing the helper partition.
 
-The Windows files are copied without converting the install image. This avoids the FAT32 4 GiB file-size limit and avoids changing Microsoft's ESD/WIM payload.
+The Windows files are copied without converting the install image. This avoids the FAT32 4 GiB file-size limit and avoids changing Microsoft's ESD/WIM payload. The kernel NTFS3 driver is preferred on CachyOS/Linux kernels that provide it; ntfs-3g remains a fallback for compatibility. Writes are flushed in a batch instead of syncing each individual file. A second SHA-256 read-back pass is optional because it reads the full USB payload again and can significantly increase time on low-end USB 2.0 sticks.
 
 ### Secure Boot
 
