@@ -12,7 +12,7 @@
 - Preflight the ISO, the target geometry, helper image, and capacity before erasing the target device.
 - Format NTFS with the correct partition-start sector required for Windows boot; explicitly set conventional 255/63 BPB geometry and 4 KiB clusters, then validate the NTFS boot sector signature and geometry before copying files.
 - Prefer kernel NTFS3 for writing the USB payload, with ntfs-3g fallback.
-- Use best-effort kernel `copy_file_range` when hashing is disabled, with transparent streaming fallback for unsupported cross-filesystem copies.
+- Use best-effort kernel `copy_file_range`, then `sendfile`, when hashing is disabled, with transparent streaming fallback if both cross-filesystem paths are unsupported.
 - Throttle progress output and sync only the target USB filesystem.
 - Scale the copy progress bar to the selected verification mode: without SHA-256 the copy itself reaches 96%; when verification is enabled, space is reserved for the second pass.
 - Replace per-file fsync calls with one batched sync; optionally drop clean cached pages before SHA-256 read-back.
