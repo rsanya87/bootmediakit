@@ -127,7 +127,7 @@ class UefiNtfsLayoutTests(unittest.TestCase):
         self.assertIn(f"attrs={worker.GPT_NO_DRIVE_LETTER_ATTR}", script)
         self.assertNotIn("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", script)
         self.assertIn('name="BOOTMEDIA"', script)
-        self.assertIn('name="UEFI_NTFS"', script)
+        self.assertIn('name="BMK_EFI"', script)
 
     def test_partition_path_handles_sd_and_nvme_names(self):
         self.assertEqual(worker.partition_path("/dev/sdb", 1), "/dev/sdb1")
@@ -265,6 +265,48 @@ class WindowsIsoScanTests(unittest.TestCase):
             (sources / "boot.wim").write_bytes(b"boot")
             with self.assertRaisesRegex(RuntimeError, "install.wim"):
                 worker.scan_windows_iso(root)
+
+
+class UefiNtfsLabelTests(unittest.TestCase):
+    def test_prepare_renamed_helper_preserves_verified_upstream_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            upstream = root / "uefi-ntfs-upstream.img"
+            destination = root / "uefi-ntfs-bmk-efi.img"
+            original = b"pinned upstream helper image"
+            upstream.write_bytes(original)
+            responses = [
+                subprocess.CompletedProcess(["fatlabel"], 0, "RUFUS_BOOT\n", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "BMK_EFI\n", ""),
+            ]
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", len(original)), patch(
+                "worker.command", side_effect=responses
+            ) as run:
+                result = worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+
+            self.assertEqual(result, destination)
+            self.assertEqual(upstream.read_bytes(), original)
+            self.assertEqual(destination.read_bytes(), original)
+            self.assertEqual(run.call_args_list[0].args[0], ["fatlabel", str(upstream)])
+            self.assertEqual(
+                run.call_args_list[1].args[0],
+                ["fatlabel", str(destination), "BMK_EFI"],
+            )
+            self.assertEqual(run.call_args_list[2].args[0], ["fatlabel", str(destination)])
+
+    def test_prepare_rejects_unexpected_upstream_label(self):
+        with tempfile.TemporaryDirectory() as temp:
+            upstream = Path(temp) / "uefi-ntfs.img"
+            destination = Path(temp) / "bmk-efi.img"
+            upstream.write_bytes(b"pinned helper")
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", upstream.stat().st_size), patch(
+                "worker.command",
+                return_value=subprocess.CompletedProcess(["fatlabel"], 0, "UNKNOWN\n", ""),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "elvárt: RUFUS_BOOT"):
+                    worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+            self.assertFalse(destination.exists())
 
 
 class UefiNtfsImageTests(unittest.TestCase):
