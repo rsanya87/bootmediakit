@@ -14,7 +14,7 @@ A feature is complete only after automated checks and its relevant real-device t
 - [x] Update Arch dependencies for the ntfs-3g / ntfsprogs package split.
 - [x] Add automated tests for layout arithmetic, partition types, ISO structure, file verification, and NTFS driver fallback.
 - [x] Prefer kernel NTFS3 and batch writes to improve low-end USB performance; retain ntfs-3g fallback.
-- [x] Attempt kernel-assisted `copy_file_range` when SHA-256 read-back is disabled; transparently fall back to buffered copying.
+- [x] Attempt kernel-assisted `copy_file_range`, then `sendfile`, when SHA-256 read-back is disabled; transparently fall back to buffered copying.
 - [x] Sync only the USB filesystem and throttle progress output.
 - [x] Set and validate NTFS BPB partition offset and CHS geometry.
 - [ ] Run the 0.1.2 installer on CachyOS and confirm that the UEFI:NTFS helper image downloads and verifies.
