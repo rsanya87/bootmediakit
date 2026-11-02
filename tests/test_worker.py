@@ -1,4 +1,7 @@
+import errno
 import hashlib
+import os
+import struct
 import subprocess
 import shutil
 import sys
@@ -277,6 +280,137 @@ class UefiNtfsImageTests(unittest.TestCase):
             ), patch.object(worker, "UEFI_NTFS_SHA256", "0" * 64):
                 with self.assertRaisesRegex(RuntimeError, "SHA-256"):
                     worker.verify_uefi_ntfs_image(path)
+
+
+
+
+class NtfsBootSectorTests(unittest.TestCase):
+    def make_valid_boot_sector(self, start_sector=2048):
+        boot = bytearray(512)
+        boot[3:11] = b"NTFS    "
+        struct.pack_into("<H", boot, 11, 512)
+        boot[13] = 8
+        struct.pack_into("<H", boot, 24, 63)
+        struct.pack_into("<H", boot, 26, 255)
+        struct.pack_into("<I", boot, 28, start_sector)
+        boot[510:512] = b"\x55\xaa"
+        return bytes(boot)
+
+    def test_valid_ntfs_bpb_geometry_and_hidden_sectors_are_accepted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partition.img"
+            path.write_bytes(self.make_valid_boot_sector())
+            worker.validate_ntfs_boot_sector(str(path), 2048)
+
+    def test_wrong_hidden_sector_offset_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "partition.img"
+            path.write_bytes(self.make_valid_boot_sector(start_sector=0))
+            with self.assertRaisesRegex(RuntimeError, "HiddenSectors"):
+                worker.validate_ntfs_boot_sector(str(path), 2048)
+
+    def test_wrong_chs_geometry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            boot = bytearray(self.make_valid_boot_sector())
+            struct.pack_into("<H", boot, 24, 0)
+            path = Path(temp) / "partition.img"
+            path.write_bytes(boot)
+            with self.assertRaisesRegex(RuntimeError, "BPB geometria"):
+                worker.validate_ntfs_boot_sector(str(path), 2048)
+
+
+class WindowsVerifyArgumentTests(unittest.TestCase):
+    def test_main_passes_disabled_verification_to_windows_writer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"ISO test")
+            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+                "worker.write_windows_uefi"
+            ) as write:
+                result = worker.main(
+                    ["worker.py", "windows", str(image), "/dev/sdb", "0"]
+                )
+            self.assertEqual(result, 0)
+            write.assert_called_once_with(image, "/dev/sdb", False)
+
+    def test_main_passes_enabled_verification_to_windows_writer(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"ISO test")
+            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+                "worker.write_windows_uefi"
+            ) as write:
+                result = worker.main(
+                    ["worker.py", "windows", str(image), "/dev/sdb", "1"]
+                )
+            self.assertEqual(result, 0)
+            write.assert_called_once_with(image, "/dev/sdb", True)
+
+
+class KernelCopyTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
+    def test_unverified_copy_uses_kernel_copy_file_range_when_supported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"kernel-assisted copy test" * 1000
+            (source / "boot.wim").write_bytes(payload)
+            real_copy_file_range = os.copy_file_range
+
+            with patch(
+                "worker.os.copy_file_range", wraps=real_copy_file_range
+            ) as copy_range:
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertGreater(copy_range.call_count, 0)
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
+    @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
+    def test_kernel_copy_falls_back_on_cross_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = b"fallback copy test" * 1000
+            (source / "boot.wim").write_bytes(payload)
+
+            with patch(
+                "worker.os.copy_file_range",
+                side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
+            ):
+                manifest = worker.copy_tree_progress(
+                    source, destination, len(payload), hash_files=False
+                )
+
+            self.assertEqual(manifest, [])
+            self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+
+    def test_progress_messages_are_throttled_to_percentage_changes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            payload = bytes(range(100))
+            (source / "boot.wim").write_bytes(payload)
+
+            with patch.object(worker, "CHUNK", 1), patch("worker.emit") as emit:
+                worker.copy_tree_progress(
+                    source, destination, len(payload),
+                    base_percent=0, span=10, hash_files=True,
+                )
+
+            percent_events = [
+                call for call in emit.call_args_list
+                if len(call.args) >= 2 and call.args[1] is not None
+            ]
+            self.assertLessEqual(len(percent_events), 12)
 
 
 if __name__ == "__main__":
