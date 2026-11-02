@@ -20,7 +20,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - GPT partition layout calculation and alignment.
 - Parse the generated GPT layout with real `sfdisk --no-act` against a sparse image file.
 - Validate NTFS boot-sector OEM ID, bytes/sector, cluster geometry, HiddenSectors, heads/sectors-per-track and 0x55AA signature.
-- Exercise best-effort `copy_file_range`, cross-filesystem fallback and throttled progress reporting.
+- Exercise best-effort `copy_file_range`, `sendfile` fallback, buffered fallback when both are unsupported, and throttled progress reporting.
 - Verify that the Windows SHA-256 checkbox value is passed from the CLI entry point to the writer.
 - Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
 - GPT Basic Data and EFI System partition type identifiers.
@@ -32,7 +32,7 @@ The GitHub Actions workflow runs these static and unit checks on pushes to devel
 - Dynamic copy-progress range when the optional SHA-256 second pass is disabled or enabled.
 - Detection of a changed copied file.
 
-Current automated test suite: 33 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
+Current automated test suite: 34 unit tests plus dry-run checks using the real sfdisk and mkfs.ntfs utilities in GitHub Actions. GitHub Actions also downloads the pinned UEFI helper image and verifies its exact size and both hashes. Unit tests use temporary files and mocked tools. They do not write to a real USB drive.
 
 ## Required manual tests before merge/release
 
