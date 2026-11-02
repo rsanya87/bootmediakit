@@ -33,3 +33,15 @@
 A Windows 10 IoT Enterprise LTSC 2021 x64 ISO (Hungarian, October 2025 integrated image) was written using BootMediaKit 0.1.1-alpha with GPT/FAT32 and ESD-to-WIM conversion/SWM splitting. On the target PC, Windows Setup displayed the “required media driver is missing” dialog. The same ISO reportedly proceeds correctly when prepared by Rufus on the same PC.
 
 This is a confirmed failure report for one ISO/device/firmware combination. The 0.1.2 architecture addresses the 4 GiB FAT32 limitation and uses the same general UEFI:NTFS layout as Rufus, but the exact failure is not considered resolved until a real device boot test passes.
+
+
+## 2026-11-02 — USB write performance follow-up
+
+The user's physical test showed that a Windows USB on two USB 2.0 sticks took approximately 45 minutes, considerably slower than Rufus. Code inspection found two avoidable costs in the 0.1.2 writer:
+
+- The previous copy loop called `fsync()` after every individual ISO file. This can be extremely slow on inexpensive flash drives. The revised code flushes the file stream normally and performs one batched `sync` after the tree is copied.
+- The writer used the userspace FUSE `ntfs-3g` driver unconditionally. The revised code prefers the in-kernel `ntfs3` driver and falls back to `ntfs-3g` only if NTFS3 cannot mount the volume.
+
+The optional SHA-256 read-back pass reads the entire Windows payload a second time. It is now off by default in Windows mode to reduce creation time, but can be enabled by the user. If enabled, the writer syncs before verification and requests eviction of clean file-cache pages before the read-back pass.
+
+The real USB speed test remains outstanding. The target user's measured creation time should be recorded after this optimization on the same 8 GB USB 2.0 sticks.
