@@ -98,15 +98,36 @@ class UefiNtfsLayoutTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_writes_and_reads_back_rufus_compatible_helper_attributes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--wipe", "always", str(image)],
+                input=worker.make_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
 
-    def test_sfdisk_script_uses_basic_data_and_efi_system_types(self):
+            # Run the same post-write validation that the USB worker executes,
+            # but only against a temporary sparse image file, never a device.
+            worker.verify_gpt_layout(str(image), layout)
+
+    def test_sfdisk_script_uses_basic_data_and_no_drive_letter_for_both_partitions(self):
         layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
         script = worker.make_sfdisk_script(layout)
         self.assertIn("label: gpt", script)
-        self.assertIn(worker.GPT_BASIC_DATA_GUID, script)
-        self.assertIn(worker.GPT_ESP_GUID, script)
+        self.assertEqual(script.count(f"type={worker.GPT_BASIC_DATA_GUID}"), 2)
+        self.assertIn(f"attrs={worker.GPT_NO_DRIVE_LETTER_ATTR}", script)
+        self.assertNotIn("C12A7328-F81F-11D2-BA4B-00A0C93EC93B", script)
         self.assertIn('name="BOOTMEDIA"', script)
-        self.assertIn('name="BOOTMEDIA_EFI"', script)
+        self.assertIn('name="UEFI_NTFS"', script)
 
     def test_partition_path_handles_sd_and_nvme_names(self):
         self.assertEqual(worker.partition_path("/dev/sdb", 1), "/dev/sdb1")
