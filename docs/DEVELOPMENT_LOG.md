@@ -11,7 +11,7 @@
 
 - Replaced the Windows GPT/FAT32 writer with a two-partition GPT/NTFS + FAT helper layout.
 - The large partition is GPT Microsoft Basic Data and is formatted NTFS. The NTFS volume receives the correct partition-start sector.
-- The 1 MiB helper partition is placed after the NTFS partition at the end of the disk. It is Microsoft Basic Data (not GPT EFI System) with NoDriveLetter GUID:63, matching Rufus. The verified upstream UEFI:NTFS image is copied there byte-for-byte.
+- The 1 MiB helper partition is placed after the NTFS partition at the end of the disk. It is Microsoft Basic Data (not GPT EFI System) with NoDriveLetter GUID:63, and both its GPT name and FAT volume label are BMK_EFI. The pristine, verified upstream image is copied to a temporary file and only its FAT volume label is changed; the signed EFI binaries remain untouched.
 - The UEFI helper is fetched by an installer script from a pinned Rufus source commit. The downloader checks the exact file size, Git blob SHA-1 and SHA-256; the writer checks the same image and verifies the partition after writing.
 - Windows ISO content is copied without converting or splitting `install.esd` / `install.wim`.
 - The source files are hashed during copy when full verification is selected; the UI offers a complete SHA-256 read-back verification, off by default in Windows mode to avoid a second full pass over slow USB media.
@@ -87,3 +87,10 @@ The user confirmed that the 0.1.2 UEFI:NTFS USB boots into Windows Setup but fai
 Rufus's source explicitly warns not to declare the UEFI:NTFS helper partition as an ESP on GPT media: Windows Setup may fail when it sees two ESPs on one system. Rufus instead uses Microsoft Basic Data for the helper and sets GPT_BASIC_DATA_ATTRIBUTE_NO_DRIVE_LETTER (GUID-specific attribute bit 63).
 
 BootMediaKit now follows that layout and reads the GPT back after creation to validate the two partition ranges, Microsoft Basic Data types, and GUID:63 NoDriveLetter attribute. The FAT helper still contains the upstream UEFI:NTFS boot image and is intended for the removable-media UEFI boot path; it is deliberately not declared as a second GPT ESP. This fix is strongly supported by the Rufus source and the user's Windows Setup failure, but must still be confirmed by the same-PC physical test.
+
+
+## 2026-11-02 — BMK_EFI volume branding and 0.1.2 physical validation
+
+The upstream FAT image in the pinned Rufus commit carries the FAT volume label RUFUS_BOOT. The project does not want that identifier exposed on user-created media. The worker now uses dosfstools fatlabel on a temporary copy of the pristine, size/SHA-1/SHA-256-verified upstream image to change only the FAT volume label to BMK_EFI. The GPT partition name is also BMK_EFI. The original downloaded image is left unchanged; the actual written helper partition is read back by SHA-256 and the BMK_EFI label is checked with fatlabel.
+
+The installer now explicitly installs dosfstools. CI exercises the real fatlabel command on a temporary copy of the pinned helper image. The user has tested the updated Windows UEFI:NTFS path on the Samsung RV511: Windows Setup read the installation source, copied files, passed the first reboot and continued from the internal 120 GB SSD. The user also reports substantial speed improvement on two USB 2.0 devices after the NTFS3 and kernel-copy changes. Linux raw/DD MBR/Legacy testing is reported successful.
