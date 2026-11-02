@@ -12,6 +12,7 @@
 - Preflight the ISO, the target geometry, helper image, and capacity before erasing the target device.
 - Format NTFS with the correct partition-start sector required for Windows boot.
 - Prefer kernel NTFS3 for writing the USB payload, with ntfs-3g fallback.
+- Scale the copy progress bar to the selected verification mode: without SHA-256 the copy itself reaches 96%; when verification is enabled, space is reserved for the second pass.
 - Replace per-file fsync calls with one batched sync; optionally drop clean cached pages before SHA-256 read-back.
 - Add tests for GPT layout, partition identifiers, ISO structure scanning, copy manifests, mount-driver fallback and SHA-256 verification.
 - Update the Arch installer to include the split `ntfsprogs` package and fetch the pinned UEFI helper image.
