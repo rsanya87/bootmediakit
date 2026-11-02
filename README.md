@@ -15,7 +15,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Detect common Windows installation ISOs to help prevent accidental raw writing.
 - Prepare x64 UEFI Windows installation media using a GPT disk with:
   - a large NTFS Basic Data partition containing the original Windows ISO files;
-  - a 1 MiB FAT EFI System Partition at the end of the drive, containing the UEFI:NTFS boot image.
+  - a 1 MiB FAT UEFI:NTFS helper partition at the end of the drive. It is deliberately typed as Microsoft Basic Data (not GPT EFI System) and marked NoDriveLetter (GUID-specific bit 63), matching Rufus's workaround for Windows Setup's handling of multiple ESPs.
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
 - Prefer the in-kernel NTFS3 driver for Windows ISO file copying, with ntfs-3g as a compatibility fallback.
