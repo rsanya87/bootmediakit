@@ -11,7 +11,7 @@ The current branch adds the following P0-focused automated tests:
 - Direct worker execution from an untrusted source checkout is rejected.
 - Polkit XML action path, root-wrapper launch command, installer ownership/mode and GUI wrapper invocation are validated.
 
-CI currently runs 61 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
+CI currently runs 65 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
 
 ## 0.1.2 release validation
 
@@ -85,3 +85,6 @@ The responsive-size helper uses `QScreen.availableGeometry()` (logical pixels), 
 - 3840×2100 -> 740×900, normal density.
 - 1366×728 available work area (typical 1366×768 panel with desktop panel/taskbar) -> 740×708, compact density.
 - Verify on a real 1366×768 laptop that the vertical scrollbar stays hidden with a long Windows ISO selected and a two-partition USB inserted. The UI font remains 10 pt.
+
+
+Responsive profile unit tests currently account for four of the 65 tests. Latest run: https://github.com/rsanya87/bootmediakit/actions/runs/41677111569 (all 65 passed).
