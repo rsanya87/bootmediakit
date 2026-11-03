@@ -61,4 +61,5 @@ fi
 printf '\nA BootMediaKit telepítése kész.\n'
 printf 'Indítás: bootmediakit\n'
 printf 'A program az alkalmazásmenüben is megjelenik.\n\n'
-printf 'Megjegyzés: a grafikus KDE munkamenetben aktív polkit hitelesítő ügynök szükséges.\n'
+printf 'A lemezírás a saját org.bootmediakit.write Polkit-akción és root tulajdonú worker-wrapperen át fut.\n'
+printf 'A grafikus munkamenetben aktív Polkit hitelesítő ügynök szükséges.\n'
