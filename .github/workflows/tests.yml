@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Compile Python files
-        run: python -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
+        run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py
       - name: Check shell syntax
         run: bash -n install.sh uninstall.sh
       - name: Fetch and verify the pinned UEFI:NTFS helper image
