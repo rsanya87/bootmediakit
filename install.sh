@@ -30,6 +30,8 @@ install -d -m 0755 "$(dirname "$ICON_PATH")" "$(dirname "$DESKTOP_PATH")"
 install -m 0755 "$SCRIPT_DIR/app.py" "$APP_DIR/app.py"
 install -m 0755 "$SCRIPT_DIR/worker.py" "$APP_DIR/worker.py"
 install -m 0644 "$SCRIPT_DIR/iso_utils.py" "$APP_DIR/iso_utils.py"
+install -m 0644 "$SCRIPT_DIR/ui_helpers.py" "$APP_DIR/ui_helpers.py"
+install -m 0644 "$SCRIPT_DIR/bootmediakit.svg" "$APP_DIR/bootmediakit.svg"
 install -m 0644 "$SCRIPT_DIR/bootmediakit.svg" "$ICON_PATH"
 install -m 0644 "$SCRIPT_DIR/bootmediakit.desktop" "$DESKTOP_PATH"
 
