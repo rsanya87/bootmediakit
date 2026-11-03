@@ -2,59 +2,48 @@
 
 A feature is complete only after automated checks and its relevant real-device tests are recorded.
 
-## 0.1.2 — Windows UEFI:NTFS reliability
+## 0.1.3 — Stable Arch/CachyOS release
 
-- [x] Replace the single-partition GPT/FAT32 layout with GPT + large NTFS partition + 1 MiB FAT UEFI:NTFS helper partition at the end.
-- [x] Use the pinned upstream UEFI:NTFS image with download-time size, SHA-1 and SHA-256 verification.
-- [x] Keep the downloaded upstream image pristine; label a temporary copy BMK_EFI with dosfstools and verify its content after USB write.
-- [x] Verify the helper image again before writing and read it back after writing.
-- [x] Keep the original install.esd / install.wim unchanged.
-- [x] Calculate the final GPT layout and check target capacity before erasing.
-- [x] Create NTFS with the correct partition-start sector value.
-- [x] Copy the original Windows ISO files and optionally verify every file using SHA-256.
-- [x] Update Arch dependencies for the ntfs-3g / ntfsprogs package split.
-- [x] Add automated tests for layout arithmetic, partition types, ISO structure, file verification, and NTFS driver fallback.
-- [x] Prefer kernel NTFS3 and batch writes to improve low-end USB performance; retain ntfs-3g fallback.
-- [x] Attempt kernel-assisted `copy_file_range`, then `sendfile`, when SHA-256 read-back is disabled; transparently fall back to buffered copying.
-- [x] Sync only the USB filesystem and throttle progress output.
-- [x] Set and validate NTFS BPB partition offset and CHS geometry.
-- [x] Match Rufus's GPT UEFI:NTFS helper metadata: Microsoft Basic Data type plus NoDriveLetter GUID:63, avoiding a second ESP visible to Windows Setup.
-- [x] Read back and verify the actual GPT type, partition geometry and no-drive-letter attribute before formatting/copying.
-- [x] Run the corrected 0.1.2 installer on CachyOS and confirm that the UEFI:NTFS helper image downloads and verifies.
-- [x] Test creation on two USB 2.0 sticks after NTFS3/kernel-copy optimization; user reports a substantial speed improvement.
-- [ ] Record exact elapsed times and benchmark the optional SHA-256 pass against Rufus.
-- [x] Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB on a disposable drive.
-- [x] Boot it on the same Samsung RV511 in UEFI mode; Windows Setup read the source, copied files, passed the first reboot and continued from the internal SSD.
-- [ ] Test with Secure Boot enabled and disabled; document firmware-specific behavior.
-- [x] Compare the UEFI:NTFS GPT metadata requirements against Rufus's public implementation and reproduce the Microsoft Basic Data + NoDriveLetter helper layout.
-- [ ] Compare the finished BMK_EFI-labelled USB byte-for-byte and boot-sequence behavior against a separately created Rufus USB.
-- [ ] Only close GitHub issue #2 after the same-machine test passes.
+- [x] Linux ISOHybrid/DD writing verified in Legacy BIOS and UEFI modes.
+- [x] Windows 10 IoT Enterprise LTSC 2021 x64 UEFI installation completed successfully on physical hardware.
+- [x] Preserve the original Windows ISO volume ID on the large NTFS partition; keep `BMK_EFI` exclusive to the 1 MiB helper partition.
+- [x] GPT Microsoft Basic Data + NoDriveLetter GUID:63 metadata for the UEFI:NTFS helper partition.
+- [x] Verified pinned upstream UEFI:NTFS helper image; only the temporary copy is relabelled.
+- [x] Safety checks, dedicated Polkit action, root-owned worker wrapper, target identity validation and cooperative cancellation.
+- [x] Screen-aware compact GUI, custom icon, visible version, elapsed timer and partition information tooltip.
+- [x] Automated unit, packaging and CI checks.
+- [x] Close the original Windows Setup missing-media-driver issue (#2) after successful UEFI installation.
 
-## Stabilize the Arch/CachyOS line
+## 0.2.1-beta — Next development stage
 
-- [ ] Validate raw image writing with multiple Linux hybrid ISOs.
-- [ ] Validate Windows UEFI media creation across at least two Windows ISO families and two USB devices.
-- [ ] Test cancellation, write failures, insufficient space, USB removal, and polkit denial.
-- [ ] Improve device hot-plug detection and device identity display.
-- [ ] Test scaled KDE/Qt displays and smaller window sizes.
-- [ ] Provide reproducible test logs and release checksums.
+The next development cycle will expand test coverage and prepare the project for wider use without changing the tested 0.1.3 writing workflow unnecessarily.
 
-## Later distribution support
+- [ ] Test ISO volume-label preservation with additional Windows ISO images, including labels with spaces and mixed case.
+- [ ] Test more Windows versions and hardware/UEFI firmware combinations.
+- [ ] Run dedicated Secure Boot enabled/disabled tests and document firmware-specific behavior.
+- [ ] Exercise target hot-unplug/replug and source-on-target protection on disposable hardware.
+- [ ] Add loop-device integration tests for GPT, NTFS, FAT and failure/cancellation cleanup.
+- [ ] Add an Arch PKGBUILD and reproducible package checksums.
+- [ ] Improve progress diagnostics and device compatibility reporting without slowing USB 2.0 writes.
+- [ ] Evaluate Debian/Ubuntu support; keep distribution-specific dependency installation and Polkit setup separate from the writer.
+- [ ] Evaluate Fedora support after Debian/Ubuntu packaging is designed.
 
-The project will target one distribution family at a time, after the Arch/CachyOS workflow is stable.
+## Later distribution and feature support
 
-1. Arch Linux family (CachyOS first) — current development target.
-2. Debian and Ubuntu — planned; needs package mapping, install/uninstall support, and tests on both.
-3. Fedora — planned; needs RPM/DNF dependency and packaging work.
+The project will target one distribution family at a time, after the Arch/CachyOS workflow remains stable.
 
-The GUI and writing logic should remain distribution-neutral. Package installation, dependency detection, desktop integration and polkit setup should be separate distribution adapters.
+1. Arch Linux family (CachyOS first) — current stable target.
+2. Debian and Ubuntu — planned, after dependency mapping, installer/uninstaller adapters and tests.
+3. Fedora — planned, after RPM/DNF packaging and tests.
+
+The GUI and writing logic should remain distribution-neutral. Package installation, dependency detection, desktop integration and Polkit setup should be separate distribution adapters.
 
 ## Longer-term ideas
 
-- MBR/Legacy BIOS Windows media.
+- Windows Legacy BIOS/CSM media.
 - Windows To Go and FreeDOS.
 - Linux persistence.
 - USB device health/capacity tests.
-- Image checksums and signature verification.
+- Image checksums and publisher-signature verification.
 - Optional ISO download/catalog support.
 - More flexible formatting options.
