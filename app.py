@@ -307,7 +307,6 @@ class MainWindow(QMainWindow):
         self.partition_info_label = QLabel("Partíció információk:")
         self.partition_info_label.setObjectName("muted")
         self.partition_info_label.setMinimumWidth(0)
-        self.partition_info_row = partition_info_row
         self.partition_info_button = QToolButton()
         self.partition_info_button.setObjectName("infoButton")
         self.partition_info_button.setText("i")
