@@ -1,21 +1,19 @@
 # Testing
 
-## 0.1.3-safety-alpha P0 hardening
+## BootMediaKit 0.1.3 release test record
 
-The current branch adds the following P0-focused automated tests:
+### Automated checks
 
-- Device identity rejects changed disk sequence, capacity and major:minor values.
-- Source image on the same physical disk as the target is rejected; a different source disk is accepted.
-- LUKS and swap targets are refused before unmounting.
-- Cancellation flag and safe-boundary copy cancellation behavior.
-- Direct worker execution from an untrusted source checkout is rejected.
-- Polkit XML action path, root-wrapper launch command, installer ownership/mode and GUI wrapper invocation are validated.
+The GitHub Actions workflow runs:
 
-CI currently runs 67 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
+- Python compilation for the GUI, worker, ISO helpers and UI helpers.
+- Shell syntax checks for the installer, uninstaller and privileged worker wrapper.
+- Download and hash verification of the pinned UEFI:NTFS helper image.
+- A real-tool dry-run of NTFS formatting arguments.
+- A test that labels a temporary copy of the UEFI:NTFS helper image `BMK_EFI` while leaving the pristine source unchanged.
+- Unit and packaging tests for disk identity, source/target collision detection, protected volume rejection, cancellation boundaries, Polkit packaging, responsive UI, ISO label parsing and GPT partition naming.
 
-## 0.1.2 release validation
-
-Run from the repository root:
+Run locally:
 
 ```bash
 python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py
@@ -23,80 +21,21 @@ bash -n install.sh uninstall.sh bootmediakit-worker
 python3 -m unittest discover -s tests -v
 ```
 
-The GitHub Actions workflow runs these static and unit checks on pushes to development branches and on pull requests.
+### Physical validation reported by the user
 
-### Unit-test scope
+- **Linux DD/RAW:** a Linux ISO written in DD mode booted successfully on tested hardware in both Legacy BIOS and UEFI modes.
+- **Windows UEFI:** Windows 10 IoT Enterprise LTSC 2021 x64 booted from the created USB and completed installation in UEFI mode.
+- **Cancellation:** the user cancelled a physical USB creation operation; the worker stopped safely and the USB remained usable for a subsequent attempt.
+- **Write performance:** the user reported successful creation on different USB 2.0 drives, with elapsed times varying by the individual drive. No performance-tuning change was made during the final UI refinements.
+- **Polkit and application installation:** the safety-alpha package was installed and used on CachyOS; the GUI and privileged worker completed a Windows USB creation.
 
-- Block-device safety validation rejects invalid paths and non-block devices.
-- Case-insensitive lookup of UEFI and Windows setup files.
-- Windows ISO detection.
-- GPT partition layout calculation and alignment.
-- Parse the generated GPT layout with real `sfdisk --no-act` against a sparse image file.
-- Validate NTFS boot-sector OEM ID, bytes/sector, cluster geometry, HiddenSectors, heads/sectors-per-track and 0x55AA signature.
-- Exercise best-effort `copy_file_range`, `sendfile` fallback, buffered fallback when both are unsupported, and throttled progress reporting.
-- Verify that the Windows SHA-256 checkbox value is passed from the CLI entry point to the writer.
-- Validate the actual `mkfs.ntfs` flags with `--no-action` against a temporary file.
-- GPT Microsoft Basic Data type identifiers on both partitions.
-- The 1 MiB FAT BMK_EFI helper partition's GPT name, volume label and GUID:63 NoDriveLetter attribute (and that it is not typed as an EFI System Partition).
-- Creating a temporary BMK_EFI-labelled helper image from a hash-verified pristine upstream source image; ensure the original source remains unchanged.
-- Linux `sdX` and NVMe partition naming.
-- Git object hash calculation used to pin the helper image.
-- Windows ISO scan for EFI bootloader, boot.wim and install image.
-- File-copy manifest generation, no-hash fast-copy path, and SHA-256 read-back verification.
-- Kernel NTFS3 mount preference and ntfs-3g fallback.
-- Dynamic copy-progress range when the optional SHA-256 second pass is disabled or enabled.
-- Detection of a changed copied file.
+### Still requiring broader validation
 
-Current automated test suite: 37 unit tests plus GitHub Actions checks using the real sfdisk, mkfs.ntfs and fatlabel utilities. CI downloads the pinned UEFI helper image, verifies its exact size and both hashes, then changes only a temporary copy's FAT label from RUFUS_BOOT to BMK_EFI. Unit tests use temporary files and mocked tools; CI's FAT-label check uses the real dosfstools command. These checks do not write to a real USB drive.
+- Secure Boot enabled/disabled on multiple firmware implementations.
+- Physical target hot-unplug/replug race testing.
+- Physical source-on-target rejection test.
+- LUKS/LVM/RAID/swap rejection on disposable devices.
+- Additional Windows ISO families and non-CachyOS distributions.
+- The original ISO volume-label preservation change in this release: automated label parsing and `sfdisk` GPT write/read-back tests are included; confirm the actual NTFS and GPT labels on a newly created USB.
 
-## Physical test results and remaining validation
-
-1. Install on CachyOS. Confirm that `ntfs-3g`, `ntfsprogs`, `dosfstools` and other dependencies are present and the pristine helper image downloads with the pinned hashes. **User test passed.**
-2. Confirm the downloaded image is exactly 1,048,576 bytes and matches the pinned Git blob SHA-1 and SHA-256. **CI passed.**
-3. Use a disposable USB drive. Check the device path, model, capacity and all partitions before confirming.
-4. Create a Windows 10 IoT Enterprise LTSC 2021 x64 USB from the same ISO used for the 0.1.1 failure report.
-5. Inspect the GPT layout: both partitions must be Microsoft Basic Data; partition 1 is NTFS and partition 2 is FAT named BMK_EFI with GUID:63 NoDriveLetter and the 1 MiB helper image. The helper partition must not be typed as EFI System Partition.
-6. Confirm the install.esd is copied unchanged (same size and SHA-256 as the ISO source file).
-7. **User test passed through first reboot:** on the Samsung RV511, boot the USB in UEFI mode, Windows Setup loaded the installation image, copied files, passed the first reboot and continued from the 120 GB internal SSD. Final desktop/first-login confirmation is still desirable.
-8. Record Secure Boot enabled/disabled results separately. Do not claim Secure Boot compatibility if the firmware rejects an upstream signature.
-9. The user reports significantly faster creation on two USB 2.0 sticks after the kernel NTFS3/copy optimizations. Exact elapsed times and USB 3.x comparison remain outstanding.
-10. If Setup reports `GetMachineInfo: Couldn't find info for boot disk` or `CanBeSystemVolume`, first confirm the 120 GB SSD's disk number and GPT status with `diskpart list disk`; repeat the installation with non-target internal HDDs temporarily disconnected.
-11. Optionally repeat using a second USB stick and Windows ISO.
-
-## Test result discipline
-
-Do not describe mocked unit tests as proof that media creation works on physical hardware. The same-machine Windows Setup source-access and first-reboot test has passed. Keep issue #2 open for final install confirmation and Secure Boot follow-up; broader platform coverage is still future work.
-
-
-### UI feedback follow-up
-
-- Check on KDE dark theme that disk details, serial/WWN, partition filesystems, labels and mountpoints are readable.
-- Choose an ISO with a long filename/path; verify the metadata wraps and no horizontal scrollbar appears. Vertical scrolling remains available when the window is shorter than the full form.
-- Verify the small `0.1.3-safety-alpha` string appears below the BootMediaKit title.
-- During Windows writing, an expected `EXDEV` fallback may occur between ISO9660/loop and NTFS. The operation must continue and the user log must not contain raw `[Errno 18]` output.
-- Verify helper FAT-label relabeling still yields the `BMK_EFI` volume on the USB, while no upstream `RUFUS_BOOT` relabel message is printed in the user log.
-
-
-### Responsive UI profile
-
-The responsive-size helper uses `QScreen.availableGeometry()` (logical pixels), not the raw panel resolution. Expected examples:
-
-- 2560×1400 available work area -> 740×900, normal density.
-- 3840×2100 -> 740×900, normal density.
-- 1366×728 available work area (typical 1366×768 panel with desktop panel/taskbar) -> 740×704 outer window including KDE frame, compact density.
-- Verify on a real 1366×768 laptop that the vertical scrollbar stays hidden with a long Windows ISO selected and a two-partition USB inserted. The UI font remains 10 pt.
-
-
-Responsive profile unit tests currently account for four of the 65 tests. Latest run: https://github.com/rsanya87/bootmediakit/actions/runs/41677111569 (all 65 passed).
-
-
-### Partition information popover and progress header
-
-- Confirm the target card contains only capacity, identifier and model in its summary line; it no longer prints the partition list inline.
-- Hover the blue `i` next to `Partíció információk:` and verify that every partition path, filesystem, label, size and mountpoint appears in the tooltip.
-- Verify the tooltip handles no-partition devices and HTML-special characters in labels without markup injection.
-- Confirm the elapsed-time badge is a compact 30 px tall and does not stretch the progress-card header vertically.
-- Latest source-contract suite also checks that detailed partition rows are not placed in the visible summary.
-
-
-Partition-hover and progress-header checks added two more source-contract tests. Latest CI: https://github.com/rsanya87/bootmediakit/actions/runs/41683190729 (67 tests passed).
+Do not treat mocked unit tests as proof of physical hardware behavior. Destructive tests must use disposable media only. Never use a drive containing the source ISO or user data as a test target.
