@@ -61,6 +61,8 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn('f"Címke: {label}<br>"', app)
         self.assertIn('f"Méret: {size}<br>"', app)
         self.assertIn('f"Csatolás: {mount_text}"', app)
+        self.assertIn("import html", app)
+        self.assertIn("html.escape(str(part.get", app)
         self.assertNotIn('lines.append(\n                f"{part.get(\'path\')}', app)
 
     def test_elapsed_timer_cannot_expand_progress_header_vertically(self):
