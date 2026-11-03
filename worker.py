@@ -862,6 +862,10 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
                     view = view[written:]
                 remaining -= len(data)
         os.fsync(fd)
+    except OperationCancelled:
+        # Flush the last completed write unit before reporting cancellation.
+        os.fsync(fd)
+        raise
     finally:
         os.close(fd)
 
@@ -1197,6 +1201,10 @@ def write_raw(
                 percent = 3 + int((offset / source_size) * (57 if verify else 96))
                 emit(f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt", percent)
             os.fsync(fd)
+        except OperationCancelled:
+            # Make already-written chunks durable before cleanup returns to GUI.
+            os.fsync(fd)
+            raise
         finally:
             os.close(fd)
 
@@ -1244,6 +1252,7 @@ def write_raw(
         command(["blockdev", "--rereadpt", device], check=False)
         command(["udevadm", "settle"], check=False, timeout=15)
         command(["sync"])
+        check_cancelled()
         emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
     finally:
         os.close(source_fd)
