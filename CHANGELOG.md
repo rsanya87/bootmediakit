@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3-safety-alpha — UX and log cleanup
+
+- Prevent horizontal scrolling when long ISO names or drive metadata are displayed; long file metadata wraps inside the layout.
+- Improve contrast for drive capacity, serial/WWN, partition, filesystem, label and mountpoint details on dark KDE themes.
+- Move the visible `0.1.3-safety-alpha` version string directly below the BootMediaKit title.
+- Keep the internal upstream UEFI helper FAT-label verification but remove the upstream-to-BMK_EFI relabel chatter from the user log.
+- Replace expected `EXDEV` / cross-filesystem fast-copy diagnostics with a plain-language fallback message; the copy automatically continues through sendfile or buffered I/O.
+- No USB write-performance settings or copy chunk sizes changed; current reported 8:30 / 19:10 runs remain the observed performance baseline.
+
+
 ## 0.1.3-safety-alpha — P0 security hardening
 
 - Add a cooperative cancellation protocol between the unprivileged GUI and the privileged worker. The worker checks cancellation at safe chunk/file boundaries; it flushes completed write units and performs normal cleanup instead of being killed mid-write.
