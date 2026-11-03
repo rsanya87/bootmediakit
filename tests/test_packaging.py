@@ -23,7 +23,7 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIsNotNone(defaults)
         assert defaults is not None
         self.assertEqual(defaults.findtext("allow_any"), "no")
-        self.assertEqual(defaults.findtext("allow_active"), "auth_admin_keep")
+        self.assertEqual(defaults.findtext("allow_active"), "auth_admin")
 
     def test_root_wrapper_uses_isolated_python_and_installed_worker(self):
         wrapper = (ROOT / "bootmediakit-worker").read_text(encoding="utf-8")
