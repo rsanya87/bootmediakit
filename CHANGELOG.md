@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.3-safety-alpha — P0 security hardening
+
+- Add a cooperative cancellation protocol between the unprivileged GUI and the privileged worker. The worker checks cancellation at safe chunk/file boundaries; it flushes completed write units and performs normal cleanup instead of being killed mid-write.
+- Add a dedicated `org.bootmediakit.write` Polkit action bound to a fixed root-owned `/usr/libexec/bootmediakit/bootmediakit-worker` wrapper. The wrapper launches Python with isolated mode (`-I`).
+- Refuse root worker execution from a source checkout or any installation with non-root-owned or group/world-writable worker, wrapper, policy or installation directories.
+- Snapshot and revalidate target identity (size, model, serial/WWN, major:minor, diskseq and `/dev/disk/by-id` where available) immediately before destructive operations.
+- Reject RAW or Windows source images stored on the target physical disk before unmounting or wiping it.
+- Protect physical devices backing system mountpoints and active swap (including swap files); refuse targets containing LUKS, LVM, RAID or swap layers.
+- Display target partitions, filesystem types, labels, sizes and mountpoints in the destructive confirmation; require a second confirmation for large or non-removable USB devices.
+- Distinguish Polkit authorization/worker-start failures from actual write failures; do not claim the target may be partial if the worker never started.
+- Replace worker field splitting with structured `lsblk --json` parsing, also fixing empty-transport column shifts.
+- Add P0 safety and packaging tests; current CI runs 59 tests.
+
+**Validation limitation:** CI verifies static rules, packaging and unit behavior. The installed Polkit agent, real device-swap race, source-on-target rejection against actual hardware, and cancellation on a disposable physical USB drive still require CachyOS testing.
+
+
 ## 0.1.3-alpha — UI refinement
 
 - Reduce default window size and compact panel padding/spacing without shrinking the standard 10 pt UI font.
