@@ -131,3 +131,12 @@ Physical validation is still pending. CI does not exercise a real Polkit agent, 
 - ISO metadata is one concise line; the selected path stays in the line edit and the detailed filename remains available as a tooltip.
 - The selected device summary shows capacity/identifier and no more than two partition lines, with full inventory retained in the destructive confirmation dialog.
 - Responsive sizing helper and tests cover 2K/4K caps and the 1366×768 laptop profile.
+
+
+## 2026-11-03 — final device/progress card refinement
+
+- Removed the multi-line partition inventory from the target-device card. The visible summary is now one line with capacity, serial/WWN identifier and device model.
+- Added `Partíció információk:` and a small blue `i` QToolButton. Qt's standard hover tooltip displays every partition path, filesystem, label, size and mountpoint. Dynamic values are HTML-escaped and tooltip duration is 15 seconds.
+- The info button is disabled when no target is selected and still displays a useful message when a disk has no partitions.
+- The elapsed timer is vertically fixed at 30 px, centered, and uses a Fixed vertical size policy. This prevents the progress header from expanding vertically and reserving disproportionate empty space.
+- Added source-contract tests for compact drive summary, complete tooltip fields, safe HTML escaping and fixed timer height.
