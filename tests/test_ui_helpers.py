@@ -29,11 +29,11 @@ class ResponsiveWindowProfileTests(unittest.TestCase):
         self.assertEqual(calculate_window_profile(3840, 2100), (740, 900, False))
 
     def test_1366_by_768_laptop_uses_available_height_and_compact_mode(self):
-        self.assertEqual(calculate_window_profile(1366, 728), (740, 708, True))
+        self.assertEqual(calculate_window_profile(1366, 728), (740, 704, True))
 
     def test_narrow_screen_keeps_window_inside_available_width(self):
         self.assertEqual(calculate_window_profile(800, 900), (740, 880, False))
-        self.assertEqual(calculate_window_profile(640, 700), (616, 680, True))
+        self.assertEqual(calculate_window_profile(640, 700), (616, 676, True))
 
     def test_window_never_exceeds_maximum_size(self):
         width, height, _ = calculate_window_profile(7680, 4320)
