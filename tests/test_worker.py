@@ -151,6 +151,56 @@ class P0SecurityTests(unittest.TestCase):
                 worker.validate_privileged_install()
 
 
+class IsoVolumeLabelTests(unittest.TestCase):
+    def test_normalize_iso_label_preserves_valid_name(self):
+        self.assertEqual(worker.normalize_iso_volume_label("ESD ISO"), "ESD ISO")
+        self.assertEqual(worker.normalize_iso_volume_label("x86-64"), "x86-64")
+
+    def test_normalize_iso_label_replaces_control_and_forbidden_characters(self):
+        self.assertEqual(
+            worker.normalize_iso_volume_label('  X64:"WIN"/USB?  '),
+            "X64__WIN__USB_",
+        )
+
+    def test_normalize_iso_label_truncates_to_gpt_name_limit(self):
+        self.assertEqual(worker.normalize_iso_volume_label("X" * 50), "X" * 36)
+
+    def test_missing_iso_label_uses_safe_fallback(self):
+        self.assertEqual(worker.normalize_iso_volume_label("   "), "BOOTMEDIA")
+
+    def test_read_iso_label_prefers_blkid_volume_id(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"test")
+            response = subprocess.CompletedProcess(
+                ["blkid"], 0, stdout="WIN10_IOT_X64\n", stderr=""
+            )
+            with patch("worker.command", return_value=response) as command:
+                self.assertEqual(worker.read_iso_volume_label(image), "WIN10_IOT_X64")
+            command.assert_called_once()
+            self.assertIn("blkid", command.call_args.args[0])
+
+    def test_read_iso_label_falls_back_to_7zip_volume_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"test")
+            no_label = subprocess.CompletedProcess(
+                ["blkid"], 2, stdout="", stderr="no label"
+            )
+            seven_zip = subprocess.CompletedProcess(
+                ["7z"], 0, stdout="Path = windows.iso\nType = Iso\nVolume = ESD_ISO\n", stderr=""
+            )
+            with patch("worker.command", side_effect=[no_label, seven_zip]):
+                self.assertEqual(worker.read_iso_volume_label(image), "ESD_ISO")
+
+    def test_gpt_first_partition_name_uses_original_iso_label(self):
+        layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
+        script = worker.make_sfdisk_script(layout, "WIN10_IOT_X64")
+        self.assertIn('name="WIN10_IOT_X64"', script)
+        self.assertIn('name="BMK_EFI"', script)
+        self.assertNotIn('name="BOOTMEDIA"', script)
+
+
 class UefiNtfsLayoutTests(unittest.TestCase):
     def test_gpt_layout_reserves_exact_one_mib_efi_partition_at_end(self):
         sectors = (32 * 1024 * 1024 * 1024) // 512
