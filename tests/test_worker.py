@@ -60,6 +60,96 @@ class WorkerSafetyTests(unittest.TestCase):
             self.assertFalse(is_windows_install_iso(Path("fake.iso")))
 
 
+class P0SecurityTests(unittest.TestCase):
+    def test_device_identity_rejects_diskseq_change_even_when_devnode_is_reused(self):
+        expected = {
+            "size": 8 * 1024**3, "maj_min": "8:16", "model": "USB Disk",
+            "serial": "", "wwn": "", "tran": "usb", "diskseq": "41", "by_id": "",
+        }
+        current = dict(expected, diskseq="42")
+        with self.assertRaisesRegex(RuntimeError, "diskseq"):
+            worker.compare_device_identity(expected, current)
+
+    def test_device_identity_rejects_capacity_or_major_minor_change(self):
+        expected = {
+            "size": 8 * 1024**3, "maj_min": "8:16", "model": "USB Disk",
+            "serial": "ABC123", "wwn": "", "tran": "usb", "diskseq": "41", "by_id": "",
+        }
+        with self.assertRaisesRegex(RuntimeError, "size"):
+            worker.compare_device_identity(expected, dict(expected, size=16 * 1024**3))
+        with self.assertRaisesRegex(RuntimeError, "maj_min"):
+            worker.compare_device_identity(expected, dict(expected, **{"maj_min": "8:32"}))
+
+    def test_device_identity_requires_at_least_one_stable_hardware_token(self):
+        expected = {
+            "size": 1024, "maj_min": "8:16", "model": "", "serial": "",
+            "wwn": "", "tran": "usb", "diskseq": "", "by_id": "",
+        }
+        with self.assertRaisesRegex(RuntimeError, "stabil"):
+            worker.compare_device_identity(expected, expected)
+
+    def test_source_on_target_disk_is_rejected_before_any_destructive_step(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"source image")
+            identity = {"maj_min": "8:0"}
+            with patch("worker.source_backing_majmins", return_value={"8:0", "8:1"}), patch(
+                "worker.device_identity", return_value=identity
+            ), patch("worker._block_ancestor_majmins", return_value={"8:0"}):
+                with self.assertRaisesRegex(RuntimeError, "forrásfájl a célmeghajtó"):
+                    worker.ensure_source_not_on_target(image, "/dev/sdb")
+
+    def test_source_on_different_physical_disk_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"source image")
+            with patch("worker.source_backing_majmins", return_value={"8:17", "8:16"}), patch(
+                "worker.device_identity", return_value={"maj_min": "8:32"}
+            ), patch("worker._block_ancestor_majmins", return_value={"8:32"}):
+                worker.ensure_source_not_on_target(image, "/dev/sdc")
+
+    def test_target_with_luks_partition_is_rejected(self):
+        disk = {"type": "disk", "path": "/dev/sdb", "children": [
+            {"type": "part", "path": "/dev/sdb1", "fstype": "crypto_LUKS", "label": "vault"}
+        ]}
+        with patch("worker.lsblk_tree", return_value=[disk]):
+            with self.assertRaisesRegex(RuntimeError, "LUKS/LVM/RAID/swap"):
+                worker.inspect_target_layout("/dev/sdb")
+
+    def test_target_with_active_swap_signature_is_rejected(self):
+        disk = {"type": "disk", "path": "/dev/sdb", "children": [
+            {"type": "part", "path": "/dev/sdb1", "fstype": "swap", "label": "swap"}
+        ]}
+        with patch("worker.lsblk_tree", return_value=[disk]):
+            with self.assertRaisesRegex(RuntimeError, "swap"):
+                worker.inspect_target_layout("/dev/sdb")
+
+    def test_cancel_event_raises_only_at_explicit_safe_point(self):
+        worker.CANCEL_EVENT.set()
+        try:
+            with self.assertRaises(worker.OperationCancelled):
+                worker.check_cancelled()
+        finally:
+            worker.CANCEL_EVENT.clear()
+
+    def test_copy_stops_before_creating_destination_when_cancelled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            (source / "boot.wim").write_bytes(b"payload")
+            with patch("worker.check_cancelled", side_effect=worker.OperationCancelled("cancel")):
+                with self.assertRaises(worker.OperationCancelled):
+                    worker.copy_tree_progress(source, destination, 7, hash_files=False)
+            self.assertFalse((destination / "boot.wim").exists())
+
+    def test_root_worker_rejects_uninstalled_checkout_path(self):
+        with patch.object(Path, "resolve", return_value=Path("/home/test/checkout/worker.py")):
+            with self.assertRaisesRegex(RuntimeError, "Forráskönyvtárból"):
+                worker.validate_privileged_install()
+
+
 class UefiNtfsLayoutTests(unittest.TestCase):
     def test_gpt_layout_reserves_exact_one_mib_efi_partition_at_end(self):
         sectors = (32 * 1024 * 1024 * 1024) // 512
@@ -383,31 +473,47 @@ class NtfsBootSectorTests(unittest.TestCase):
 
 
 class WindowsVerifyArgumentTests(unittest.TestCase):
-    def test_main_passes_disabled_verification_to_windows_writer(self):
+    def _run_main(self, verify: str):
         with tempfile.TemporaryDirectory() as temp:
             image = Path(temp) / "windows.iso"
             image.write_bytes(b"ISO test")
-            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+            identity = {
+                "path": "/dev/sdb", "size": 8 * 1024**3, "maj_min": "8:16",
+                "model": "USB Disk", "serial": "ABC123", "wwn": "",
+                "tran": "usb", "rm": False, "diskseq": "4", "by_id": "/dev/disk/by-id/usb-ABC",
+            }
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch("worker.emit"), patch(
                 "worker.write_windows_uefi"
             ) as write:
                 result = worker.main(
-                    ["worker.py", "windows", str(image), "/dev/sdb", "0"]
+                    ["bootmediakit-worker", "windows", str(image), "/dev/sdb", verify, json.dumps(identity)]
                 )
             self.assertEqual(result, 0)
-            write.assert_called_once_with(image, "/dev/sdb", False)
+            write.assert_called_once_with(image.resolve(), "/dev/sdb", verify == "1", identity)
 
-    def test_main_passes_enabled_verification_to_windows_writer(self):
+    def test_main_passes_disabled_verification_and_identity_to_windows_writer(self):
+        self._run_main("0")
+
+    def test_main_passes_enabled_verification_and_identity_to_windows_writer(self):
+        self._run_main("1")
+
+    def test_main_refuses_to_launch_from_uninstalled_worker(self):
         with tempfile.TemporaryDirectory() as temp:
             image = Path(temp) / "windows.iso"
             image.write_bytes(b"ISO test")
-            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
-                "worker.write_windows_uefi"
-            ) as write:
-                result = worker.main(
-                    ["worker.py", "windows", str(image), "/dev/sdb", "1"]
-                )
-            self.assertEqual(result, 0)
-            write.assert_called_once_with(image, "/dev/sdb", True)
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install", side_effect=RuntimeError("untrusted path")
+            ), patch("worker.emit") as emit, patch("worker.write_windows_uefi") as write:
+                result = worker.main([
+                    "worker.py", "windows", str(image), "/dev/sdb", "0", "{}"
+                ])
+            self.assertEqual(result, 1)
+            emit.assert_called_once()
+            write.assert_not_called()
+
+
 
 
 class KernelCopyTests(unittest.TestCase):
