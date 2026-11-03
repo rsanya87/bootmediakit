@@ -2,13 +2,17 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a narrowly scoped privileged worker.
 
-**Version:** `0.1.2`  
+**Development version:** `0.1.3-alpha`  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
 > Version 0.1.2 has been tested on real USB 2.0 devices and on the reported Samsung RV511: Windows Setup passed the first reboot and continued from the internal SSD. Linux raw/DD writing has also been tested in Legacy/MBR mode. UEFI firmware, Secure Boot and additional Windows ISO/device combinations still need broader testing; this is not a full Rufus feature replacement.
 
 ## Current capabilities
+
+- Compact, resizable PySide6 interface with a smaller default window while retaining the standard UI font size.
+- Live elapsed-time display for the actual USB creation operation.
+- Original BootMediaKit application icon for the window, taskbar and application menu.
 
 - Write ISO, IMG, BIN, and RAW images directly to a selected USB drive.
 - Optional full read-back verification for raw image writes.
