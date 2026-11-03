@@ -1,0 +1,55 @@
+from pathlib import Path
+import unittest
+import xml.etree.ElementTree as ET
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class PrivilegedPackagingTests(unittest.TestCase):
+    def test_polkit_action_is_scoped_to_the_fixed_worker_wrapper(self):
+        policy = ET.parse(ROOT / "org.bootmediakit.policy").getroot()
+        action = policy.find("./action[@id='org.bootmediakit.write']")
+        self.assertIsNotNone(action)
+        assert action is not None
+        annotation = action.find("./annotate[@key='org.freedesktop.policykit.exec.path']")
+        self.assertIsNotNone(annotation)
+        assert annotation is not None
+        self.assertEqual(
+            annotation.text,
+            "/usr/libexec/bootmediakit/bootmediakit-worker",
+        )
+        defaults = action.find("./defaults")
+        self.assertIsNotNone(defaults)
+        assert defaults is not None
+        self.assertEqual(defaults.findtext("allow_any"), "no")
+        self.assertEqual(defaults.findtext("allow_active"), "auth_admin_keep")
+
+    def test_root_wrapper_uses_isolated_python_and_installed_worker(self):
+        wrapper = (ROOT / "bootmediakit-worker").read_text(encoding="utf-8")
+        self.assertIn("/usr/bin/python3 -I /usr/lib/bootmediakit/worker.py", wrapper)
+        self.assertNotIn("python3 " + str(ROOT), wrapper)
+
+    def test_installer_places_wrapper_and_policy_in_root_owned_paths(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        self.assertIn('install -o root -g root -m 0755 "$SCRIPT_DIR/bootmediakit-worker" "$WRAPPER_PATH"', installer)
+        self.assertIn('install -o root -g root -m 0644 "$SCRIPT_DIR/org.bootmediakit.policy" "$POLICY_PATH"', installer)
+        self.assertIn('chown -R root:root "$APP_DIR"', installer)
+        self.assertIn('chmod -R go-w "$APP_DIR"', installer)
+
+    def test_gui_invokes_the_dedicated_polkit_wrapper_not_python_worker(self):
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")', app)
+        self.assertIn('self.process.setProgram("/usr/bin/pkexec")', app)
+        self.assertNotIn('args = ["/usr/bin/python3", str(WORKER)', app)
+
+    def test_worker_refuses_direct_checkout_or_missing_polkit_context(self):
+        worker = (ROOT / "worker.py").read_text(encoding="utf-8")
+        self.assertIn('expected_worker = Path("/usr/lib/bootmediakit/worker.py")', worker)
+        self.assertIn('expected_wrapper = Path("/usr/libexec/bootmediakit/bootmediakit-worker")', worker)
+        self.assertIn('os.environ.get("PKEXEC_UID", "")', worker)
+        self.assertIn("Forráskönyvtárból történő közvetlen root indítás tiltott.", worker)
+
+
+if __name__ == "__main__":
+    unittest.main()
