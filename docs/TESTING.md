@@ -75,3 +75,13 @@ Do not describe mocked unit tests as proof that media creation works on physical
 - Verify the small `0.1.3-safety-alpha` string appears below the BootMediaKit title.
 - During Windows writing, an expected `EXDEV` fallback may occur between ISO9660/loop and NTFS. The operation must continue and the user log must not contain raw `[Errno 18]` output.
 - Verify helper FAT-label relabeling still yields the `BMK_EFI` volume on the USB, while no upstream `RUFUS_BOOT` relabel message is printed in the user log.
+
+
+### Responsive UI profile
+
+The responsive-size helper uses `QScreen.availableGeometry()` (logical pixels), not the raw panel resolution. Expected examples:
+
+- 2560×1400 available work area -> 740×900, normal density.
+- 3840×2100 -> 740×900, normal density.
+- 1366×728 available work area (typical 1366×768 panel with desktop panel/taskbar) -> 740×708, compact density.
+- Verify on a real 1366×768 laptop that the vertical scrollbar stays hidden with a long Windows ISO selected and a two-partition USB inserted. The UI font remains 10 pt.
