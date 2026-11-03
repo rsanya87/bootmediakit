@@ -17,7 +17,7 @@
 - Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
 
 
-- Kompakt, átméretezhető PySide6 felület kisebb alapablakkal, a betűméret csökkentése nélkül; hosszú ISO-nevek tördelése vízszintes görgetés nélkül.
+- Képernyőmérethez igazodó PySide6 felület: legfeljebb 740×900-as ablak, 1366×768-as laptopon kompakt elrendezés és görgetés nélküli használatra optimalizált méret; a 10 pontos betűméret megmarad.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
 - Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
 - Jól olvasható meghajtó- és partícióadatok sötét KDE témán; a fejlesztői verziószám közvetlenül a név alatt jelenik meg.
