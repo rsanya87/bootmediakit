@@ -634,6 +634,7 @@ def copy_tree_progress(
             )
 
     for current, dirs, files in os.walk(source_root):
+        check_cancelled()
         current_path = Path(current)
         relative_dir = current_path.relative_to(source_root)
         target_dir = destination_root / relative_dir
@@ -657,6 +658,7 @@ def copy_tree_progress(
                 "wb", buffering=0
             ) as write_file:
                 while fast_copy_method is not None and file_copied < expected_size:
+                    check_cancelled()
                     try:
                         remaining = min(CHUNK, expected_size - file_copied)
                         if fast_copy_method == "copy_file_range":
@@ -701,6 +703,7 @@ def copy_tree_progress(
                     report_progress()
 
                 while file_copied < expected_size:
+                    check_cancelled()
                     data = read_file.read(min(CHUNK, expected_size - file_copied))
                     if not data:
                         raise RuntimeError(
@@ -744,6 +747,7 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
     total = sum(size for _, size, _ in manifest)
     checked = 0
     for relative, expected_size, expected_hash in manifest:
+        check_cancelled()
         target = destination_root / Path(relative)
         if not target.is_file():
             raise RuntimeError(f"Az USB-ről hiányzik egy átmásolt fájl: {relative}")
@@ -759,6 +763,7 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
                 except OSError:
                     pass
             while True:
+                check_cancelled()
                 data = source.read(CHUNK)
                 if not data:
                     break
@@ -825,11 +830,13 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
         with image.open("rb", buffering=0) as source:
             remaining = expected
             while remaining:
+                check_cancelled()
                 data = source.read(min(CHUNK, remaining))
                 if not data:
                     raise RuntimeError("A BMK_EFI segédkép váratlanul véget ért.")
                 view = memoryview(data)
                 while view:
+                    check_cancelled()
                     written = os.write(fd, view)
                     if written <= 0:
                         raise RuntimeError("Nem sikerült a BMK_EFI segédképet a partícióra írni.")
@@ -844,6 +851,7 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
     try:
         remaining = expected
         while remaining:
+            check_cancelled()
             data = os.read(fd, min(CHUNK, remaining))
             if not data:
                 raise RuntimeError("A BMK_EFI partíció visszaolvasása váratlanul véget ért.")
@@ -923,7 +931,12 @@ def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
         return "ntfs-3g"
 
 
-def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
+def write_windows_uefi(
+    image: Path,
+    device: str,
+    verify: bool = True,
+    expected_identity: dict[str, object] | None = None,
+) -> None:
     global TARGET_MODIFIED
     require_programs((
         "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
@@ -932,7 +945,9 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
 
     # Validate both the removable target and the upstream boot image before
     # making any changes to the user's USB drive.
-    target_size = validate_target(device)
+    check_cancelled()
+    ensure_source_not_on_target(image, device)
+    target_size = validate_target(device, expected_identity)
     verify_uefi_ntfs_image()
     sector_size = int(command(["blockdev", "--getss", device]).stdout.strip())
     if sector_size != 512:
@@ -952,6 +967,8 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
     try:
         # Inspect the entire ISO and determine the exact data size while the
         # target remains untouched.
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
         emit("Windows ISO és UEFI:NTFS segédkép ellenőrzése…", 1)
         mount_iso(image, iso_mount)
         mounted_iso = True
@@ -982,9 +999,15 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         # From this point on, disk contents will be modified. The device was
         # validated before preflight; validate it once more immediately before
         # unmounting/wiping to catch a device swap or stale selection.
-        validate_target(device)
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        validate_target(device, expected_identity)
         emit("USB lemez leválasztása és GPT partíciók létrehozása…", 10)
         unmount_disk(device)
+        # Last-moment identity and source checks after unmounting but before wipefs.
+        validate_target(device, expected_identity)
+        ensure_source_not_on_target(image, device)
+        check_cancelled()
         TARGET_MODIFIED = True
         command(["wipefs", "--all", "--force", device])
         script = make_sfdisk_script(layout)
@@ -1003,6 +1026,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         uefi_partition = partition_path(device, 2)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
+            check_cancelled()
             if os.path.exists(ntfs_partition) and os.path.exists(uefi_partition):
                 try:
                     if stat.S_ISBLK(os.stat(ntfs_partition).st_mode) and stat.S_ISBLK(os.stat(uefi_partition).st_mode):
@@ -1020,6 +1044,9 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
         usb_mount.mkdir(parents=True, exist_ok=True)
+        check_cancelled()
+        validate_target(device, expected_identity)
+        unmount_disk(device)
         mount_ntfs_volume(ntfs_partition, usb_mount)
         mounted_usb = True
         copy_span = windows_copy_progress_span(verify)
@@ -1035,11 +1062,13 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
 
         # Commit all writes in one batch. Per-file fsync is particularly slow
         # on low-end USB 2.0 flash drives; unmount also performs final flushing.
+        check_cancelled()
         emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
         sync_filesystem(usb_mount)
 
         # Recheck the boot chain files on the destination before unmounting.
         for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
+            check_cancelled()
             copied = find_case_insensitive(usb_mount, relative)
             if copied is None or not copied.is_file():
                 raise RuntimeError(f"A Windows UEFI indításhoz szükséges fájl hiányzik az USB-ről: {relative}")
@@ -1052,6 +1081,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
                 copy_end_percent,
             )
 
+        check_cancelled()
         emit("Fájlrendszer kiürítése és leválasztása…", 99)
         sync_filesystem(usb_mount)
         command(["umount", "--", str(usb_mount)], timeout=120)
@@ -1086,35 +1116,60 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         command(["udevadm", "settle"], check=False, timeout=20)
 
 
-def write_raw(image: Path, device: str, verify: bool) -> None:
+def write_raw(
+    image: Path,
+    device: str,
+    verify: bool,
+    expected_identity: dict[str, object] | None = None,
+) -> None:
     global TARGET_MODIFIED
-    source_size = image.stat().st_size
-    target_size = validate_target(device)
-    if source_size <= 0:
-        raise RuntimeError("A lemezkép üres.")
-    if source_size > target_size:
-        raise RuntimeError("A lemezkép nagyobb, mint a célmeghajtó.")
-    require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"))
-
-    emit("Célmeghajtó ellenőrzése…", 1,
-         log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)")
-    unmount_disk(device)
-    emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
-    TARGET_MODIFIED = True
-    command(["wipefs", "--all", "--force", device])
-    command(["sync"])
-
-    emit("Lemezkép kiírása…", 3)
-    offset = 0
-    fd = os.open(device, os.O_WRONLY)
+    image = image.resolve(strict=True)
+    source_fd = os.open(image, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
-        with image.open("rb", buffering=0) as source:
+        source_stat = os.fstat(source_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise RuntimeError("A RAW forrásnak normál, nem symlink fájlnak kell lennie.")
+        source_size = source_stat.st_size
+        if source_size <= 0:
+            raise RuntimeError("A lemezkép üres.")
+
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        target_size = validate_target(device, expected_identity)
+        if source_size > target_size:
+            raise RuntimeError("A lemezkép nagyobb, mint a célmeghajtó.")
+        require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"))
+
+        emit(
+            "Célmeghajtó ellenőrzése…",
+            1,
+            log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)",
+        )
+        check_cancelled()
+        unmount_disk(device)
+        # Re-check the source filesystem and the physical disk identity at the
+        # destructive boundary. The source fd remains open throughout writing.
+        ensure_source_not_on_target(image, device)
+        validate_target(device, expected_identity)
+        check_cancelled()
+        emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
+        TARGET_MODIFIED = True
+        command(["wipefs", "--all", "--force", device])
+        command(["sync"])
+
+        emit("Lemezkép kiírása…", 3)
+        offset = 0
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        fd = os.open(device, os.O_WRONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
             while True:
-                data = source.read(CHUNK)
+                check_cancelled()
+                data = os.read(source_fd, CHUNK)
                 if not data:
                     break
                 view = memoryview(data)
                 while view:
+                    check_cancelled()
                     written = os.write(fd, view)
                     if written <= 0:
                         raise RuntimeError(f"Nem sikerült tovább írni a célmeghajtót (offset: {offset}).")
@@ -1122,26 +1177,41 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
                     view = view[written:]
                 percent = 3 + int((offset / source_size) * (57 if verify else 96))
                 emit(f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt", percent)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
-    command(["sync"])
-    if verify:
-        emit("Visszaolvasás és adategyezőség ellenőrzése…", 61)
-        compared = 0
-        with image.open("rb", buffering=0) as source:
-            target_fd = os.open(device, os.O_RDONLY)
+        check_cancelled()
+        command(["sync"])
+        if verify:
+            emit("Visszaolvasás és adategyezőség ellenőrzése…", 61)
+            compared = 0
+            os.lseek(source_fd, 0, os.SEEK_SET)
+            command(["blockdev", "--flushbufs", device])
+            target_fd = os.open(device, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
             try:
                 while True:
-                    expected = source.read(CHUNK)
+                    check_cancelled()
+                    expected = os.read(source_fd, CHUNK)
                     if not expected:
                         break
-                    actual = os.read(target_fd, len(expected))
+                    chunks: list[bytes] = []
+                    remaining = len(expected)
+                    while remaining:
+                        check_cancelled()
+                        part = os.read(target_fd, remaining)
+                        if not part:
+                            raise RuntimeError(
+                                f"Rövid visszaolvasás a(z) {compared:,}. bájtnál; "
+                                "a célmeghajtó nem adta vissza a teljes adatot."
+                            )
+                        chunks.append(part)
+                        remaining -= len(part)
+                    actual = b"".join(chunks)
                     if actual != expected:
                         mismatch = next(
                             (i for i, (a, b) in enumerate(zip(actual, expected)) if a != b),
-                            min(len(actual), len(expected)),
+                            0,
                         )
                         raise RuntimeError(
                             f"Visszaolvasási hiba a(z) {compared + mismatch:,}. bájtnál. "
@@ -1152,10 +1222,12 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
                     emit(f"Ellenőrzés… {compared:,} / {source_size:,} bájt", percent)
             finally:
                 os.close(target_fd)
-    command(["blockdev", "--rereadpt", device], check=False)
-    command(["udevadm", "settle"], check=False, timeout=15)
-    command(["sync"])
-    emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
+        command(["blockdev", "--rereadpt", device], check=False)
+        command(["udevadm", "settle"], check=False, timeout=15)
+        command(["sync"])
+        emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
+    finally:
+        os.close(source_fd)
 
 
 def main(argv: list[str]) -> int:
