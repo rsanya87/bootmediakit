@@ -704,15 +704,15 @@ def copy_tree_progress(
                         if fast_copy_method == "copy_file_range" and hasattr(os, "sendfile"):
                             fast_copy_method = "sendfile"
                             emit(
-                                "A kernel copy_file_range útvonal nem támogatott; megpróbálom a sendfile másolást…",
-                                log=str(exc),
+                                "A fájlrendszerek közötti gyorsmásolás nem érhető el; alternatív kernelmásolásra váltok.",
+                                log="A copy_file_range ezen a forrás/cél fájlrendszer-kombináción nem támogatott; a másolás folytatódik.",
                             )
                             continue
                         fast_copy_method = None
                         emit(
-                            "A kerneles másolási útvonal nem támogatott ezen a fájlrendszer-kombináción; "
-                            "biztonságos streamelt másolásra váltok.",
-                            log=str(exc),
+                            "A gyors kernelmásolás nem támogatott ezen a fájlrendszer-kombináción; "
+                            "kompatibilis adatmásolásra váltok.",
+                            log="A két fájlrendszer közötti gyorsmásolás nem támogatott; a kompatibilis másolás zavartalanul folytatódik.",
                         )
                         break
                     if amount == 0:
@@ -824,10 +824,6 @@ def prepare_bmk_uefi_ntfs_image(upstream_image: Path, destination: Path) -> Path
         raise RuntimeError("Nem sikerült a FAT segédpartíció kötetcímkéjét BMK_EFI értékre állítani.")
     if destination.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
         raise RuntimeError("A BMK_EFI címkézett segédkép mérete megváltozott.")
-    emit(
-        "Az UEFI:NTFS FAT kötetcímkéje BMK_EFI lett; az upstream EFI binárisok változatlanok.",
-        log=f"Eredeti címke: {UPSTREAM_FAT_VOLUME_LABEL}; új címke: {BOOTMEDIA_FAT_VOLUME_LABEL}.",
-    )
     return destination
 
 
