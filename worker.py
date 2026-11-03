@@ -258,7 +258,7 @@ def _block_ancestor_majmins(source: str) -> set[str]:
 def protected_physical_devices() -> set[str]:
     """Return physical devices backing system mounts and active swap."""
     protected: set[str] = set()
-    for target in ("/", "/boot", "/boot/efi", "/efi"):
+    for target in ("/", "/boot", "/boot/efi", "/efi", "/home", "/usr", "/var", "/opt", "/srv", "/root"):
         result = command(["findmnt", "-nro", "SOURCE", "--target", target], check=False)
         source = result.stdout.strip().split("[", 1)[0]
         protected.update(_block_ancestor_paths(source))
@@ -267,6 +267,15 @@ def protected_physical_devices() -> set[str]:
         source = line.strip()
         if source.startswith("/dev/"):
             protected.update(_block_ancestor_paths(source))
+        elif source and Path(source).exists():
+            major_minor = command(
+                ["findmnt", "-nro", "MAJ:MIN", "--target", source],
+                check=False,
+            ).stdout.strip()
+            if major_minor and Path("/dev/block", major_minor).exists():
+                protected.update(
+                    _block_ancestor_paths(canonical(str(Path("/dev/block") / major_minor)))
+                )
     return protected
 
 
@@ -277,7 +286,7 @@ def inspect_target_layout(device: str) -> tuple[dict[str, object], list[dict[str
         raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
     children = _flatten_block_tree([disk])
     unsafe_types = {"crypt", "lvm", "raid", "raid0", "raid1", "raid5", "raid6", "raid10", "mpath"}
-    unsafe_fs = {"crypto_luks", "lvm2_member", "swap"}
+    unsafe_fs = {"crypto_luks", "lvm2_member", "swap", "linux_raid_member", "isw_raid_member", "ddf_raid_member"}
     for item in children:
         if item is disk:
             continue
