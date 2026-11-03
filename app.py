@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QProcess, Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QElapsedTimer, QProcess, Qt, QTimer
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -39,10 +39,12 @@ from PySide6.QtWidgets import (
 )
 
 from iso_utils import is_windows_install_iso
+from ui_helpers import format_elapsed_time
 
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.1.3-alpha"
 APP_NAME = "BootMediaKit"
 WORKER = Path(__file__).with_name("worker.py")
+APP_ICON = Path(__file__).with_name("bootmediakit.svg")
 
 
 def human_size(value: int | float) -> str:
@@ -82,19 +84,27 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
-        # Smaller screens and non-100% desktop scaling are supported by a
-        # scrollable content area instead of forcing the user to maximize.
-        self.setMinimumSize(600, 500)
-        self.resize(840, 760)
+        self.setMinimumSize(620, 540)
+        self.resize(740, 670)
+        if APP_ICON.is_file():
+            self.setWindowIcon(QIcon(str(APP_ICON)))
         self.process: QProcess | None = None
         self.output_buffer = ""
         self.current_device: dict[str, Any] | None = None
         self._selected_mode = "raw"
 
+        # Start timing on the first worker progress event, not while pkexec
+        # is waiting for the user's authentication.
+        self._operation_elapsed = QElapsedTimer()
+        self._operation_timer_started = False
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(1000)
+        self.elapsed_timer.timeout.connect(self.update_elapsed_display)
+
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(24, 22, 24, 22)
-        root_layout.setSpacing(14)
+        root_layout.setContentsMargins(16, 14, 16, 14)
+        root_layout.setSpacing(8)
 
         header = QHBoxLayout()
         title_block = QVBoxLayout()
@@ -114,7 +124,7 @@ class MainWindow(QMainWindow):
         warning = QFrame()
         warning.setObjectName("warningPanel")
         warning_layout = QHBoxLayout(warning)
-        warning_layout.setContentsMargins(14, 10, 14, 10)
+        warning_layout.setContentsMargins(10, 7, 10, 7)
         warning_icon = QLabel("⚠")
         warning_icon.setObjectName("warningIcon")
         warning_text = QLabel(
@@ -130,8 +140,8 @@ class MainWindow(QMainWindow):
         image_card = QFrame()
         image_card.setObjectName("panel")
         image_layout = QVBoxLayout(image_card)
-        image_layout.setContentsMargins(16, 14, 16, 14)
-        image_layout.setSpacing(9)
+        image_layout.setContentsMargins(12, 9, 12, 9)
+        image_layout.setSpacing(6)
         image_label = QLabel("1. Lemezkép kiválasztása")
         image_label.setObjectName("sectionTitle")
         image_layout.addWidget(image_label)
@@ -139,6 +149,7 @@ class MainWindow(QMainWindow):
         self.iso_edit = QLineEdit()
         self.iso_edit.setPlaceholderText("Válassz ISO / IMG / BIN fájlt…")
         self.iso_edit.setClearButtonEnabled(True)
+        self.iso_edit.setMinimumHeight(32)
         self.browse_button = QPushButton("Tallózás…")
         self.browse_button.clicked.connect(self.choose_image)
         image_row.addWidget(self.iso_edit, 1)
@@ -153,8 +164,8 @@ class MainWindow(QMainWindow):
         device_card = QFrame()
         device_card.setObjectName("panel")
         device_layout = QVBoxLayout(device_card)
-        device_layout.setContentsMargins(16, 14, 16, 14)
-        device_layout.setSpacing(9)
+        device_layout.setContentsMargins(12, 9, 12, 9)
+        device_layout.setSpacing(6)
         device_header = QHBoxLayout()
         device_title = QLabel("2. Célmeghajtó")
         device_title.setObjectName("sectionTitle")
@@ -165,7 +176,7 @@ class MainWindow(QMainWindow):
         device_header.addWidget(self.refresh_button)
         device_layout.addLayout(device_header)
         self.device_combo = QComboBox()
-        self.device_combo.setMinimumHeight(42)
+        self.device_combo.setMinimumHeight(34)
         self.device_combo.currentIndexChanged.connect(self.device_changed)
         device_layout.addWidget(self.device_combo)
         self.device_detail = QLabel("Csatlakoztass egy USB-meghajtót, majd frissítsd a listát.")
@@ -178,8 +189,8 @@ class MainWindow(QMainWindow):
         mode_card = QFrame()
         mode_card.setObjectName("panel")
         mode_layout = QVBoxLayout(mode_card)
-        mode_layout.setContentsMargins(16, 14, 16, 14)
-        mode_layout.setSpacing(10)
+        mode_layout.setContentsMargins(12, 9, 12, 9)
+        mode_layout.setSpacing(6)
         mode_title = QLabel("3. Írási mód")
         mode_title.setObjectName("sectionTitle")
         mode_layout.addWidget(mode_title)
@@ -193,11 +204,14 @@ class MainWindow(QMainWindow):
         self.windows_button.setObjectName("modeButton")
         self.raw_button.clicked.connect(lambda: self.select_mode("raw"))
         self.windows_button.clicked.connect(lambda: self.select_mode("windows"))
-        mode_layout.addWidget(self.raw_button)
-        mode_layout.addWidget(self.windows_button)
+        mode_buttons = QHBoxLayout()
+        mode_buttons.setSpacing(8)
+        mode_buttons.addWidget(self.raw_button, 1)
+        mode_buttons.addWidget(self.windows_button, 1)
+        mode_layout.addLayout(mode_buttons)
         self.mode_description = QLabel(
-            "ISOHybrid Linux- és egyéb lemezképekhez. A kiválasztott fájl nyers "
-            "lemezképként kerül az USB-re; a partíciós tábla is felülíródik."
+            "ISOHybrid Linux- és egyéb lemezképekhez. A teljes lemezkép közvetlenül "
+            "az USB-re kerül; minden meglévő adat felülíródik."
         )
         self.mode_description.setObjectName("muted")
         self.mode_description.setWordWrap(True)
@@ -211,11 +225,18 @@ class MainWindow(QMainWindow):
         progress_card = QFrame()
         progress_card.setObjectName("panel")
         progress_layout = QVBoxLayout(progress_card)
-        progress_layout.setContentsMargins(16, 14, 16, 14)
-        progress_layout.setSpacing(9)
+        progress_layout.setContentsMargins(12, 9, 12, 9)
+        progress_layout.setSpacing(6)
+        progress_header = QHBoxLayout()
         progress_title = QLabel("Művelet állapota")
         progress_title.setObjectName("sectionTitle")
-        progress_layout.addWidget(progress_title)
+        self.elapsed_label = QLabel("Eltelt idő: 00:00")
+        self.elapsed_label.setObjectName("elapsed")
+        self.elapsed_label.setToolTip("A pendrive-készítés tényleges futási ideje")
+        progress_header.addWidget(progress_title)
+        progress_header.addStretch(1)
+        progress_header.addWidget(self.elapsed_label)
+        progress_layout.addLayout(progress_header)
         self.status_label = QLabel("Készen áll.")
         self.status_label.setObjectName("status")
         progress_layout.addWidget(self.status_label)
@@ -227,7 +248,8 @@ class MainWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
-        self.log.setMinimumHeight(92)
+        self.log.setMinimumHeight(68)
+        self.log.setMaximumHeight(128)
         self.log.setPlaceholderText("A műveletek és az ellenőrzés részletei itt jelennek meg.")
         progress_layout.addWidget(self.log)
         root_layout.addWidget(progress_card, 1)
@@ -237,8 +259,8 @@ class MainWindow(QMainWindow):
         self.about_label.setObjectName("muted")
         self.start_button = QPushButton("USB elkészítése")
         self.start_button.setObjectName("primaryButton")
-        self.start_button.setMinimumWidth(190)
-        self.start_button.setMinimumHeight(44)
+        self.start_button.setMinimumWidth(168)
+        self.start_button.setMinimumHeight(40)
         self.start_button.clicked.connect(self.start_operation)
         footer.addWidget(self.about_label, 1)
         footer.addWidget(self.start_button)
@@ -267,18 +289,19 @@ class MainWindow(QMainWindow):
             QLabel#version { padding: 5px 9px; border: 1px solid palette(mid); border-radius: 7px; }
             QLabel#sectionTitle { font-size: 15px; font-weight: 650; }
             QLabel#status { font-weight: 600; }
+            QLabel#elapsed { color: palette(highlight); font-weight: 650; border: 1px solid palette(mid); border-radius: 7px; padding: 4px 8px; }
             QFrame#panel { border: 1px solid palette(mid); border-radius: 11px; }
             QFrame#warningPanel { border: 1px solid #b58136; border-radius: 10px; background: rgba(181,129,54,0.10); }
             QLabel#warningIcon { font-size: 21px; font-weight: 700; color: #d19a48; }
-            QLineEdit, QComboBox, QPlainTextEdit { border: 1px solid palette(mid); border-radius: 7px; padding: 8px; }
-            QComboBox { min-height: 26px; }
-            QPushButton { border: 1px solid palette(mid); border-radius: 7px; padding: 8px 13px; }
+            QLineEdit, QComboBox, QPlainTextEdit { border: 1px solid palette(mid); border-radius: 7px; padding: 5px 7px; }
+            QComboBox { min-height: 20px; }
+            QPushButton { border: 1px solid palette(mid); border-radius: 7px; padding: 6px 10px; }
             QPushButton:hover { border-color: palette(highlight); }
-            QPushButton#modeButton { text-align: left; padding: 11px; }
+            QPushButton#modeButton { text-align: left; padding: 7px 10px; min-height: 32px; }
             QPushButton#modeButton:checked { border: 2px solid palette(highlight); background: palette(alternate-base); font-weight: 650; }
-            QPushButton#primaryButton { background: palette(highlight); color: palette(highlighted-text); font-weight: 700; border: none; padding: 10px 18px; }
+            QPushButton#primaryButton { background: palette(highlight); color: palette(highlighted-text); font-weight: 700; border: none; padding: 8px 16px; }
             QPushButton#primaryButton:disabled { background: palette(mid); color: palette(window); }
-            QProgressBar { border: 1px solid palette(mid); border-radius: 6px; text-align: center; min-height: 20px; }
+            QProgressBar { border: 1px solid palette(mid); border-radius: 6px; text-align: center; min-height: 18px; }
             QProgressBar::chunk { background: palette(highlight); border-radius: 5px; }
             QCheckBox { spacing: 8px; }
         """)
@@ -383,21 +406,32 @@ class MainWindow(QMainWindow):
             self.verify_checkbox.setText("Kiírás utáni teljes visszaolvasás és ellenőrzés")
             self.mode_description.setText(
                 "ISOHybrid Linux- és egyéb lemezképekhez. A teljes lemezkép közvetlenül "
-                "az USB-re kerül; a meglévő partíciós tábla és fájlok felülíródnak. "
-                "A kiírás után opcionális teljes visszaolvasás ellenőrzi az adatokat."
+                "az USB-re kerül; minden meglévő adat felülíródik. Opcionális visszaolvasás ellenőrzi a kiírást."
             )
         else:
             self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
             self.mode_description.setText(
-                "Windows x64 UEFI telepítő készítése két GPT partícióval: nagy NTFS adatpartíció "
-                "az eredeti ISO-fájloknak, valamint 1 MiB FAT BMK_EFI UEFI:NTFS segédpartíció a lemez végén. "
-                "A BMK_EFI segédpartíció Microsoft Basic Data típusú, NoDriveLetter GUID:63 attribútummal; "
-                "szándékosan nem ESP, hogy a Windows Setup ne érzékeljen második EFI rendszerpartíciót. "
-                "Az install.esd és install.wim változatlanul kerül át, nincs WIM-konvertálás vagy darabolás. "
-                "A gyors alapbeállítás nem végez külön teljes SHA-256 visszaolvasást; ez a jelölőnégyzettel bekapcsolható. "
-                "Az NTFS másolás a kernel NTFS3 driverét részesíti előnyben. Secure Boot működése a firmware "
-                "megbízható tanúsítványaitól és visszavonási listájától is függ. Legacy BIOS és Windows To Go még nem támogatott."
+                "Windows x64 UEFI: nagy NTFS adatpartíció és BMK_EFI UEFI:NTFS segédpartíció. "
+                "A nagy install.esd / install.wim fájlok változatlanul másolódnak. "
+                "A teljes SHA-256 visszaellenőrzés opcionális."
             )
+
+    def start_operation_clock(self) -> None:
+        if self._operation_timer_started:
+            return
+        self._operation_elapsed.start()
+        self._operation_timer_started = True
+        self.elapsed_timer.start()
+        self.update_elapsed_display()
+
+    def update_elapsed_display(self) -> None:
+        if self._operation_timer_started and self._operation_elapsed.isValid():
+            elapsed = self._operation_elapsed.elapsed()
+            self.elapsed_label.setText(f"Eltelt idő: {format_elapsed_time(elapsed)}")
+
+    def stop_operation_clock(self) -> None:
+        self.elapsed_timer.stop()
+        self.update_elapsed_display()
 
     def append_log(self, text: str) -> None:
         if text:
@@ -472,6 +506,10 @@ class MainWindow(QMainWindow):
         self.iso_edit.setEnabled(False)
 
         self.output_buffer = ""
+        self.elapsed_timer.stop()
+        self._operation_elapsed = QElapsedTimer()
+        self._operation_timer_started = False
+        self.elapsed_label.setText("Eltelt idő: 00:00")
         self.process = QProcess(self)
         self.process.setProgram("/usr/bin/pkexec")
         self.process.setArguments(args)
@@ -500,6 +538,9 @@ class MainWindow(QMainWindow):
     def handle_worker_line(self, line: str) -> None:
         if not line.strip():
             return
+        # The first worker progress event marks the actual operation start.
+        # Time spent waiting for the polkit password is intentionally excluded.
+        self.start_operation_clock()
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
@@ -518,6 +559,7 @@ class MainWindow(QMainWindow):
     def process_error(self, error: QProcess.ProcessError) -> None:
         self.append_log(f"A háttérfolyamat indítási hibája: {error}")
         if error == QProcess.ProcessError.FailedToStart:
+            self.stop_operation_clock()
             self.set_busy(False)
             self.status_label.setText("A háttérfolyamat nem indult el.")
             self.process = None
@@ -527,6 +569,7 @@ class MainWindow(QMainWindow):
         if self.output_buffer.strip():
             self.handle_worker_line(self.output_buffer.strip())
             self.output_buffer = ""
+        self.stop_operation_clock()
         self.set_busy(False)
         if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
             self.progress.setValue(100)
@@ -564,6 +607,10 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("BootMediaKit")
     app.setFont(QFont("Noto Sans", 10))
+    if hasattr(app, "setDesktopFileName"):
+        app.setDesktopFileName("bootmediakit")
+    if APP_ICON.is_file():
+        app.setWindowIcon(QIcon(str(APP_ICON)))
     window = MainWindow()
     window.show()
     return app.exec()
