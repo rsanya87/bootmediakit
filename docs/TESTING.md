@@ -11,7 +11,7 @@ The current branch adds the following P0-focused automated tests:
 - Direct worker execution from an untrusted source checkout is rejected.
 - Polkit XML action path, root-wrapper launch command, installer ownership/mode and GUI wrapper invocation are validated.
 
-CI currently runs 59 unit/packaging tests. Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
+CI currently runs 61 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
 
 ## 0.1.2 release validation
 
@@ -66,3 +66,12 @@ Current automated test suite: 37 unit tests plus GitHub Actions checks using the
 ## Test result discipline
 
 Do not describe mocked unit tests as proof that media creation works on physical hardware. The same-machine Windows Setup source-access and first-reboot test has passed. Keep issue #2 open for final install confirmation and Secure Boot follow-up; broader platform coverage is still future work.
+
+
+### UI feedback follow-up
+
+- Check on KDE dark theme that disk details, serial/WWN, partition filesystems, labels and mountpoints are readable.
+- Choose an ISO with a long filename/path; verify the metadata wraps and no horizontal scrollbar appears. Vertical scrolling remains available when the window is shorter than the full form.
+- Verify the small `0.1.3-safety-alpha` string appears below the BootMediaKit title.
+- During Windows writing, an expected `EXDEV` fallback may occur between ISO9660/loop and NTFS. The operation must continue and the user log must not contain raw `[Errno 18]` output.
+- Verify helper FAT-label relabeling still yields the `BMK_EFI` volume on the USB, while no upstream `RUFUS_BOOT` relabel message is printed in the user log.
