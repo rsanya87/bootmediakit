@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 from iso_utils import is_windows_install_iso
 from ui_helpers import format_elapsed_time
 
-APP_VERSION = "0.1.3-alpha"
+APP_VERSION = "0.1.3-safety-alpha"
 APP_NAME = "BootMediaKit"
 WORKER = Path("/usr/lib/bootmediakit/worker.py")
 PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
@@ -180,15 +180,18 @@ class MainWindow(QMainWindow):
         title_block = QVBoxLayout()
         title = QLabel("BootMediaKit")
         title.setObjectName("appTitle")
-        subtitle = QLabel("Bootolható USB-meghajtók készítése Linux alatt")
-        subtitle.setObjectName("subtitle")
-        title_block.addWidget(title)
-        title_block.addWidget(subtitle)
-        header.addLayout(title_block)
-        header.addStretch(1)
+        meta_row = QHBoxLayout()
         version = QLabel(APP_VERSION)
         version.setObjectName("version")
-        header.addWidget(version, alignment=Qt.AlignmentFlag.AlignTop)
+        subtitle = QLabel("Bootolható USB-meghajtók készítése Linux alatt")
+        subtitle.setObjectName("subtitle")
+        meta_row.addWidget(version, 0, Qt.AlignmentFlag.AlignVCenter)
+        meta_row.addWidget(subtitle, 0, Qt.AlignmentFlag.AlignVCenter)
+        meta_row.addStretch(1)
+        title_block.addWidget(title)
+        title_block.addLayout(meta_row)
+        header.addLayout(title_block)
+        header.addStretch(1)
         root_layout.addLayout(header)
 
         warning = QFrame()
@@ -220,6 +223,8 @@ class MainWindow(QMainWindow):
         self.iso_edit.setPlaceholderText("Válassz ISO / IMG / BIN fájlt…")
         self.iso_edit.setClearButtonEnabled(True)
         self.iso_edit.setMinimumHeight(32)
+        self.iso_edit.setMinimumWidth(0)
+        self.iso_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.browse_button = QPushButton("Tallózás…")
         self.browse_button.clicked.connect(self.choose_image)
         image_row.addWidget(self.iso_edit, 1)
@@ -227,6 +232,9 @@ class MainWindow(QMainWindow):
         image_layout.addLayout(image_row)
         self.file_info = QLabel("Támogatott formátumok: ISO, IMG, BIN, RAW")
         self.file_info.setObjectName("muted")
+        self.file_info.setWordWrap(True)
+        self.file_info.setMinimumWidth(0)
+        self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         image_layout.addWidget(self.file_info)
         root_layout.addWidget(image_card)
 
@@ -247,11 +255,15 @@ class MainWindow(QMainWindow):
         device_layout.addLayout(device_header)
         self.device_combo = QComboBox()
         self.device_combo.setMinimumHeight(34)
+        self.device_combo.setMinimumWidth(0)
+        self.device_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.device_combo.currentIndexChanged.connect(self.device_changed)
         device_layout.addWidget(self.device_combo)
         self.device_detail = QLabel("Csatlakoztass egy USB-meghajtót, majd frissítsd a listát.")
         self.device_detail.setObjectName("muted")
         self.device_detail.setWordWrap(True)
+        self.device_detail.setMinimumWidth(0)
+        self.device_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         device_layout.addWidget(self.device_detail)
         root_layout.addWidget(device_card)
 
@@ -274,6 +286,9 @@ class MainWindow(QMainWindow):
         self.windows_button.setObjectName("modeButton")
         self.raw_button.clicked.connect(lambda: self.select_mode("raw"))
         self.windows_button.clicked.connect(lambda: self.select_mode("windows"))
+        for button in (self.raw_button, self.windows_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         mode_buttons = QHBoxLayout()
         mode_buttons.setSpacing(8)
         mode_buttons.addWidget(self.raw_button, 1)
@@ -285,6 +300,8 @@ class MainWindow(QMainWindow):
         )
         self.mode_description.setObjectName("muted")
         self.mode_description.setWordWrap(True)
+        self.mode_description.setMinimumWidth(0)
+        self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         mode_layout.addWidget(self.mode_description)
         self.verify_checkbox = QCheckBox("Kiírás utáni teljes visszaolvasás és ellenőrzés")
         self.verify_checkbox.setChecked(True)
@@ -319,6 +336,8 @@ class MainWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
         self.log.setMinimumHeight(68)
+        self.log.setMinimumWidth(0)
+        self.log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.log.setMaximumHeight(128)
         self.log.setPlaceholderText("A műveletek és az ellenőrzés részletei itt jelennek meg.")
         progress_layout.addWidget(self.log)
@@ -327,6 +346,8 @@ class MainWindow(QMainWindow):
         footer = QHBoxLayout()
         self.about_label = QLabel("Linux • helyi, nyílt forráskódú projekt")
         self.about_label.setObjectName("muted")
+        self.about_label.setMinimumWidth(0)
+        self.about_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.cancel_button = QPushButton("Megszakítás")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self.cancel_operation)
@@ -340,10 +361,13 @@ class MainWindow(QMainWindow):
         footer.addWidget(self.start_button)
         root_layout.addLayout(footer)
 
+        # Keep content inside the viewport; long ISO metadata wraps in its card.
+        root.setMinimumWidth(0)
+        root.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setWidget(root)
         self.setCentralWidget(scroll_area)
@@ -359,8 +383,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("""
             QMainWindow { background: palette(window); }
             QLabel#appTitle { font-size: 27px; font-weight: 750; }
-            QLabel#subtitle, QLabel#muted, QLabel#version { color: palette(mid); }
-            QLabel#version { padding: 5px 9px; border: 1px solid palette(mid); border-radius: 7px; }
+            QLabel#subtitle { color: #aeb9c4; font-size: 9pt; }
+            QLabel#muted { color: #b7c1cb; }
+            QLabel#version { color: #83bde2; font-size: 9pt; font-weight: 650; padding-right: 10px; }
             QLabel#sectionTitle { font-size: 15px; font-weight: 650; }
             QLabel#status { font-weight: 600; }
             QLabel#elapsed { color: palette(highlight); font-weight: 650; border: 1px solid palette(mid); border-radius: 7px; padding: 4px 8px; }
