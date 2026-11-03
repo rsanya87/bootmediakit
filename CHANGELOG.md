@@ -4,7 +4,7 @@
 
 - Determine the initial window dimensions from the active screen's available logical geometry; cap the window at 740×900.
 - Switch to compact spacing/control heights when available screen height is below 850 logical pixels; retain the 10 pt application font.
-- On a 1366×768 display with 728 px available work area, target an initial 740×708 window.
+- On a 1366×768 display with 728 px available work area, target a 740×704 outer window (including KDE frame).
 - Reduce ISO metadata to a single concise line (full filename remains in the path field and tooltip).
 - Show device identity plus up to two compact partition summary lines; the full partition/mountpoint inventory remains in the destructive confirmation.
 - Reduce the operation log height on laptop-sized displays while retaining its internal scrollback.
