@@ -59,7 +59,7 @@ class PrivilegedPackagingTests(unittest.TestCase):
 
     def test_gui_disables_horizontal_scrollbar_and_wraps_long_iso_metadata(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("self.file_info.setWordWrap(True)", app)
+        self.assertIn("self.file_info.setWordWrap(False)", app)
         self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
         self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
         self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
