@@ -112,3 +112,13 @@ Created `dev/0.1.3-safety-alpha` from the UI development branch; the released `m
 - Added P0 security and policy-packaging tests; latest CI passes 59 tests.
 
 Physical validation is still pending. CI does not exercise a real Polkit agent, real block-device hot-swap race, or cancellation while writing to physical USB media. Test first with a disposable device on CachyOS; never use the user's backup HDD or a disk containing the source ISO.
+
+
+## 2026-11-03 — Safety Alpha UI feedback follow-up
+
+- Long ISO metadata now wraps and the scroll area never displays a horizontal scrollbar. The root content, path entry, device combo, detail labels, mode buttons, log and footer now allow the viewport to constrain their width.
+- Muted text no longer uses the host theme's potentially too-dark `palette(mid)` color; device details use an explicit light grey for readable contrast under dark KDE palettes.
+- The exact `0.1.3-safety-alpha` string is shown directly below the BootMediaKit name in a small blue secondary label.
+- Removed the user-visible log entry that described the UEFI helper image's source FAT label and its replacement. The internal verification of the upstream `RUFUS_BOOT` metadata and the temporary-copy relabel to `BMK_EFI` remain unchanged; actual device labels remain `BOOTMEDIA` and `BMK_EFI` in this writer version.
+- The cross-filesystem `copy_file_range` / `sendfile` fallback is expected on some source/destination filesystem pairs. It no longer prints raw `[Errno 18] Invalid cross-device link`; the log now explains that a compatible copy method is being used. The fallback and the write path were not changed, preserving current reported transfer performance.
+- Added tests for horizontal-overflow prevention, visible version/high-contrast metadata, quiet helper-label handling and benign EXDEV fallback diagnostics.
