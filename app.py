@@ -669,11 +669,14 @@ class MainWindow(QMainWindow):
             separators=(",", ":"),
             ensure_ascii=False,
         )
+        # Prefer a persistent /dev/disk/by-id symlink so a hot-unplug/
+        # replug cannot redirect the privileged worker to a newly assigned sdX.
+        target_path = str(device.get("by_id") or device["path"])
         args = [
             str(PRIVILEGED_WRAPPER),
             mode,
             str(image.resolve()),
-            str(device["path"]),
+            target_path,
             "1" if self.verify_checkbox.isChecked() else "0",
             identity_json,
         ]
