@@ -486,13 +486,44 @@ def partition_path(device: str, number: int) -> str:
     return f"{device}{separator}{number}"
 
 
-def make_sfdisk_script(layout: dict[str, int]) -> str:
+def normalize_iso_volume_label(value: str) -> str:
+    """Make an ISO/UDF volume ID safe for both GPT partition and NTFS labels."""
+    label = value.strip()
+    # Labels are taken from untrusted ISO metadata. Do not let control
+    # characters, quotes or filesystem-forbidden characters enter sfdisk.
+    label = "".join(
+        "_" if ord(char) < 32 or char in '<>:"/\\|?*' else char
+        for char in label
+    )
+    label = label.rstrip(" .")[:36]
+    return label or "BOOTMEDIA"
+
+
+def read_iso_volume_label(image: Path) -> str:
+    """Read the source ISO's own volume ID; fall back only when it has none."""
+    result = command(
+        ["blkid", "--probe", "--match-tag", "LABEL", "--output", "value", str(image)],
+        check=False,
+        timeout=20,
+    )
+    label = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    if not label:
+        listing = command(["7z", "l", "-slt", str(image)], check=False, timeout=30)
+        for line in listing.stdout.splitlines():
+            if line.startswith("Volume = "):
+                label = line.partition("=")[2].strip()
+                break
+    return normalize_iso_volume_label(label)
+
+
+def make_sfdisk_script(layout: dict[str, int], iso_label: str = "BOOTMEDIA") -> str:
+    iso_label = normalize_iso_volume_label(iso_label)
     return (
         "label: gpt\n"
         "unit: sectors\n"
         f"first-lba: {GPT_ALIGNMENT_SECTORS}\n"
         f"start={layout['first_start']}, size={layout['first_size']}, "
-        f"type={GPT_BASIC_DATA_GUID}, name=\"BOOTMEDIA\"\n"
+        f"type={GPT_BASIC_DATA_GUID}, name=\"{iso_label}\"\n"
         f"start={layout['second_start']}, size={layout['second_size']}, "
         f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"BMK_EFI\"\n"
     )
@@ -509,7 +540,12 @@ def _attribute_has_no_drive_letter(value: object) -> bool:
     )
 
 
-def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
+def verify_gpt_layout(
+    device: str,
+    layout: dict[str, int],
+    iso_label: str = "BOOTMEDIA",
+) -> None:
+    iso_label = normalize_iso_volume_label(iso_label)
     """Read back the GPT and reject an ESP-typed UEFI:NTFS helper partition."""
     command(["sfdisk", "--verify", device])
     result = command(["sfdisk", "--json", device])
@@ -539,8 +575,11 @@ def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
                 f"{actual_start}+{actual_size}, várt: {expected_start}+{expected_size}."
             )
 
-    if first.get("name") != "BOOTMEDIA":
-        raise RuntimeError("Az első GPT partíció neve nem BOOTMEDIA.")
+    if first.get("name") != iso_label:
+        raise RuntimeError(
+            f"Az első GPT partíció neve nem egyezik az ISO címkéjével: "
+            f"{first.get('name')!r}, várt: {iso_label!r}."
+        )
     if helper.get("name") != BOOTMEDIA_FAT_VOLUME_LABEL:
         raise RuntimeError(
             f"Az UEFI segédpartíció GPT neve nem {BOOTMEDIA_FAT_VOLUME_LABEL}."
@@ -994,6 +1033,7 @@ def write_windows_uefi(
         mount_iso(image, iso_mount)
         mounted_iso = True
         install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount)
+        iso_label = read_iso_volume_label(image)
         reserve_bytes = 128 * 1024 * 1024
         if total_copy_bytes + reserve_bytes > layout["first_bytes"]:
             raise RuntimeError(
@@ -1031,12 +1071,12 @@ def write_windows_uefi(
         check_cancelled()
         TARGET_MODIFIED = True
         command(["wipefs", "--all", "--force", device])
-        script = make_sfdisk_script(layout)
+        script = make_sfdisk_script(layout, iso_label)
         command(["sfdisk", "--wipe", "never", device], input_text=script)
         command(["blockdev", "--rereadpt", device], check=False)
         command(["partprobe", device], check=False)
         command(["udevadm", "settle"], check=False, timeout=20)
-        verify_gpt_layout(device, layout)
+        verify_gpt_layout(device, layout, iso_label)
         emit(
             "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
             "az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.",
@@ -1059,7 +1099,7 @@ def write_windows_uefi(
             raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
 
         emit("NTFS fájlrendszer létrehozása…", 25)
-        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
+        command(["mkfs.ntfs", "--fast", "--force", "--label", iso_label, "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
         validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
         write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
 
