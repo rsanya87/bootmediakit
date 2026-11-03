@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3-safety-alpha — final compact device/progress panel
+
+- Replace the visible multi-line partition list below the target drive with a single summary line (capacity, identifier and model) plus `Partíció információk:` and a small blue `i` button.
+- Hovering the `i` button displays all partition paths, filesystems, labels, sizes and mountpoints in a 15-second tooltip. Tooltip content is HTML-escaped.
+- Limit the elapsed-time indicator to a fixed 30 px height and fixed vertical size policy so it cannot stretch the progress header and create a large blank area.
+
 ## 0.1.3-safety-alpha — responsive compact layout
 
 - Determine the initial window dimensions from the active screen's available logical geometry; cap the window at 740×900.
