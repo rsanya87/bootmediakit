@@ -1000,7 +1000,7 @@ def write_windows_uefi(
     global TARGET_MODIFIED
     require_programs((
         "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
-        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel",
+        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel", "blkid", "7z",
     ))
 
     # Validate both the removable target and the upstream boot image before
@@ -1053,6 +1053,7 @@ def write_windows_uefi(
             log=(
                 f"Windows PE: {boot_wim.relative_to(iso_mount)}; "
                 f"telepítőkép: {install_image.relative_to(iso_mount)}; "
+                f"ISO kötetcímke: {iso_label}; "
                 f"másolandó fájlméret: {total_copy_bytes:,} bájt."
             ),
         )
