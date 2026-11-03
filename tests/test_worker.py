@@ -223,6 +223,10 @@ class UefiNtfsLayoutTests(unittest.TestCase):
     def test_partition_path_handles_sd_and_nvme_names(self):
         self.assertEqual(worker.partition_path("/dev/sdb", 1), "/dev/sdb1")
         self.assertEqual(worker.partition_path("/dev/nvme1n1", 2), "/dev/nvme1n1p2")
+        self.assertEqual(
+            worker.partition_path("/dev/disk/by-id/usb-SanDisk_Ultra_1234", 2),
+            "/dev/disk/by-id/usb-SanDisk_Ultra_1234-part2",
+        )
 
     def test_git_blob_sha1_matches_git_object_format(self):
         with tempfile.TemporaryDirectory() as temp:
