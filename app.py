@@ -426,6 +426,33 @@ class MainWindow(QMainWindow):
         self.refresh_timer.timeout.connect(self.refresh_devices_silently)
         self.refresh_timer.start()
 
+    def fit_window_to_screen(self) -> None:
+        """Fit the outer window frame inside the active screen's work area."""
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available = screen.availableGeometry()
+        frame = self.frameGeometry()
+        client = self.geometry()
+        frame_width = max(0, frame.width() - client.width())
+        frame_height = max(0, frame.height() - client.height())
+
+        outer_width = max(560, min(740, available.width() - 24))
+        outer_height = max(520, min(900, available.height() - 24))
+        client_width = max(560, outer_width - frame_width)
+        client_height = max(520, outer_height - frame_height)
+
+        self.setMaximumSize(
+            max(560, 740 - frame_width),
+            max(520, 900 - frame_height),
+        )
+        self.resize(client_width, client_height)
+        frame = self.frameGeometry()
+        self.move(
+            available.x() + max(0, (available.width() - frame.width()) // 2),
+            available.y() + max(0, (available.height() - frame.height()) // 2),
+        )
+
     def apply_style(self) -> None:
         self.setStyleSheet("""
             QMainWindow { background: palette(window); }
@@ -970,6 +997,7 @@ def main() -> int:
         app.setWindowIcon(QIcon(str(APP_ICON)))
     window = MainWindow()
     window.show()
+    QTimer.singleShot(0, window.fit_window_to_screen)
     return app.exec()
 
 
