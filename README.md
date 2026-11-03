@@ -1,14 +1,26 @@
 # BootMediaKit
 
-BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a narrowly scoped privileged worker.
+BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.1.2`  
+**Version:** `0.1.3`  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> Version 0.1.2 has been tested on real USB 2.0 devices and on the reported Samsung RV511: Windows Setup passed the first reboot and continued from the internal SSD. Linux raw/DD writing has also been tested in Legacy/MBR mode. UEFI firmware, Secure Boot and additional Windows ISO/device combinations still need broader testing; this is not a full Rufus feature replacement.
+> Version 0.1.3 has been tested on physical USB drives: Linux DD/RAW media booted in both Legacy BIOS and UEFI modes, and Windows 10 IoT Enterprise LTSC 2021 x64 completed installation in UEFI mode. The cooperative cancellation flow was also tested. Secure Boot still needs a dedicated hardware test, and support for additional distributions is future work; this is not a full Rufus feature replacement.
 
 ## Current capabilities
+
+- Dedicated root-owned worker wrapper and Polkit action; the GUI itself never runs as root.
+- Cooperative cancellation at safe write boundaries, without killing the privileged worker during I/O.
+- Source/target physical-disk collision checks and a second target-identity validation immediately before destructive writes.
+- Protection of system and active swap backing devices; refusal of targets containing LUKS, LVM, RAID or swap layers.
+- Partition/filesystem/label details in the destructive confirmation, plus a second confirmation for large or non-removable USB devices.
+
+
+- Screen-aware PySide6 interface capped at 740×900, with a compact laptop profile for 1366×768 displays while retaining the 10 pt font size.
+- Live elapsed-time display for the actual USB creation operation.
+- Original BootMediaKit application icon for the window, taskbar and application menu.
+- Readable device metadata on dark KDE themes; full partition details appear in a hover tooltip from a compact information icon.
 
 - Write ISO, IMG, BIN, and RAW images directly to a selected USB drive.
 - Optional full read-back verification for raw image writes.
@@ -18,6 +30,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
   - a 1 MiB FAT `BMK_EFI` UEFI:NTFS helper partition at the end of the drive. Its GPT type is Microsoft Basic Data (not EFI System), with NoDriveLetter (GUID-specific bit 63); its GPT partition name and FAT volume label are both `BMK_EFI`.
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
+- Preserve the source Windows ISO volume label on the large NTFS partition; reserve `BMK_EFI` for the small helper partition.
 - Prefer the in-kernel NTFS3 driver for Windows ISO file copying, with ntfs-3g as a compatibility fallback.
 - Use best-effort in-kernel `copy_file_range`, then `sendfile`, when full SHA-256 verification is disabled; fall back to streaming copies when the source/destination filesystems do not support either fast path.
 - Throttle progress events and flush only the USB filesystem rather than calling a host-wide sync.
@@ -40,11 +53,11 @@ The upstream UEFI:NTFS helper image contains Secure Boot-signed x64 UEFI:NTFS co
 
 ### Current scope and limitations
 
-- Windows target: **UEFI x64 only**.
-- Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
+- Windows target: **UEFI x64 only**. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
+- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
 - The current layout requires a 512-byte logical-sector USB device.
 - The current installer targets Arch-based distributions only. Debian/Ubuntu and Fedora support are future work.
-- Real Windows Setup testing is still required. A previous 0.1.1-alpha FAT32/SWM attempt showed a “required media driver is missing” dialog on the reported PC; the same ISO reportedly worked when prepared with Rufus. The 0.1.2 UEFI:NTFS implementation is designed to address the file-system and boot-chain limitations, but the issue remains open until tested on that same machine.
+- The user has confirmed that Windows 10 IoT Enterprise LTSC 2021 x64 completed UEFI installation on the previously reported PC. Additional Windows ISO families and hardware combinations remain future validation work.
 - USB file verification checks file sizes and SHA-256 hashes after copying. It does not validate the Windows ISO publisher signature or the authenticity of the ISO itself.
 
 ## Install on Arch-based systems

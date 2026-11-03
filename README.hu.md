@@ -1,14 +1,26 @@
 # BootMediaKit
 
-**BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, rendszergazdai jogosultsággal futó háttérfolyamat végzi.
+**BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.1.2`  
+**Verzió:** `0.1.3`  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.1.2-es verziót valódi USB 2.0 pendrive-okon is teszteltük. A Samsung RV511 gépen a Windows Telepítő eljutott az első újraindításig, majd a belső SSD-ről folytatta a telepítést. A Linux RAW/DD írás Legacy/MBR módban szintén tesztelve van. További UEFI firmware-, Secure Boot-, Windows ISO- és eszköztesztek még szükségesek; a program nem teljes Rufus-funkciópótlás.
+> A 0.1.3-at valódi pendrive-okon teszteltük: a Linux DD/RAW mód Legacy BIOS és UEFI indítással is működött, a Windows 10 IoT Enterprise LTSC 2021 x64 telepítő pedig UEFI módban sikeresen végigtelepült. A megszakítási funkciót is kipróbáltuk. A Secure Boot külön hardveres ellenőrzése és a további disztribúciók támogatása még nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
+
+- Külön, root tulajdonú worker-wrapper és saját Polkit akció; a GUI nem kap rendszergazdai jogosultságot.
+- Biztonságos megszakítási kérés a GUI-ból; a worker írási egységek között áll le, nem kényszerített folyamatkilövéssel.
+- A forrás és a cél fizikai meghajtójának ütközésvizsgálata; a cél meghajtóazonosságának ismételt ellenőrzése közvetlenül a törlés előtt.
+- A rendszer- és swap-meghajtók védelme, valamint LUKS/LVM/RAID/swap kötetek elutasítása.
+- Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
+
+
+- Képernyőmérethez igazodó PySide6 felület: legfeljebb 740×900-as ablak, 1366×768-as laptopon kompakt elrendezés és görgetés nélküli használatra optimalizált méret; a 10 pontos betűméret megmarad.
+- Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
+- Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
+- Jól olvasható meghajtóadatok sötét KDE témán; a partíciók teljes listája a kis `i` információs ikon fölé húzott egérmutatóval jelenik meg.
 
 - ISO, IMG, BIN és RAW lemezképek közvetlen kiírása.
 - Nyers lemezkép írása után opcionális teljes visszaolvasás.
@@ -18,6 +30,7 @@
   - egy 1 MiB-os FAT `BMK_EFI` UEFI:NTFS segédpartíció a pendrive végén. A GPT-típusa Microsoft Basic Data (nem EFI System), be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, és a GPT partíciónév, valamint a FAT kötetcímke is `BMK_EFI`.
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
+- A Windows telepítő nagy NTFS partíciója megőrzi az ISO eredeti kötetcímkéjét; a `BMK_EFI` név kizárólag a kis segédpartícióhoz tartozik.
 - A segédkép visszaolvasásos ellenőrzése a pendrive-ra írás után.
 - A kernel NTFS3 driverét részesíti előnyben, az ntfs-3g tartalék lehetőséggel.
 - Kikapcsolt SHA-256 visszaellenőrzésnél megpróbálja a kernel `copy_file_range`, majd `sendfile` fájlmásolását használni; ha az ISO9660 és NTFS3 közötti mindkét gyors másolási mód nem támogatott, automatikusan visszaáll a streamelt másolásra.
@@ -43,11 +56,11 @@ A Rufus által közzétett UEFI:NTFS segédkép tartalmaz Secure Boot aláírás
 
 ### Jelenlegi korlátozások
 
-- Windows telepítő: **UEFI x64**.
-- Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
+- Windows telepítő: **UEFI x64**. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
+- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
 - A jelenlegi elrendezés 512 bájtos logikai szektorú USB-meghajtót igényel.
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
-- A valódi Windows Telepítő teszt még hátravan. A 0.1.1-alpha korábbi FAT32/SWM eljárásával a felhasználó gépén „Hiányzik egy adathordozóhoz szükséges illesztőprogram” hiba jelent meg, miközben ugyanaz az ISO Rufusszal működött. A 0.1.2 UEFI:NTFS eljárása ezt a fájlrendszer- és indítási korlátot célozza, de a hibajegyet csak a felhasználó gépén sikeres telepítőindítás után zárjuk le.
+- A Windows 10 IoT Enterprise LTSC 2021 x64 UEFI telepítése a felhasználó által tesztelve sikeresen befejeződött. Más Windows ISO-k és további hardverkonfigurációk tesztelése a következő fejlesztési szakasz feladata.
 - A fájl-ellenőrzés a másolt fájlok méretét és SHA-256 hashét ellenőrzi. Az ISO eredetiségét vagy kiadói aláírását nem vizsgálja.
 
 ## Telepítés Arch-alapú Linuxon

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.1.3 — 2026-11-03
+
+BootMediaKit 0.1.3 is the first stable release of the Arch/CachyOS implementation.
+
+### Windows UEFI and Linux RAW/DD
+
+- Create Windows x64 UEFI installation media on GPT with a large NTFS partition and a 1 MiB FAT UEFI:NTFS helper partition at the end of the USB drive.
+- Preserve the original Windows ISO volume ID as the first GPT partition name and NTFS volume label. Use `BOOTMEDIA` only as a fallback when the ISO does not expose a usable label. Keep `BMK_EFI` exclusively for the helper partition.
+- Keep `install.esd`, `install.wim` and all other Windows files unchanged; no ESD-to-WIM conversion or SWM splitting.
+- Retain the Microsoft Basic Data + NoDriveLetter GUID:63 metadata for the FAT helper partition, preventing Windows Setup from seeing a second EFI System Partition.
+- Verify the pinned upstream UEFI:NTFS helper image by size and cryptographic hashes; alter only a temporary copy's FAT volume label, not the signed EFI binaries.
+- Prefer kernel NTFS3 and kernel-assisted file copying, with ntfs-3g and buffered-copy fallbacks. Hide expected cross-filesystem `EXDEV` fallbacks from the error log.
+- Support direct Linux ISO/RAW/DD writing with optional full read-back verification.
+
+### Safety and reliability
+
+- Add a dedicated root-owned worker wrapper and BootMediaKit-specific Polkit action; run Python in isolated mode and keep the GUI unprivileged.
+- Revalidate target device identity and reject source images stored on the target physical disk.
+- Protect system and swap backing devices; reject LUKS, LVM, RAID and swap target layouts.
+- Add cooperative cancellation at safe write boundaries, flushing completed write units and performing normal cleanup.
+- Show a detailed destructive confirmation, including partitions, filesystems, labels, sizes and mountpoints; require a second confirmation for large or non-removable USB devices.
+- Use structured `lsblk --json` output and distinguish authorization failures from operations that may have modified the target.
+
+### User interface
+
+- Add BootMediaKit application icon, visible version label and elapsed operation timer.
+- Use a screen-aware compact layout capped at 740×900 logical pixels without reducing the 10 pt UI font.
+- Display partition details in a compact hover information tooltip.
+
+### Validation
+
+- User-tested Linux DD/RAW media booted in both Legacy BIOS and UEFI modes.
+- User-tested Windows 10 IoT Enterprise LTSC 2021 x64 in UEFI mode through successful installation.
+- User-tested cooperative cancellation on physical USB media.
+- Automated GitHub Actions suite: see the release workflow run linked from the repository.
+
 ## 0.1.2 — 2026-11-02
 
 ### Windows UEFI media rewrite

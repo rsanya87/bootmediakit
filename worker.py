@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Iterable
@@ -37,17 +38,52 @@ GPT_NO_DRIVE_LETTER_ATTR = "GUID:63"
 GPT_ALIGNMENT_SECTORS = 2048
 GPT_RESERVED_SECTORS = 34
 TARGET_MODIFIED = False
+CANCEL_EVENT = threading.Event()
 
 
-def emit(message: str, percent: int | None = None, *, log: str | None = None,
-         error: str | None = None) -> None:
-    event: dict[str, object] = {"message": message}
+class OperationCancelled(Exception):
+    """Raised at safe cancellation points between disk I/O units."""
+
+
+def check_cancelled() -> None:
+    if CANCEL_EVENT.is_set():
+        raise OperationCancelled("A felhasználó megszakította a műveletet.")
+
+
+def start_control_reader() -> None:
+    """Read a line-oriented cancel command from pkexec stdin."""
+    def read_commands() -> None:
+        try:
+            for line in sys.stdin:
+                if line.strip().lower() == "cancel":
+                    CANCEL_EVENT.set()
+                    return
+        except (OSError, ValueError):
+            return
+
+    threading.Thread(target=read_commands, name="bmk-control-stdin", daemon=True).start()
+
+
+def emit(
+    message: str,
+    percent: int | None = None,
+    *,
+    log: str | None = None,
+    error: str | None = None,
+    worker_started: bool | None = None,
+    cancelled: bool = False,
+) -> None:
+    event: dict[str, object] = {"message": message, "target_modified": TARGET_MODIFIED}
     if percent is not None:
         event["percent"] = max(0, min(100, int(percent)))
     if log:
         event["log"] = log
     if error:
         event["error"] = error
+    if worker_started is not None:
+        event["worker_started"] = worker_started
+    if cancelled:
+        event["cancelled"] = True
     print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
@@ -59,14 +95,24 @@ def command(
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
-            args,
-            input=input_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-        )
+        if input_text is None:
+            result = subprocess.run(
+                args,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
+        else:
+            result = subprocess.run(
+                args,
+                input=input_text,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
     except FileNotFoundError as exc:
         raise RuntimeError(f"Hiányzó rendszerprogram: {args[0]}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -87,29 +133,181 @@ def canonical(path: str) -> str:
     return os.path.realpath(path)
 
 
-def lsblk_one(path: str, columns: str) -> list[str]:
-    result = command(["lsblk", "-dnro", columns, path])
-    return result.stdout.strip().split()
+LSBLK_COLUMNS = (
+    "PATH,TYPE,SIZE,MODEL,SERIAL,WWN,TRAN,RM,RO,MAJ:MIN,"
+    "PKNAME,FSTYPE,LABEL,PARTTYPE,PARTLABEL,MOUNTPOINTS"
+)
+
+
+def _as_bool(value: object) -> bool:
+    return value is True or str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _flatten_block_tree(nodes: list[dict[str, object]]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for node in nodes:
+        result.append(node)
+        children = node.get("children") or []
+        if isinstance(children, list):
+            result.extend(_flatten_block_tree(children))
+    return result
+
+
+def lsblk_tree(path: str, *, inverse: bool = False) -> list[dict[str, object]]:
+    args = ["lsblk", "--json", "--bytes", "--paths", "--tree", "--output", LSBLK_COLUMNS]
+    if inverse:
+        args.append("--inverse")
+    args.append(path)
+    result = command(args)
+    try:
+        nodes = json.loads(result.stdout).get("blockdevices", [])
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise RuntimeError("Az lsblk nem adott érvényes JSON meghajtólistát.") from exc
+    return _flatten_block_tree(nodes)
+
+
+def _read_diskseq(maj_min: str) -> str:
+    if not maj_min:
+        return ""
+    path = Path("/sys/dev/block") / maj_min / "diskseq"
+    try:
+        return path.read_text(encoding="ascii").strip()
+    except OSError:
+        return ""
+
+
+def _device_by_id(path: str) -> str:
+    wanted = canonical(path)
+    directory = Path("/dev/disk/by-id")
+    try:
+        matches = sorted(
+            str(entry)
+            for entry in directory.iterdir()
+            if entry.is_symlink() and canonical(str(entry)) == wanted
+        )
+    except OSError:
+        return ""
+    return next((item for item in matches if "-part" not in Path(item).name), matches[0] if matches else "")
+
+
+def device_identity(device: str) -> dict[str, object]:
+    nodes = lsblk_tree(device)
+    node = next(
+        (item for item in nodes if item.get("type") == "disk" and canonical(str(item.get("path", ""))) == canonical(device)),
+        nodes[0] if nodes else None,
+    )
+    if not node or node.get("type") != "disk":
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    path = str(node.get("path") or device)
+    maj_min = str(node.get("maj:min") or "")
+    identity = {
+        "path": path,
+        "size": int(node.get("size") or 0),
+        "model": str(node.get("model") or "").strip(),
+        "serial": str(node.get("serial") or "").strip(),
+        "wwn": str(node.get("wwn") or "").strip(),
+        "tran": str(node.get("tran") or "").strip().lower(),
+        "rm": _as_bool(node.get("rm")),
+        "maj_min": maj_min,
+        "diskseq": _read_diskseq(maj_min),
+        "by_id": _device_by_id(path),
+    }
+    if not any(identity[key] for key in ("serial", "wwn", "diskseq", "by_id")):
+        raise RuntimeError(
+            "A meghajtóhoz nem található stabil fizikai azonosító (sorozatszám, WWN, diskseq vagy by-id). "
+            "Biztonsági okból ezt az eszközt nem írhatom."
+        )
+    return identity
+
+
+def compare_device_identity(expected: dict[str, object], current: dict[str, object]) -> None:
+    """Reject path reuse, device swaps, and changes to the selected disk."""
+    for key in ("size", "maj_min"):
+        if expected.get(key) in (None, "") or str(expected.get(key)) != str(current.get(key)):
+            raise RuntimeError(f"A célmeghajtó azonosítója megváltozott ({key}); válaszd ki újra a meghajtót.")
+    for key in ("model", "serial", "wwn", "tran", "diskseq", "by_id"):
+        old_value = str(expected.get(key) or "").strip()
+        if old_value and old_value != str(current.get(key) or "").strip():
+            raise RuntimeError(f"A célmeghajtó fizikai azonossága megváltozott ({key}); az írást leállítottam.")
+    if not any(str(expected.get(key) or "").strip() for key in ("serial", "wwn", "diskseq", "by_id")):
+        raise RuntimeError("A kiválasztáskor nem volt rögzítve stabil meghajtóazonosító.")
+
+
+def _block_ancestor_paths(source: str) -> set[str]:
+    if not source.startswith("/dev/") or not os.path.exists(source):
+        return set()
+    result: set[str] = set()
+    for item in lsblk_tree(source, inverse=True):
+        path = str(item.get("path") or "")
+        if path.startswith("/dev/"):
+            result.add(canonical(path))
+    result.add(canonical(source))
+    return result
+
+
+def _block_ancestor_majmins(source: str) -> set[str]:
+    if not source.startswith("/dev/") or not os.path.exists(source):
+        return set()
+    return {
+        str(item.get("maj:min"))
+        for item in lsblk_tree(source, inverse=True)
+        if item.get("maj:min")
+    }
 
 
 def protected_physical_devices() -> set[str]:
-    """Return devices backing critical system mountpoints and their parents."""
+    """Return physical devices backing system mounts and active swap."""
     protected: set[str] = set()
-    for target in ("/", "/boot", "/boot/efi", "/efi"):
+    for target in ("/", "/boot", "/boot/efi", "/efi", "/home", "/usr", "/var", "/opt", "/srv", "/root"):
         result = command(["findmnt", "-nro", "SOURCE", "--target", target], check=False)
         source = result.stdout.strip().split("[", 1)[0]
-        if not source.startswith("/dev/"):
-            continue
-        ancestors = command(["lsblk", "-s", "-nrpo", "PATH", source], check=False)
-        for item in ancestors.stdout.splitlines():
-            if item.startswith("/dev/"):
-                protected.add(canonical(item.strip()))
-        protected.add(canonical(source))
+        protected.update(_block_ancestor_paths(source))
+    swap = command(["swapon", "--noheadings", "--raw", "--output", "NAME"], check=False)
+    for line in swap.stdout.splitlines():
+        source = line.strip()
+        if source.startswith("/dev/"):
+            protected.update(_block_ancestor_paths(source))
+        elif source and Path(source).exists():
+            major_minor = command(
+                ["findmnt", "-nro", "MAJ:MIN", "--target", source],
+                check=False,
+            ).stdout.strip()
+            if major_minor and Path("/dev/block", major_minor).exists():
+                protected.update(
+                    _block_ancestor_paths(canonical(str(Path("/dev/block") / major_minor)))
+                )
     return protected
 
 
-def validate_target(device: str) -> int:
-    """Validate the whole target disk and return its byte capacity."""
+def inspect_target_layout(device: str) -> tuple[dict[str, object], list[dict[str, object]]]:
+    nodes = lsblk_tree(device)
+    disk = next((item for item in nodes if item.get("type") == "disk"), None)
+    if disk is None:
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    children = _flatten_block_tree([disk])
+    unsafe_types = {"crypt", "lvm", "raid", "raid0", "raid1", "raid5", "raid6", "raid10", "mpath"}
+    unsafe_fs = {"crypto_luks", "lvm2_member", "swap", "linux_raid_member", "isw_raid_member", "ddf_raid_member"}
+    for item in children:
+        if item is disk:
+            continue
+        item_type = str(item.get("type") or "").lower()
+        filesystem = str(item.get("fstype") or "").lower()
+        if item_type in unsafe_types or filesystem in unsafe_fs:
+            path = str(item.get("path") or "ismeretlen partíció")
+            label = str(item.get("label") or "")
+            raise RuntimeError(
+                f"A céllemezen védett vagy összetett kötet található ({path}, "
+                f"{filesystem or item_type}, {label}). Előbb biztonságosan válaszd le a "
+                "LUKS/LVM/RAID/swap réteget; a BootMediaKit nem bontja le automatikusan."
+            )
+    return disk, children
+
+
+def validate_target(
+    device: str,
+    expected_identity: dict[str, object] | None = None,
+) -> int:
+    """Validate whole USB disk, identity snapshot, system backing and layout."""
     if not device.startswith("/dev/"):
         raise RuntimeError("A cél nem érvényes /dev eszköz.")
     try:
@@ -119,31 +317,62 @@ def validate_target(device: str) -> int:
     if not stat.S_ISBLK(info.st_mode):
         raise RuntimeError("A cél csak valódi blokk eszköz lehet; fájlba írás nem engedélyezett.")
 
-    fields = lsblk_one(device, "TYPE,TRAN,RM,RO")
-    if len(fields) < 4 or fields[0] != "disk":
-        raise RuntimeError("Partíció helyett a teljes USB-lemezt válaszd ki.")
-    _, transport, removable, readonly = fields[:4]
-    if readonly == "1":
+    identity = device_identity(device)
+    if expected_identity is None:
+        raise RuntimeError("Hiányzik a kiválasztáskor rögzített meghajtóazonosító; válaszd ki újra a célt.")
+    compare_device_identity(expected_identity, identity)
+    disk, _ = inspect_target_layout(device)
+    if str(disk.get("type")) != "disk":
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    if _as_bool(disk.get("ro")):
         raise RuntimeError("A célmeghajtó írásvédett.")
-    if transport.lower() != "usb" and removable != "1":
+    if str(disk.get("tran") or "").lower() != "usb" and not _as_bool(disk.get("rm")):
         raise RuntimeError("Biztonsági okból csak USB vagy eltávolítható lemezre lehet írni.")
     if canonical(device) in protected_physical_devices():
-        raise RuntimeError("A kiválasztott lemez a rendszer (/ vagy /boot) meghajtója. A műveletet leállítottam.")
+        raise RuntimeError(
+            "A kiválasztott lemez a rendszer vagy az aktív swap fizikai meghajtója. "
+            "A műveletet biztonsági okból leállítottam."
+        )
+    return int(identity["size"])
 
-    size_text = command(["blockdev", "--getsize64", device]).stdout.strip()
-    try:
-        return int(size_text)
-    except ValueError as exc:
-        raise RuntimeError("Nem sikerült lekérdezni a célmeghajtó kapacitását.") from exc
+
+def source_backing_majmins(image: Path) -> set[str]:
+    result = command(
+        ["findmnt", "-nro", "MAJ:MIN", "--target", str(image)],
+        check=False,
+    )
+    maj_min = result.stdout.strip()
+    if not maj_min or not Path("/dev/block", maj_min).exists():
+        return set()
+    source = canonical(str(Path("/dev/block") / maj_min))
+    return _block_ancestor_majmins(source)
+
+
+def ensure_source_not_on_target(image: Path, device: str) -> None:
+    """Reject an image whose containing filesystem is on the target disk."""
+    resolved = image.resolve(strict=True)
+    if not resolved.is_file():
+        raise RuntimeError("A forrásnak normál fájlnak kell lennie.")
+    source_majmins = source_backing_majmins(resolved)
+    target_identity = device_identity(device)
+    target_majmins = _block_ancestor_majmins(device)
+    # If the target is a whole disk, its MAJ:MIN is in the source partition's
+    # inverse tree. If the target itself is a partition alias, compare all
+    # ancestors on both sides.
+    if target_identity.get("maj_min") in source_majmins or source_majmins.intersection(target_majmins):
+        raise RuntimeError(
+            "A forrásfájl a célmeghajtó egyik kötetén található. "
+            "A céllemezt nem módosítottam; másold a lemezképet egy másik meghajtóra."
+        )
 
 
 def unmount_disk(device: str) -> None:
-    result = command(["lsblk", "-nrpo", "PATH,TYPE", device])
-    partitions: list[str] = []
-    for line in result.stdout.splitlines():
-        columns = line.split()
-        if len(columns) >= 2 and columns[1] == "part":
-            partitions.append(columns[0])
+    disk, nodes = inspect_target_layout(device)
+    partitions = [
+        str(item.get("path"))
+        for item in nodes
+        if item is not disk and item.get("type") == "part" and item.get("path")
+    ]
     for partition in partitions:
         mounts = command(
             ["findmnt", "-rn", "-S", partition, "-o", "TARGET"], check=False
@@ -152,6 +381,7 @@ def unmount_disk(device: str) -> None:
             emit(f"Partíció leválasztása: {mountpoint}", 1)
             command(["umount", "--", mountpoint])
     command(["udevadm", "settle"], check=False, timeout=15)
+
 
 
 def find_case_insensitive(root: Path, relative: str) -> Path | None:
@@ -248,19 +478,52 @@ def calculate_gpt_layout(total_sectors: int, image_size: int = UEFI_NTFS_IMAGE_S
 
 
 def partition_path(device: str, number: int) -> str:
-    """Resolve /dev/sdX1 and /dev/nvme0n1p1 style partition names."""
+    """Resolve partition paths for /dev, /dev/disk/by-id and NVMe devices."""
+    if device.startswith("/dev/disk/by-id/"):
+        return f"{device}-part{number}"
     base = os.path.basename(device)
     separator = "p" if base and base[-1].isdigit() else ""
     return f"{device}{separator}{number}"
 
 
-def make_sfdisk_script(layout: dict[str, int]) -> str:
+def normalize_iso_volume_label(value: str) -> str:
+    """Make an ISO/UDF volume ID safe for both GPT partition and NTFS labels."""
+    label = value.strip()
+    # Labels are taken from untrusted ISO metadata. Do not let control
+    # characters, quotes or filesystem-forbidden characters enter sfdisk.
+    label = "".join(
+        "_" if ord(char) < 32 or char in '<>:"/\\|?*' else char
+        for char in label
+    )
+    label = label.rstrip(" .")[:36]
+    return label or "BOOTMEDIA"
+
+
+def read_iso_volume_label(image: Path) -> str:
+    """Read the source ISO's own volume ID; fall back only when it has none."""
+    result = command(
+        ["blkid", "--probe", "--match-tag", "LABEL", "--output", "value", str(image)],
+        check=False,
+        timeout=20,
+    )
+    label = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    if not label:
+        listing = command(["7z", "l", "-slt", str(image)], check=False, timeout=30)
+        for line in listing.stdout.splitlines():
+            if line.startswith("Volume = "):
+                label = line.partition("=")[2].strip()
+                break
+    return normalize_iso_volume_label(label)
+
+
+def make_sfdisk_script(layout: dict[str, int], iso_label: str = "BOOTMEDIA") -> str:
+    iso_label = normalize_iso_volume_label(iso_label)
     return (
         "label: gpt\n"
         "unit: sectors\n"
         f"first-lba: {GPT_ALIGNMENT_SECTORS}\n"
         f"start={layout['first_start']}, size={layout['first_size']}, "
-        f"type={GPT_BASIC_DATA_GUID}, name=\"BOOTMEDIA\"\n"
+        f"type={GPT_BASIC_DATA_GUID}, name=\"{iso_label}\"\n"
         f"start={layout['second_start']}, size={layout['second_size']}, "
         f"type={GPT_BASIC_DATA_GUID}, attrs={GPT_NO_DRIVE_LETTER_ATTR}, name=\"BMK_EFI\"\n"
     )
@@ -277,7 +540,12 @@ def _attribute_has_no_drive_letter(value: object) -> bool:
     )
 
 
-def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
+def verify_gpt_layout(
+    device: str,
+    layout: dict[str, int],
+    iso_label: str = "BOOTMEDIA",
+) -> None:
+    iso_label = normalize_iso_volume_label(iso_label)
     """Read back the GPT and reject an ESP-typed UEFI:NTFS helper partition."""
     command(["sfdisk", "--verify", device])
     result = command(["sfdisk", "--json", device])
@@ -307,8 +575,11 @@ def verify_gpt_layout(device: str, layout: dict[str, int]) -> None:
                 f"{actual_start}+{actual_size}, várt: {expected_start}+{expected_size}."
             )
 
-    if first.get("name") != "BOOTMEDIA":
-        raise RuntimeError("Az első GPT partíció neve nem BOOTMEDIA.")
+    if first.get("name") != iso_label:
+        raise RuntimeError(
+            f"Az első GPT partíció neve nem egyezik az ISO címkéjével: "
+            f"{first.get('name')!r}, várt: {iso_label!r}."
+        )
     if helper.get("name") != BOOTMEDIA_FAT_VOLUME_LABEL:
         raise RuntimeError(
             f"Az UEFI segédpartíció GPT neve nem {BOOTMEDIA_FAT_VOLUME_LABEL}."
@@ -423,6 +694,7 @@ def copy_tree_progress(
             )
 
     for current, dirs, files in os.walk(source_root):
+        check_cancelled()
         current_path = Path(current)
         relative_dir = current_path.relative_to(source_root)
         target_dir = destination_root / relative_dir
@@ -446,6 +718,7 @@ def copy_tree_progress(
                 "wb", buffering=0
             ) as write_file:
                 while fast_copy_method is not None and file_copied < expected_size:
+                    check_cancelled()
                     try:
                         remaining = min(CHUNK, expected_size - file_copied)
                         if fast_copy_method == "copy_file_range":
@@ -470,15 +743,15 @@ def copy_tree_progress(
                         if fast_copy_method == "copy_file_range" and hasattr(os, "sendfile"):
                             fast_copy_method = "sendfile"
                             emit(
-                                "A kernel copy_file_range útvonal nem támogatott; megpróbálom a sendfile másolást…",
-                                log=str(exc),
+                                "A fájlrendszerek közötti gyorsmásolás nem érhető el; alternatív kernelmásolásra váltok.",
+                                log="A copy_file_range ezen a forrás/cél fájlrendszer-kombináción nem támogatott; a másolás folytatódik.",
                             )
                             continue
                         fast_copy_method = None
                         emit(
-                            "A kerneles másolási útvonal nem támogatott ezen a fájlrendszer-kombináción; "
-                            "biztonságos streamelt másolásra váltok.",
-                            log=str(exc),
+                            "A gyors kernelmásolás nem támogatott ezen a fájlrendszer-kombináción; "
+                            "kompatibilis adatmásolásra váltok.",
+                            log="A két fájlrendszer közötti gyorsmásolás nem támogatott; a kompatibilis másolás zavartalanul folytatódik.",
                         )
                         break
                     if amount == 0:
@@ -490,6 +763,7 @@ def copy_tree_progress(
                     report_progress()
 
                 while file_copied < expected_size:
+                    check_cancelled()
                     data = read_file.read(min(CHUNK, expected_size - file_copied))
                     if not data:
                         raise RuntimeError(
@@ -533,6 +807,7 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
     total = sum(size for _, size, _ in manifest)
     checked = 0
     for relative, expected_size, expected_hash in manifest:
+        check_cancelled()
         target = destination_root / Path(relative)
         if not target.is_file():
             raise RuntimeError(f"Az USB-ről hiányzik egy átmásolt fájl: {relative}")
@@ -548,6 +823,7 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
                 except OSError:
                     pass
             while True:
+                check_cancelled()
                 data = source.read(CHUNK)
                 if not data:
                     break
@@ -587,10 +863,6 @@ def prepare_bmk_uefi_ntfs_image(upstream_image: Path, destination: Path) -> Path
         raise RuntimeError("Nem sikerült a FAT segédpartíció kötetcímkéjét BMK_EFI értékre állítani.")
     if destination.stat().st_size != UEFI_NTFS_IMAGE_SIZE:
         raise RuntimeError("A BMK_EFI címkézett segédkép mérete megváltozott.")
-    emit(
-        "Az UEFI:NTFS FAT kötetcímkéje BMK_EFI lett; az upstream EFI binárisok változatlanok.",
-        log=f"Eredeti címke: {UPSTREAM_FAT_VOLUME_LABEL}; új címke: {BOOTMEDIA_FAT_VOLUME_LABEL}.",
-    )
     return destination
 
 
@@ -614,17 +886,23 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
         with image.open("rb", buffering=0) as source:
             remaining = expected
             while remaining:
+                check_cancelled()
                 data = source.read(min(CHUNK, remaining))
                 if not data:
                     raise RuntimeError("A BMK_EFI segédkép váratlanul véget ért.")
                 view = memoryview(data)
                 while view:
+                    check_cancelled()
                     written = os.write(fd, view)
                     if written <= 0:
                         raise RuntimeError("Nem sikerült a BMK_EFI segédképet a partícióra írni.")
                     view = view[written:]
                 remaining -= len(data)
         os.fsync(fd)
+    except OperationCancelled:
+        # Flush the last completed write unit before reporting cancellation.
+        os.fsync(fd)
+        raise
     finally:
         os.close(fd)
 
@@ -633,6 +911,7 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
     try:
         remaining = expected
         while remaining:
+            check_cancelled()
             data = os.read(fd, min(CHUNK, remaining))
             if not data:
                 raise RuntimeError("A BMK_EFI partíció visszaolvasása váratlanul véget ért.")
@@ -712,16 +991,23 @@ def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
         return "ntfs-3g"
 
 
-def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
+def write_windows_uefi(
+    image: Path,
+    device: str,
+    verify: bool = True,
+    expected_identity: dict[str, object] | None = None,
+) -> None:
     global TARGET_MODIFIED
     require_programs((
         "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
-        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel",
+        "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel", "blkid", "7z",
     ))
 
     # Validate both the removable target and the upstream boot image before
     # making any changes to the user's USB drive.
-    target_size = validate_target(device)
+    check_cancelled()
+    ensure_source_not_on_target(image, device)
+    target_size = validate_target(device, expected_identity)
     verify_uefi_ntfs_image()
     sector_size = int(command(["blockdev", "--getss", device]).stdout.strip())
     if sector_size != 512:
@@ -741,10 +1027,13 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
     try:
         # Inspect the entire ISO and determine the exact data size while the
         # target remains untouched.
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
         emit("Windows ISO és UEFI:NTFS segédkép ellenőrzése…", 1)
         mount_iso(image, iso_mount)
         mounted_iso = True
         install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount)
+        iso_label = read_iso_volume_label(image)
         reserve_bytes = 128 * 1024 * 1024
         if total_copy_bytes + reserve_bytes > layout["first_bytes"]:
             raise RuntimeError(
@@ -764,6 +1053,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             log=(
                 f"Windows PE: {boot_wim.relative_to(iso_mount)}; "
                 f"telepítőkép: {install_image.relative_to(iso_mount)}; "
+                f"ISO kötetcímke: {iso_label}; "
                 f"másolandó fájlméret: {total_copy_bytes:,} bájt."
             ),
         )
@@ -771,17 +1061,23 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         # From this point on, disk contents will be modified. The device was
         # validated before preflight; validate it once more immediately before
         # unmounting/wiping to catch a device swap or stale selection.
-        validate_target(device)
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        validate_target(device, expected_identity)
         emit("USB lemez leválasztása és GPT partíciók létrehozása…", 10)
         unmount_disk(device)
+        # Last-moment identity and source checks after unmounting but before wipefs.
+        validate_target(device, expected_identity)
+        ensure_source_not_on_target(image, device)
+        check_cancelled()
         TARGET_MODIFIED = True
         command(["wipefs", "--all", "--force", device])
-        script = make_sfdisk_script(layout)
+        script = make_sfdisk_script(layout, iso_label)
         command(["sfdisk", "--wipe", "never", device], input_text=script)
         command(["blockdev", "--rereadpt", device], check=False)
         command(["partprobe", device], check=False)
         command(["udevadm", "settle"], check=False, timeout=20)
-        verify_gpt_layout(device, layout)
+        verify_gpt_layout(device, layout, iso_label)
         emit(
             "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
             "az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.",
@@ -792,6 +1088,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         uefi_partition = partition_path(device, 2)
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
+            check_cancelled()
             if os.path.exists(ntfs_partition) and os.path.exists(uefi_partition):
                 try:
                     if stat.S_ISBLK(os.stat(ntfs_partition).st_mode) and stat.S_ISBLK(os.stat(uefi_partition).st_mode):
@@ -803,12 +1100,15 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
             raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
 
         emit("NTFS fájlrendszer létrehozása…", 25)
-        command(["mkfs.ntfs", "--fast", "--force", "--label", "BOOTMEDIA", "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
+        command(["mkfs.ntfs", "--fast", "--force", "--label", iso_label, "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
         validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
         write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
 
         emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
         usb_mount.mkdir(parents=True, exist_ok=True)
+        check_cancelled()
+        validate_target(device, expected_identity)
+        unmount_disk(device)
         mount_ntfs_volume(ntfs_partition, usb_mount)
         mounted_usb = True
         copy_span = windows_copy_progress_span(verify)
@@ -824,11 +1124,13 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
 
         # Commit all writes in one batch. Per-file fsync is particularly slow
         # on low-end USB 2.0 flash drives; unmount also performs final flushing.
+        check_cancelled()
         emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
         sync_filesystem(usb_mount)
 
         # Recheck the boot chain files on the destination before unmounting.
         for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
+            check_cancelled()
             copied = find_case_insensitive(usb_mount, relative)
             if copied is None or not copied.is_file():
                 raise RuntimeError(f"A Windows UEFI indításhoz szükséges fájl hiányzik az USB-ről: {relative}")
@@ -841,6 +1143,7 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
                 copy_end_percent,
             )
 
+        check_cancelled()
         emit("Fájlrendszer kiürítése és leválasztása…", 99)
         sync_filesystem(usb_mount)
         command(["umount", "--", str(usb_mount)], timeout=120)
@@ -875,35 +1178,60 @@ def write_windows_uefi(image: Path, device: str, verify: bool = True) -> None:
         command(["udevadm", "settle"], check=False, timeout=20)
 
 
-def write_raw(image: Path, device: str, verify: bool) -> None:
+def write_raw(
+    image: Path,
+    device: str,
+    verify: bool,
+    expected_identity: dict[str, object] | None = None,
+) -> None:
     global TARGET_MODIFIED
-    source_size = image.stat().st_size
-    target_size = validate_target(device)
-    if source_size <= 0:
-        raise RuntimeError("A lemezkép üres.")
-    if source_size > target_size:
-        raise RuntimeError("A lemezkép nagyobb, mint a célmeghajtó.")
-    require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"))
-
-    emit("Célmeghajtó ellenőrzése…", 1,
-         log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)")
-    unmount_disk(device)
-    emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
-    TARGET_MODIFIED = True
-    command(["wipefs", "--all", "--force", device])
-    command(["sync"])
-
-    emit("Lemezkép kiírása…", 3)
-    offset = 0
-    fd = os.open(device, os.O_WRONLY)
+    image = image.resolve(strict=True)
+    source_fd = os.open(image, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
     try:
-        with image.open("rb", buffering=0) as source:
+        source_stat = os.fstat(source_fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise RuntimeError("A RAW forrásnak normál, nem symlink fájlnak kell lennie.")
+        source_size = source_stat.st_size
+        if source_size <= 0:
+            raise RuntimeError("A lemezkép üres.")
+
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        target_size = validate_target(device, expected_identity)
+        if source_size > target_size:
+            raise RuntimeError("A lemezkép nagyobb, mint a célmeghajtó.")
+        require_programs(("lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"))
+
+        emit(
+            "Célmeghajtó ellenőrzése…",
+            1,
+            log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)",
+        )
+        check_cancelled()
+        unmount_disk(device)
+        # Re-check the source filesystem and the physical disk identity at the
+        # destructive boundary. The source fd remains open throughout writing.
+        ensure_source_not_on_target(image, device)
+        validate_target(device, expected_identity)
+        check_cancelled()
+        emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
+        TARGET_MODIFIED = True
+        command(["wipefs", "--all", "--force", device])
+        command(["sync"])
+
+        emit("Lemezkép kiírása…", 3)
+        offset = 0
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        fd = os.open(device, os.O_WRONLY | getattr(os, "O_CLOEXEC", 0))
+        try:
             while True:
-                data = source.read(CHUNK)
+                check_cancelled()
+                data = os.read(source_fd, CHUNK)
                 if not data:
                     break
                 view = memoryview(data)
                 while view:
+                    check_cancelled()
                     written = os.write(fd, view)
                     if written <= 0:
                         raise RuntimeError(f"Nem sikerült tovább írni a célmeghajtót (offset: {offset}).")
@@ -911,26 +1239,45 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
                     view = view[written:]
                 percent = 3 + int((offset / source_size) * (57 if verify else 96))
                 emit(f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt", percent)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+            os.fsync(fd)
+        except OperationCancelled:
+            # Make already-written chunks durable before cleanup returns to GUI.
+            os.fsync(fd)
+            raise
+        finally:
+            os.close(fd)
 
-    command(["sync"])
-    if verify:
-        emit("Visszaolvasás és adategyezőség ellenőrzése…", 61)
-        compared = 0
-        with image.open("rb", buffering=0) as source:
-            target_fd = os.open(device, os.O_RDONLY)
+        check_cancelled()
+        command(["sync"])
+        if verify:
+            emit("Visszaolvasás és adategyezőség ellenőrzése…", 61)
+            compared = 0
+            os.lseek(source_fd, 0, os.SEEK_SET)
+            command(["blockdev", "--flushbufs", device])
+            target_fd = os.open(device, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
             try:
                 while True:
-                    expected = source.read(CHUNK)
+                    check_cancelled()
+                    expected = os.read(source_fd, CHUNK)
                     if not expected:
                         break
-                    actual = os.read(target_fd, len(expected))
+                    chunks: list[bytes] = []
+                    remaining = len(expected)
+                    while remaining:
+                        check_cancelled()
+                        part = os.read(target_fd, remaining)
+                        if not part:
+                            raise RuntimeError(
+                                f"Rövid visszaolvasás a(z) {compared:,}. bájtnál; "
+                                "a célmeghajtó nem adta vissza a teljes adatot."
+                            )
+                        chunks.append(part)
+                        remaining -= len(part)
+                    actual = b"".join(chunks)
                     if actual != expected:
                         mismatch = next(
                             (i for i, (a, b) in enumerate(zip(actual, expected)) if a != b),
-                            min(len(actual), len(expected)),
+                            0,
                         )
                         raise RuntimeError(
                             f"Visszaolvasási hiba a(z) {compared + mismatch:,}. bájtnál. "
@@ -941,37 +1288,122 @@ def write_raw(image: Path, device: str, verify: bool) -> None:
                     emit(f"Ellenőrzés… {compared:,} / {source_size:,} bájt", percent)
             finally:
                 os.close(target_fd)
-    command(["blockdev", "--rereadpt", device], check=False)
-    command(["udevadm", "settle"], check=False, timeout=15)
-    command(["sync"])
-    emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
+        command(["blockdev", "--rereadpt", device], check=False)
+        command(["udevadm", "settle"], check=False, timeout=15)
+        command(["sync"])
+        check_cancelled()
+        emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
+    finally:
+        os.close(source_fd)
+
+
+def _assert_root_owned_path(path: Path, *, directory: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"Hiányzó vagy nem ellenőrizhető privilegizált fájl: {path}") from exc
+    if stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem lehet szimbolikus link: {path}")
+    if info.st_uid != 0:
+        raise RuntimeError(f"A privilegizált fájl/könyvtár nem root tulajdonú: {path}")
+    if info.st_mode & 0o022:
+        raise RuntimeError(f"A privilegizált fájl/könyvtár csoport vagy más felhasználó által írható: {path}")
+    if directory and not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem könyvtár: {path}")
+    if not directory and not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem normál fájl: {path}")
+
+
+def validate_privileged_install() -> None:
+    """Refuse root execution from a user-writable checkout or modified install."""
+    expected_worker = Path("/usr/lib/bootmediakit/worker.py")
+    expected_wrapper = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
+    current_worker = Path(__file__).resolve(strict=True)
+    if current_worker != expected_worker:
+        raise RuntimeError(
+            "A root worker csak a telepített /usr/lib/bootmediakit/worker.py útvonalról indulhat. "
+            "Forráskönyvtárból történő közvetlen root indítás tiltott."
+        )
+    for path in (
+        Path("/usr"),
+        Path("/usr/lib"),
+        Path("/usr/lib/bootmediakit"),
+        Path("/usr/libexec"),
+        Path("/usr/libexec/bootmediakit"),
+        Path("/usr/share/polkit-1"),
+        Path("/usr/share/polkit-1/actions"),
+    ):
+        _assert_root_owned_path(path, directory=True)
+    _assert_root_owned_path(expected_worker, directory=False)
+    _assert_root_owned_path(expected_wrapper, directory=False)
+    _assert_root_owned_path(
+        Path("/usr/share/polkit-1/actions/org.bootmediakit.policy"),
+        directory=False,
+    )
+    try:
+        wrapper_mode = expected_wrapper.stat().st_mode
+    except OSError as exc:
+        raise RuntimeError("A BootMediaKit root wrapper nem érhető el.") from exc
+    if not wrapper_mode & 0o111:
+        raise RuntimeError("A BootMediaKit root wrapper nem végrehajtható.")
+    pkexec_uid = os.environ.get("PKEXEC_UID", "")
+    if not pkexec_uid.isdigit() or int(pkexec_uid) == 0:
+        raise RuntimeError("A worker csak a saját polkit akción keresztül indítható.")
 
 
 def main(argv: list[str]) -> int:
     global TARGET_MODIFIED
     TARGET_MODIFIED = False
-    if len(argv) < 4:
-        emit("Hibás paraméterezés.", error="Használat: worker.py raw|windows ISO DEVICE [VERIFY]")
+    CANCEL_EVENT.clear()
+    if len(argv) != 6:
+        emit(
+            "Hibás paraméterezés.",
+            error="Használat: bootmediakit-worker raw|windows ISO DEVICE VERIFY IDENTITY_JSON",
+        )
         return 2
-    mode, image_arg, device = argv[1:4]
-    image = Path(image_arg).expanduser()
+    mode, image_arg, device, verify_arg, identity_arg = argv[1:6]
     if os.geteuid() != 0:
-        emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez pkexec szükséges.")
+        emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges.")
         return 1
-    if not image.is_file() or not os.access(image, os.R_OK):
-        emit("A forrásfájl nem olvasható.", error=str(image))
-        return 1
-    verify = len(argv) >= 5 and argv[4] == "1"
     try:
+        validate_privileged_install()
+    except Exception as exc:
+        emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc))
+        return 1
+
+    try:
+        expected_identity = json.loads(identity_arg)
+        if not isinstance(expected_identity, dict):
+            raise ValueError("A meghajtóazonosító nem JSON objektum.")
+        if mode not in {"raw", "windows"}:
+            raise ValueError("Ismeretlen írási mód.")
+        if verify_arg not in {"0", "1"}:
+            raise ValueError("A visszaellenőrzés jelzője hibás.")
+        image = Path(image_arg).expanduser().resolve(strict=True)
+        if not image.is_file() or not os.access(image, os.R_OK):
+            raise RuntimeError(f"A forrásfájl nem olvasható: {image}")
+        if mode == "windows" and image.suffix.lower() != ".iso":
+            raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
+
+        start_control_reader()
+        emit("A BootMediaKit biztonságos háttérfolyamata elindult.", 0, worker_started=True)
+        check_cancelled()
+        verify = verify_arg == "1"
         if mode == "raw":
-            write_raw(image, device, verify)
-        elif mode == "windows":
-            if image.suffix.lower() != ".iso":
-                raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
-            write_windows_uefi(image, device, verify)
+            write_raw(image, device, verify, expected_identity)
         else:
-            raise RuntimeError("Ismeretlen írási mód.")
+            write_windows_uefi(image, device, verify, expected_identity)
         return 0
+    except OperationCancelled as exc:
+        if TARGET_MODIFIED:
+            detail = (
+                "A megszakítás biztonságos írási határon történt. A célmeghajtó részleges állapotban maradhat; "
+                "újrahasználat előtt készítsd el ismét."
+            )
+        else:
+            detail = "A megszakítás a célmeghajtó módosítása előtt történt; a cél tartalmához nem nyúltam."
+        emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True)
+        return 130
     except Exception as exc:
         if TARGET_MODIFIED:
             state_log = "A célmeghajtó állapota részleges lehet; ellenőrizd újracsatlakoztatás után."

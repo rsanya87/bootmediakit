@@ -1,3 +1,4 @@
+import json
 import errno
 import hashlib
 import os
@@ -60,6 +61,146 @@ class WorkerSafetyTests(unittest.TestCase):
             self.assertFalse(is_windows_install_iso(Path("fake.iso")))
 
 
+class P0SecurityTests(unittest.TestCase):
+    def test_device_identity_rejects_diskseq_change_even_when_devnode_is_reused(self):
+        expected = {
+            "size": 8 * 1024**3, "maj_min": "8:16", "model": "USB Disk",
+            "serial": "", "wwn": "", "tran": "usb", "diskseq": "41", "by_id": "",
+        }
+        current = dict(expected, diskseq="42")
+        with self.assertRaisesRegex(RuntimeError, "diskseq"):
+            worker.compare_device_identity(expected, current)
+
+    def test_device_identity_rejects_capacity_or_major_minor_change(self):
+        expected = {
+            "size": 8 * 1024**3, "maj_min": "8:16", "model": "USB Disk",
+            "serial": "ABC123", "wwn": "", "tran": "usb", "diskseq": "41", "by_id": "",
+        }
+        with self.assertRaisesRegex(RuntimeError, "size"):
+            worker.compare_device_identity(expected, dict(expected, size=16 * 1024**3))
+        with self.assertRaisesRegex(RuntimeError, "maj_min"):
+            worker.compare_device_identity(expected, dict(expected, **{"maj_min": "8:32"}))
+
+    def test_device_identity_requires_at_least_one_stable_hardware_token(self):
+        expected = {
+            "size": 1024, "maj_min": "8:16", "model": "", "serial": "",
+            "wwn": "", "tran": "usb", "diskseq": "", "by_id": "",
+        }
+        with self.assertRaisesRegex(RuntimeError, "stabil"):
+            worker.compare_device_identity(expected, expected)
+
+    def test_source_on_target_disk_is_rejected_before_any_destructive_step(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"source image")
+            identity = {"maj_min": "8:0"}
+            with patch("worker.source_backing_majmins", return_value={"8:0", "8:1"}), patch(
+                "worker.device_identity", return_value=identity
+            ), patch("worker._block_ancestor_majmins", return_value={"8:0"}):
+                with self.assertRaisesRegex(RuntimeError, "forrásfájl a célmeghajtó"):
+                    worker.ensure_source_not_on_target(image, "/dev/sdb")
+
+    def test_source_on_different_physical_disk_is_allowed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"source image")
+            with patch("worker.source_backing_majmins", return_value={"8:17", "8:16"}), patch(
+                "worker.device_identity", return_value={"maj_min": "8:32"}
+            ), patch("worker._block_ancestor_majmins", return_value={"8:32"}):
+                worker.ensure_source_not_on_target(image, "/dev/sdc")
+
+    def test_target_with_luks_partition_is_rejected(self):
+        disk = {"type": "disk", "path": "/dev/sdb", "children": [
+            {"type": "part", "path": "/dev/sdb1", "fstype": "crypto_LUKS", "label": "vault"}
+        ]}
+        with patch("worker.lsblk_tree", return_value=[disk]):
+            with self.assertRaisesRegex(RuntimeError, "LUKS/LVM/RAID/swap"):
+                worker.inspect_target_layout("/dev/sdb")
+
+    def test_target_with_active_swap_signature_is_rejected(self):
+        disk = {"type": "disk", "path": "/dev/sdb", "children": [
+            {"type": "part", "path": "/dev/sdb1", "fstype": "swap", "label": "swap"}
+        ]}
+        with patch("worker.lsblk_tree", return_value=[disk]):
+            with self.assertRaisesRegex(RuntimeError, "swap"):
+                worker.inspect_target_layout("/dev/sdb")
+
+    def test_cancel_event_raises_only_at_explicit_safe_point(self):
+        worker.CANCEL_EVENT.set()
+        try:
+            with self.assertRaises(worker.OperationCancelled):
+                worker.check_cancelled()
+        finally:
+            worker.CANCEL_EVENT.clear()
+
+    def test_copy_stops_before_creating_destination_when_cancelled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            (source / "boot.wim").write_bytes(b"payload")
+            with patch("worker.check_cancelled", side_effect=worker.OperationCancelled("cancel")):
+                with self.assertRaises(worker.OperationCancelled):
+                    worker.copy_tree_progress(source, destination, 7, hash_files=False)
+            self.assertFalse((destination / "boot.wim").exists())
+
+    def test_root_worker_rejects_uninstalled_checkout_path(self):
+        with patch.object(Path, "resolve", return_value=Path("/home/test/checkout/worker.py")):
+            with self.assertRaisesRegex(RuntimeError, "Forráskönyvtárból"):
+                worker.validate_privileged_install()
+
+
+class IsoVolumeLabelTests(unittest.TestCase):
+    def test_normalize_iso_label_preserves_valid_name(self):
+        self.assertEqual(worker.normalize_iso_volume_label("ESD ISO"), "ESD ISO")
+        self.assertEqual(worker.normalize_iso_volume_label("x86-64"), "x86-64")
+
+    def test_normalize_iso_label_replaces_control_and_forbidden_characters(self):
+        self.assertEqual(
+            worker.normalize_iso_volume_label('  X64:"WIN"/USB?  '),
+            "X64__WIN__USB_",
+        )
+
+    def test_normalize_iso_label_truncates_to_gpt_name_limit(self):
+        self.assertEqual(worker.normalize_iso_volume_label("X" * 50), "X" * 36)
+
+    def test_missing_iso_label_uses_safe_fallback(self):
+        self.assertEqual(worker.normalize_iso_volume_label("   "), "BOOTMEDIA")
+
+    def test_read_iso_label_prefers_blkid_volume_id(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"test")
+            response = subprocess.CompletedProcess(
+                ["blkid"], 0, stdout="WIN10_IOT_X64\n", stderr=""
+            )
+            with patch("worker.command", return_value=response) as command:
+                self.assertEqual(worker.read_iso_volume_label(image), "WIN10_IOT_X64")
+            command.assert_called_once()
+            self.assertIn("blkid", command.call_args.args[0])
+
+    def test_read_iso_label_falls_back_to_7zip_volume_metadata(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "windows.iso"
+            image.write_bytes(b"test")
+            no_label = subprocess.CompletedProcess(
+                ["blkid"], 2, stdout="", stderr="no label"
+            )
+            seven_zip = subprocess.CompletedProcess(
+                ["7z"], 0, stdout="Path = windows.iso\nType = Iso\nVolume = ESD_ISO\n", stderr=""
+            )
+            with patch("worker.command", side_effect=[no_label, seven_zip]):
+                self.assertEqual(worker.read_iso_volume_label(image), "ESD_ISO")
+
+    def test_gpt_first_partition_name_uses_original_iso_label(self):
+        layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
+        script = worker.make_sfdisk_script(layout, "WIN10_IOT_X64")
+        self.assertIn('name="WIN10_IOT_X64"', script)
+        self.assertIn('name="BMK_EFI"', script)
+        self.assertNotIn('name="BOOTMEDIA"', script)
+
+
 class UefiNtfsLayoutTests(unittest.TestCase):
     def test_gpt_layout_reserves_exact_one_mib_efi_partition_at_end(self):
         sectors = (32 * 1024 * 1024 * 1024) // 512
@@ -106,9 +247,10 @@ class UefiNtfsLayoutTests(unittest.TestCase):
             with image.open("wb") as stream:
                 stream.truncate(disk_bytes)
             layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            iso_label = "WIN10_IOT_X64"
             result = subprocess.run(
                 ["sfdisk", "--wipe", "always", str(image)],
-                input=worker.make_sfdisk_script(layout),
+                input=worker.make_sfdisk_script(layout, iso_label),
                 text=True,
                 capture_output=True,
                 timeout=30,
@@ -117,7 +259,7 @@ class UefiNtfsLayoutTests(unittest.TestCase):
 
             # Run the same post-write validation that the USB worker executes,
             # but only against a temporary sparse image file, never a device.
-            worker.verify_gpt_layout(str(image), layout)
+            worker.verify_gpt_layout(str(image), layout, iso_label)
 
     def test_sfdisk_script_uses_basic_data_and_no_drive_letter_for_both_partitions(self):
         layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
@@ -132,6 +274,10 @@ class UefiNtfsLayoutTests(unittest.TestCase):
     def test_partition_path_handles_sd_and_nvme_names(self):
         self.assertEqual(worker.partition_path("/dev/sdb", 1), "/dev/sdb1")
         self.assertEqual(worker.partition_path("/dev/nvme1n1", 2), "/dev/nvme1n1p2")
+        self.assertEqual(
+            worker.partition_path("/dev/disk/by-id/usb-SanDisk_Ultra_1234", 2),
+            "/dev/disk/by-id/usb-SanDisk_Ultra_1234-part2",
+        )
 
     def test_git_blob_sha1_matches_git_object_format(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -282,8 +428,12 @@ class UefiNtfsLabelTests(unittest.TestCase):
             ]
             with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", len(original)), patch(
                 "worker.command", side_effect=responses
-            ) as run:
+            ) as run, patch("worker.emit") as emit:
                 result = worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+                self.assertFalse(
+                    any("RUFUS_BOOT" in str(call) or "BMK_EFI" in str(call) for call in emit.call_args_list),
+                    "The internal upstream volume-label operation must not clutter the user log.",
+                )
 
             self.assertEqual(result, destination)
             self.assertEqual(upstream.read_bytes(), original)
@@ -383,31 +533,47 @@ class NtfsBootSectorTests(unittest.TestCase):
 
 
 class WindowsVerifyArgumentTests(unittest.TestCase):
-    def test_main_passes_disabled_verification_to_windows_writer(self):
+    def _run_main(self, verify: str):
         with tempfile.TemporaryDirectory() as temp:
             image = Path(temp) / "windows.iso"
             image.write_bytes(b"ISO test")
-            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
+            identity = {
+                "path": "/dev/sdb", "size": 8 * 1024**3, "maj_min": "8:16",
+                "model": "USB Disk", "serial": "ABC123", "wwn": "",
+                "tran": "usb", "rm": False, "diskseq": "4", "by_id": "/dev/disk/by-id/usb-ABC",
+            }
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch("worker.emit"), patch(
                 "worker.write_windows_uefi"
             ) as write:
                 result = worker.main(
-                    ["worker.py", "windows", str(image), "/dev/sdb", "0"]
+                    ["bootmediakit-worker", "windows", str(image), "/dev/sdb", verify, json.dumps(identity)]
                 )
             self.assertEqual(result, 0)
-            write.assert_called_once_with(image, "/dev/sdb", False)
+            write.assert_called_once_with(image.resolve(), "/dev/sdb", verify == "1", identity)
 
-    def test_main_passes_enabled_verification_to_windows_writer(self):
+    def test_main_passes_disabled_verification_and_identity_to_windows_writer(self):
+        self._run_main("0")
+
+    def test_main_passes_enabled_verification_and_identity_to_windows_writer(self):
+        self._run_main("1")
+
+    def test_main_refuses_to_launch_from_uninstalled_worker(self):
         with tempfile.TemporaryDirectory() as temp:
             image = Path(temp) / "windows.iso"
             image.write_bytes(b"ISO test")
-            with patch("worker.os.geteuid", return_value=0), patch("worker.emit"), patch(
-                "worker.write_windows_uefi"
-            ) as write:
-                result = worker.main(
-                    ["worker.py", "windows", str(image), "/dev/sdb", "1"]
-                )
-            self.assertEqual(result, 0)
-            write.assert_called_once_with(image, "/dev/sdb", True)
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install", side_effect=RuntimeError("untrusted path")
+            ), patch("worker.emit") as emit, patch("worker.write_windows_uefi") as write:
+                result = worker.main([
+                    "worker.py", "windows", str(image), "/dev/sdb", "0", "{}"
+                ])
+            self.assertEqual(result, 1)
+            emit.assert_called_once()
+            write.assert_not_called()
+
+
 
 
 class KernelCopyTests(unittest.TestCase):
@@ -450,7 +616,9 @@ class KernelCopyTests(unittest.TestCase):
             with patch(
                 "worker.os.copy_file_range",
                 side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
-            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile:
+            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile, patch(
+                "worker.emit"
+            ) as emit:
                 manifest = worker.copy_tree_progress(
                     source, destination, len(payload), hash_files=False
                 )
@@ -458,6 +626,13 @@ class KernelCopyTests(unittest.TestCase):
             self.assertGreater(sendfile.call_count, 0)
             self.assertEqual(manifest, [])
             self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+            self.assertTrue(
+                any(
+                    "fájlrendszerek közötti gyorsmásolás" in str(call)
+                    for call in emit.call_args_list
+                )
+            )
+            self.assertFalse(any("Errno 18" in str(call) for call in emit.call_args_list))
 
     @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
     def test_kernel_copy_falls_back_to_streaming_when_both_syscalls_fail(self):
@@ -475,13 +650,14 @@ class KernelCopyTests(unittest.TestCase):
             ), patch(
                 "worker.os.sendfile",
                 side_effect=OSError(errno.EXDEV, "sendfile cross-device copy not supported"),
-            ):
+            ), patch("worker.emit") as emit:
                 manifest = worker.copy_tree_progress(
                     source, destination, len(payload), hash_files=False
                 )
 
             self.assertEqual(manifest, [])
             self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+            self.assertFalse(any("Errno 18" in str(call) for call in emit.call_args_list))
 
     def test_progress_messages_are_throttled_to_percentage_changes(self):
         with tempfile.TemporaryDirectory() as temp:
