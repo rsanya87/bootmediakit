@@ -464,17 +464,22 @@ class MainWindow(QMainWindow):
             try:
                 selected = Path(filename)
                 size = selected.stat().st_size
-                description = f"{selected.name}  •  {human_size(size)}"
-                if selected.suffix.lower() == ".iso" and is_windows_install_iso(selected):
-                    description += "  •  Windows telepítő ISO felismerve"
-                short_description = f"{human_size(size)} • " + (
-                "Windows telepítő ISO" if selected.suffix.lower() == ".iso"
-                and is_windows_install_iso(selected) else "Lemezkép"
-            )
-            self.file_info.setText(short_description)
-            self.file_info.setToolTip(description)
+                is_windows = (
+                    selected.suffix.lower() == ".iso"
+                    and is_windows_install_iso(selected)
+                )
+                description = f"{selected.name} • {human_size(size)}"
+                if is_windows:
+                    description += " • Windows telepítő ISO felismerve"
+                short_description = (
+                    f"{human_size(size)} • "
+                    + ("Windows telepítő ISO" if is_windows else "Lemezkép")
+                )
+                self.file_info.setText(short_description)
+                self.file_info.setToolTip(description)
             except OSError:
                 self.file_info.setText("A fájl nem olvasható.")
+                self.file_info.setToolTip("A kiválasztott fájl nem olvasható.")
 
     def refresh_devices_silently(self) -> None:
         # Don't replace the list while a privileged operation is running.
