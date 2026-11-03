@@ -94,3 +94,21 @@ BootMediaKit now follows that layout and reads the GPT back after creation to va
 The upstream FAT image in the pinned Rufus commit carries the FAT volume label RUFUS_BOOT. The project does not want that identifier exposed on user-created media. The worker now uses dosfstools fatlabel on a temporary copy of the pristine, size/SHA-1/SHA-256-verified upstream image to change only the FAT volume label to BMK_EFI. The GPT partition name is also BMK_EFI. The original downloaded image is left unchanged; the actual written helper partition is read back by SHA-256 and the BMK_EFI label is checked with fatlabel.
 
 The installer now explicitly installs dosfstools. CI exercises the real fatlabel command on a temporary copy of the pinned helper image. The user has tested the updated Windows UEFI:NTFS path on the Samsung RV511: Windows Setup read the installation source, copied files, passed the first reboot and continued from the internal 120 GB SSD. The user also reports substantial speed improvement on two USB 2.0 devices after the NTFS3 and kernel-copy changes. Linux raw/DD MBR/Legacy testing is reported successful.
+
+
+## 2026-11-03 — 0.1.3-safety-alpha P0 security hardening
+
+Created `dev/0.1.3-safety-alpha` from the UI development branch; the released `main` / 0.1.2 branch remains unchanged.
+
+- Added GUI-to-worker cooperative cancellation over the worker standard input. A dedicated daemon reader watches for `cancel`; disk/file copy and verification loops check a shared event at chunk boundaries. Completed writes are fsynced on cancellation and normal cleanup runs; no forced process kill is used.
+- Added a fixed root-owned libexec shell launcher using `/usr/bin/python3 -I` and a dedicated `org.bootmediakit.write` Polkit action bound with `org.freedesktop.policykit.exec.path`.
+- Worker checks the installed path, root ownership, non-symlink status and absence of group/world write permission for the worker, wrapper, policy and installation directories. Direct root execution from a user-writable checkout is rejected.
+- GUI snapshots the target's size, model, serial/WWN, transport, major:minor, sysfs diskseq and by-id identity. Worker compares this snapshot at operation start and again at the destructive boundary.
+- RAW keeps its source fd open and checks the filesystem's block-device ancestry via `findmnt` / `lsblk` before unmounting/wiping. The Windows writer performs the same source/target collision check before writing.
+- Protected-device resolution includes system mount backing devices and active swap devices / swap-file backing files. Targets containing LUKS, LVM, RAID or swap metadata are rejected instead of being automatically dismantled.
+- Confirmation shows all discovered partitions, filesystem types, labels, sizes and mountpoints. Large (>=128 GiB) or non-removable USB devices require a second confirmation.
+- Authorization/worker-start failures are shown as non-destructive; the GUI uses worker events to decide whether the target may be partial.
+- Worker block-device parsing uses `lsblk --json`; this removes the whitespace-splitting problem when TRAN is empty.
+- Added P0 security and policy-packaging tests; latest CI passes 59 tests.
+
+Physical validation is still pending. CI does not exercise a real Polkit agent, real block-device hot-swap race, or cancellation while writing to physical USB media. Test first with a disposable device on CachyOS; never use the user's backup HDD or a disk containing the source ISO.
