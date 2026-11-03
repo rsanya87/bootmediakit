@@ -14,13 +14,13 @@ def format_elapsed_time(elapsed_milliseconds: int) -> str:
 
 
 def calculate_window_profile(available_width: int, available_height: int) -> tuple[int, int, bool]:
-    """Return a screen-safe initial window size and compact-layout flag.
+    """Return an outer window size and density mode from Qt logical screen geometry.
 
-    Geometry is expressed in Qt logical pixels (QScreen.availableGeometry),
-    so high-DPI scaling remains the responsibility of Qt and font point sizes
-    stay unchanged across 2K/4K displays.
+    The returned dimensions include a 24 px work-area margin. At show time,
+    MainWindow.fit_window_to_screen subtracts the actual native window-frame
+    dimensions before calling QWidget.resize().
     """
     width = max(560, min(740, int(available_width) - 24))
-    height = max(520, min(900, int(available_height) - 20))
+    height = max(520, min(900, int(available_height) - 24))
     compact = int(available_height) < 850
     return width, height, compact
