@@ -126,7 +126,7 @@ Physical validation is still pending. CI does not exercise a real Polkit agent, 
 
 ## 2026-11-03 — responsive window sizing follow-up
 
-- Initial window geometry now comes from `QScreen.availableGeometry()` in Qt logical pixels, with hard limits of 740×900 and a minimum of 560×520.
+- Initial window geometry now comes from `QScreen.availableGeometry()` in Qt logical pixels. After show, the app measures the native KDE frame and subtracts it before resizing, keeping the complete outer window within 740×900.
 - The UI selects a compact density profile below 850 logical pixels of available screen height. This reduces outer/card margins and spacing, control heights, and log height without changing the 10 pt application font.
 - ISO metadata is one concise line; the selected path stays in the line edit and the detailed filename remains available as a tooltip.
 - The selected device summary shows capacity/identifier and no more than two partition lines, with full inventory retained in the destructive confirmation dialog.
