@@ -1,14 +1,21 @@
 # BootMediaKit
 
-**BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, rendszergazdai jogosultsággal futó háttérfolyamat végzi.
+**BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Fejlesztői verzió:** `0.1.3-alpha`  
+**Fejlesztői verzió:** `0.1.3-safety-alpha`  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
 > A 0.1.2-es verziót valódi USB 2.0 pendrive-okon is teszteltük. A Samsung RV511 gépen a Windows Telepítő eljutott az első újraindításig, majd a belső SSD-ről folytatta a telepítést. A Linux RAW/DD írás Legacy/MBR módban szintén tesztelve van. További UEFI firmware-, Secure Boot-, Windows ISO- és eszköztesztek még szükségesek; a program nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
+
+- Külön, root tulajdonú worker-wrapper és saját Polkit akció; a GUI nem kap rendszergazdai jogosultságot.
+- Biztonságos megszakítási kérés a GUI-ból; a worker írási egységek között áll le, nem kényszerített folyamatkilövéssel.
+- A forrás és a cél fizikai meghajtójának ütközésvizsgálata; a cél meghajtóazonosságának ismételt ellenőrzése közvetlenül a törlés előtt.
+- A rendszer- és swap-meghajtók védelme, valamint LUKS/LVM/RAID/swap kötetek elutasítása.
+- Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
+
 
 - Kompakt, átméretezhető PySide6 felület kisebb alapablakkal, a betűméret csökkentése nélkül.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
