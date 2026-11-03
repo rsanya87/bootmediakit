@@ -150,8 +150,22 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
-        self.setMinimumSize(620, 540)
-        self.resize(740, 670)
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen else None
+        available_width = available.width() if available else 1366
+        available_height = available.height() if available else 900
+        self._compact_ui = available_height < 850
+        initial_width, initial_height, _ = calculate_window_profile(
+            available_width, available_height
+        )
+        self.setMinimumSize(560, 520)
+        self.setMaximumSize(740, 900)
+        self.resize(initial_width, initial_height)
+        if available:
+            self.move(
+                available.x() + max(0, (available_width - initial_width) // 2),
+                available.y() + max(0, (available_height - initial_height) // 2),
+            )
         if APP_ICON.is_file():
             self.setWindowIcon(QIcon(str(APP_ICON)))
         self.process: QProcess | None = None
@@ -173,8 +187,11 @@ class MainWindow(QMainWindow):
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(16, 14, 16, 14)
-        root_layout.setSpacing(8)
+        outer_margin = 8 if self._compact_ui else 12
+        root_layout.setContentsMargins(
+            outer_margin, outer_margin, outer_margin, outer_margin
+        )
+        root_layout.setSpacing(5 if self._compact_ui else 7)
 
         header = QHBoxLayout()
         title_block = QVBoxLayout()
@@ -197,7 +214,12 @@ class MainWindow(QMainWindow):
         warning = QFrame()
         warning.setObjectName("warningPanel")
         warning_layout = QHBoxLayout(warning)
-        warning_layout.setContentsMargins(10, 7, 10, 7)
+        warning_layout.setContentsMargins(
+            8 if self._compact_ui else 10,
+            5 if self._compact_ui else 7,
+            8 if self._compact_ui else 10,
+            5 if self._compact_ui else 7,
+        )
         warning_icon = QLabel("⚠")
         warning_icon.setObjectName("warningIcon")
         warning_text = QLabel(
@@ -213,8 +235,13 @@ class MainWindow(QMainWindow):
         image_card = QFrame()
         image_card.setObjectName("panel")
         image_layout = QVBoxLayout(image_card)
-        image_layout.setContentsMargins(12, 9, 12, 9)
-        image_layout.setSpacing(6)
+        image_layout.setContentsMargins(
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+        )
+        image_layout.setSpacing(3 if self._compact_ui else 5)
         image_label = QLabel("1. Lemezkép kiválasztása")
         image_label.setObjectName("sectionTitle")
         image_layout.addWidget(image_label)
@@ -222,7 +249,7 @@ class MainWindow(QMainWindow):
         self.iso_edit = QLineEdit()
         self.iso_edit.setPlaceholderText("Válassz ISO / IMG / BIN fájlt…")
         self.iso_edit.setClearButtonEnabled(True)
-        self.iso_edit.setMinimumHeight(32)
+        self.iso_edit.setMinimumHeight(29 if self._compact_ui else 32)
         self.iso_edit.setMinimumWidth(0)
         self.iso_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.browse_button = QPushButton("Tallózás…")
@@ -232,9 +259,10 @@ class MainWindow(QMainWindow):
         image_layout.addLayout(image_row)
         self.file_info = QLabel("Támogatott formátumok: ISO, IMG, BIN, RAW")
         self.file_info.setObjectName("muted")
-        self.file_info.setWordWrap(True)
+        self.file_info.setWordWrap(False)
         self.file_info.setMinimumWidth(0)
-        self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.file_info.setMaximumHeight(21)
+        self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         image_layout.addWidget(self.file_info)
         root_layout.addWidget(image_card)
 
@@ -242,8 +270,13 @@ class MainWindow(QMainWindow):
         device_card = QFrame()
         device_card.setObjectName("panel")
         device_layout = QVBoxLayout(device_card)
-        device_layout.setContentsMargins(12, 9, 12, 9)
-        device_layout.setSpacing(6)
+        device_layout.setContentsMargins(
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+        )
+        device_layout.setSpacing(3 if self._compact_ui else 5)
         device_header = QHBoxLayout()
         device_title = QLabel("2. Célmeghajtó")
         device_title.setObjectName("sectionTitle")
@@ -254,16 +287,17 @@ class MainWindow(QMainWindow):
         device_header.addWidget(self.refresh_button)
         device_layout.addLayout(device_header)
         self.device_combo = QComboBox()
-        self.device_combo.setMinimumHeight(34)
+        self.device_combo.setMinimumHeight(29 if self._compact_ui else 33)
         self.device_combo.setMinimumWidth(0)
         self.device_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.device_combo.currentIndexChanged.connect(self.device_changed)
         device_layout.addWidget(self.device_combo)
         self.device_detail = QLabel("Csatlakoztass egy USB-meghajtót, majd frissítsd a listát.")
         self.device_detail.setObjectName("muted")
-        self.device_detail.setWordWrap(True)
+        self.device_detail.setWordWrap(False)
         self.device_detail.setMinimumWidth(0)
-        self.device_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.device_detail.setMaximumHeight(54 if self._compact_ui else 60)
+        self.device_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         device_layout.addWidget(self.device_detail)
         root_layout.addWidget(device_card)
 
@@ -271,8 +305,13 @@ class MainWindow(QMainWindow):
         mode_card = QFrame()
         mode_card.setObjectName("panel")
         mode_layout = QVBoxLayout(mode_card)
-        mode_layout.setContentsMargins(12, 9, 12, 9)
-        mode_layout.setSpacing(6)
+        mode_layout.setContentsMargins(
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+        )
+        mode_layout.setSpacing(3 if self._compact_ui else 5)
         mode_title = QLabel("3. Írási mód")
         mode_title.setObjectName("sectionTitle")
         mode_layout.addWidget(mode_title)
@@ -289,6 +328,7 @@ class MainWindow(QMainWindow):
         for button in (self.raw_button, self.windows_button):
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            button.setMinimumHeight(30 if self._compact_ui else 34)
         mode_buttons = QHBoxLayout()
         mode_buttons.setSpacing(8)
         mode_buttons.addWidget(self.raw_button, 1)
@@ -301,7 +341,8 @@ class MainWindow(QMainWindow):
         self.mode_description.setObjectName("muted")
         self.mode_description.setWordWrap(True)
         self.mode_description.setMinimumWidth(0)
-        self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.mode_description.setMaximumHeight(34 if self._compact_ui else 42)
+        self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         mode_layout.addWidget(self.mode_description)
         self.verify_checkbox = QCheckBox("Kiírás utáni teljes visszaolvasás és ellenőrzés")
         self.verify_checkbox.setChecked(True)
@@ -312,8 +353,13 @@ class MainWindow(QMainWindow):
         progress_card = QFrame()
         progress_card.setObjectName("panel")
         progress_layout = QVBoxLayout(progress_card)
-        progress_layout.setContentsMargins(12, 9, 12, 9)
-        progress_layout.setSpacing(6)
+        progress_layout.setContentsMargins(
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+            9 if self._compact_ui else 11,
+            5 if self._compact_ui else 7,
+        )
+        progress_layout.setSpacing(3 if self._compact_ui else 5)
         progress_header = QHBoxLayout()
         progress_title = QLabel("Művelet állapota")
         progress_title.setObjectName("sectionTitle")
@@ -335,10 +381,10 @@ class MainWindow(QMainWindow):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(500)
-        self.log.setMinimumHeight(68)
+        self.log.setMinimumHeight(44 if self._compact_ui else 56)
         self.log.setMinimumWidth(0)
         self.log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.log.setMaximumHeight(128)
+        self.log.setMaximumHeight(56 if self._compact_ui else 76)
         self.log.setPlaceholderText("A műveletek és az ellenőrzés részletei itt jelennek meg.")
         progress_layout.addWidget(self.log)
         root_layout.addWidget(progress_card, 1)
@@ -353,8 +399,9 @@ class MainWindow(QMainWindow):
         self.cancel_button.clicked.connect(self.cancel_operation)
         self.start_button = QPushButton("USB elkészítése")
         self.start_button.setObjectName("primaryButton")
-        self.start_button.setMinimumWidth(168)
-        self.start_button.setMinimumHeight(40)
+        self.start_button.setMinimumWidth(150)
+        self.start_button.setMinimumHeight(34 if self._compact_ui else 38)
+        self.cancel_button.setMinimumHeight(34 if self._compact_ui else 38)
         self.start_button.clicked.connect(self.start_operation)
         footer.addWidget(self.about_label, 1)
         footer.addWidget(self.cancel_button)
@@ -420,7 +467,12 @@ class MainWindow(QMainWindow):
                 description = f"{selected.name}  •  {human_size(size)}"
                 if selected.suffix.lower() == ".iso" and is_windows_install_iso(selected):
                     description += "  •  Windows telepítő ISO felismerve"
-                self.file_info.setText(description)
+                short_description = f"{human_size(size)} • " + (
+                "Windows telepítő ISO" if selected.suffix.lower() == ".iso"
+                and is_windows_install_iso(selected) else "Lemezkép"
+            )
+            self.file_info.setText(short_description)
+            self.file_info.setToolTip(description)
             except OSError:
                 self.file_info.setText("A fájl nem olvasható.")
 
@@ -499,30 +551,32 @@ class MainWindow(QMainWindow):
             self.device_detail.setText("Nincs kiválasztott USB-meghajtó.")
             return
         mounts = self.current_device.get("mounts") or []
-        message = (
-            f"Kapacitás: {human_size(self.current_device['size'])}. "
-            f"Azonosító: {self.current_device.get('serial_display') or 'ismeretlen'}."
-        )
+        serial = self.current_device.get("serial_display") or "ismeretlen"
+        lines = [
+            f"{human_size(self.current_device['size'])} • Azonosító: {serial}",
+        ]
         partitions = self.current_device.get("partitions") or []
-        if partitions:
-            rows = []
-            for part in partitions:
-                fs = part.get("fstype") or part.get("type") or "ismeretlen"
-                label = part.get("label") or "nincs címke"
-                size = human_size(int(part.get("size") or 0))
-                part_mounts = part.get("mountpoints") or []
-                if isinstance(part_mounts, str):
-                    part_mounts = [part_mounts]
-                mount_text = ", ".join(str(x) for x in part_mounts if x) or "nincs csatolva"
-                rows.append(f"{part.get('path')} • {fs} • {label} • {size} • {mount_text}")
-            message += "\nPartíciók:\n" + "\n".join(rows)
-        if mounts:
-            message += "\nCsatolási pont(ok): " + ", ".join(mounts) + ". A készítés előtt leválasztjuk őket."
-        else:
-            message += "\nNincs csatolt partíció."
+        for part in partitions[:2]:
+            fs = part.get("fstype") or part.get("type") or "ismeretlen"
+            label = part.get("label") or "nincs címke"
+            part_mounts = part.get("mountpoints") or []
+            if isinstance(part_mounts, str):
+                part_mounts = [part_mounts]
+            mount_text = ", ".join(str(x) for x in part_mounts if x) or "nincs csatolva"
+            lines.append(
+                f"{part.get('path')} • {fs.upper()} • {label} • {mount_text}"
+            )
+        if len(partitions) > 2:
+            lines.append(f"+ {len(partitions) - 2} további partíció")
+        if not partitions:
+            lines.append("Nincs partíció.")
         if self.current_device.get("unsafe_reason"):
-            message += "\n" + self.current_device["unsafe_reason"]
+            lines.append(str(self.current_device["unsafe_reason"]))
+        if mounts:
+            lines.append("Csatolva: " + ", ".join(mounts))
+        message = "\n".join(lines)
         self.device_detail.setText(message)
+        self.device_detail.setToolTip(message)
 
     def select_mode(self, mode: str) -> None:
         raw = mode == "raw"
