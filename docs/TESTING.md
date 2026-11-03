@@ -1,12 +1,25 @@
 # Testing
 
+## 0.1.3-safety-alpha P0 hardening
+
+The current branch adds the following P0-focused automated tests:
+
+- Device identity rejects changed disk sequence, capacity and major:minor values.
+- Source image on the same physical disk as the target is rejected; a different source disk is accepted.
+- LUKS and swap targets are refused before unmounting.
+- Cancellation flag and safe-boundary copy cancellation behavior.
+- Direct worker execution from an untrusted source checkout is rejected.
+- Polkit XML action path, root-wrapper launch command, installer ownership/mode and GUI wrapper invocation are validated.
+
+CI currently runs 59 unit/packaging tests. Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
+
 ## 0.1.2 release validation
 
 Run from the repository root:
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
-bash -n install.sh uninstall.sh
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py
+bash -n install.sh uninstall.sh bootmediakit-worker
 python3 -m unittest discover -s tests -v
 ```
 
