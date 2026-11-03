@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Iterable
@@ -37,17 +38,52 @@ GPT_NO_DRIVE_LETTER_ATTR = "GUID:63"
 GPT_ALIGNMENT_SECTORS = 2048
 GPT_RESERVED_SECTORS = 34
 TARGET_MODIFIED = False
+CANCEL_EVENT = threading.Event()
 
 
-def emit(message: str, percent: int | None = None, *, log: str | None = None,
-         error: str | None = None) -> None:
-    event: dict[str, object] = {"message": message}
+class OperationCancelled(Exception):
+    """Raised at safe cancellation points between disk I/O units."""
+
+
+def check_cancelled() -> None:
+    if CANCEL_EVENT.is_set():
+        raise OperationCancelled("A felhasználó megszakította a műveletet.")
+
+
+def start_control_reader() -> None:
+    """Read a line-oriented cancel command from pkexec stdin."""
+    def read_commands() -> None:
+        try:
+            for line in sys.stdin:
+                if line.strip().lower() == "cancel":
+                    CANCEL_EVENT.set()
+                    return
+        except (OSError, ValueError):
+            return
+
+    threading.Thread(target=read_commands, name="bmk-control-stdin", daemon=True).start()
+
+
+def emit(
+    message: str,
+    percent: int | None = None,
+    *,
+    log: str | None = None,
+    error: str | None = None,
+    worker_started: bool | None = None,
+    cancelled: bool = False,
+) -> None:
+    event: dict[str, object] = {"message": message, "target_modified": TARGET_MODIFIED}
     if percent is not None:
         event["percent"] = max(0, min(100, int(percent)))
     if log:
         event["log"] = log
     if error:
         event["error"] = error
+    if worker_started is not None:
+        event["worker_started"] = worker_started
+    if cancelled:
+        event["cancelled"] = True
     print(json.dumps(event, ensure_ascii=False), flush=True)
 
 
@@ -87,29 +123,172 @@ def canonical(path: str) -> str:
     return os.path.realpath(path)
 
 
-def lsblk_one(path: str, columns: str) -> list[str]:
-    result = command(["lsblk", "-dnro", columns, path])
-    return result.stdout.strip().split()
+LSBLK_COLUMNS = (
+    "PATH,TYPE,SIZE,MODEL,SERIAL,WWN,TRAN,RM,RO,MAJ:MIN,"
+    "PKNAME,FSTYPE,LABEL,PARTTYPE,PARTLABEL,MOUNTPOINTS"
+)
+
+
+def _as_bool(value: object) -> bool:
+    return value is True or str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _flatten_block_tree(nodes: list[dict[str, object]]) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for node in nodes:
+        result.append(node)
+        children = node.get("children") or []
+        if isinstance(children, list):
+            result.extend(_flatten_block_tree(children))
+    return result
+
+
+def lsblk_tree(path: str, *, inverse: bool = False) -> list[dict[str, object]]:
+    args = ["lsblk", "--json", "--bytes", "--paths", "--tree", "--output", LSBLK_COLUMNS]
+    if inverse:
+        args.append("--inverse")
+    args.append(path)
+    result = command(args)
+    try:
+        nodes = json.loads(result.stdout).get("blockdevices", [])
+    except (json.JSONDecodeError, AttributeError) as exc:
+        raise RuntimeError("Az lsblk nem adott érvényes JSON meghajtólistát.") from exc
+    return _flatten_block_tree(nodes)
+
+
+def _read_diskseq(maj_min: str) -> str:
+    if not maj_min:
+        return ""
+    path = Path("/sys/dev/block") / maj_min / "diskseq"
+    try:
+        return path.read_text(encoding="ascii").strip()
+    except OSError:
+        return ""
+
+
+def _device_by_id(path: str) -> str:
+    wanted = canonical(path)
+    directory = Path("/dev/disk/by-id")
+    try:
+        matches = sorted(
+            str(entry)
+            for entry in directory.iterdir()
+            if entry.is_symlink() and canonical(str(entry)) == wanted
+        )
+    except OSError:
+        return ""
+    return next((item for item in matches if "-part" not in Path(item).name), matches[0] if matches else "")
+
+
+def device_identity(device: str) -> dict[str, object]:
+    nodes = lsblk_tree(device)
+    node = next(
+        (item for item in nodes if item.get("type") == "disk" and canonical(str(item.get("path", ""))) == canonical(device)),
+        nodes[0] if nodes else None,
+    )
+    if not node or node.get("type") != "disk":
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    path = str(node.get("path") or device)
+    maj_min = str(node.get("maj:min") or "")
+    identity = {
+        "path": path,
+        "size": int(node.get("size") or 0),
+        "model": str(node.get("model") or "").strip(),
+        "serial": str(node.get("serial") or "").strip(),
+        "wwn": str(node.get("wwn") or "").strip(),
+        "tran": str(node.get("tran") or "").strip().lower(),
+        "rm": _as_bool(node.get("rm")),
+        "maj_min": maj_min,
+        "diskseq": _read_diskseq(maj_min),
+        "by_id": _device_by_id(path),
+    }
+    if not any(identity[key] for key in ("serial", "wwn", "diskseq", "by_id")):
+        raise RuntimeError(
+            "A meghajtóhoz nem található stabil fizikai azonosító (sorozatszám, WWN, diskseq vagy by-id). "
+            "Biztonsági okból ezt az eszközt nem írhatom."
+        )
+    return identity
+
+
+def compare_device_identity(expected: dict[str, object], current: dict[str, object]) -> None:
+    """Reject path reuse, device swaps, and changes to the selected disk."""
+    for key in ("size", "maj_min"):
+        if expected.get(key) in (None, "") or str(expected.get(key)) != str(current.get(key)):
+            raise RuntimeError(f"A célmeghajtó azonosítója megváltozott ({key}); válaszd ki újra a meghajtót.")
+    for key in ("model", "serial", "wwn", "tran", "diskseq", "by_id"):
+        old_value = str(expected.get(key) or "").strip()
+        if old_value and old_value != str(current.get(key) or "").strip():
+            raise RuntimeError(f"A célmeghajtó fizikai azonossága megváltozott ({key}); az írást leállítottam.")
+    if not any(str(expected.get(key) or "").strip() for key in ("serial", "wwn", "diskseq", "by_id")):
+        raise RuntimeError("A kiválasztáskor nem volt rögzítve stabil meghajtóazonosító.")
+
+
+def _block_ancestor_paths(source: str) -> set[str]:
+    if not source.startswith("/dev/") or not os.path.exists(source):
+        return set()
+    result: set[str] = set()
+    for item in lsblk_tree(source, inverse=True):
+        path = str(item.get("path") or "")
+        if path.startswith("/dev/"):
+            result.add(canonical(path))
+    result.add(canonical(source))
+    return result
+
+
+def _block_ancestor_majmins(source: str) -> set[str]:
+    if not source.startswith("/dev/") or not os.path.exists(source):
+        return set()
+    return {
+        str(item.get("maj:min"))
+        for item in lsblk_tree(source, inverse=True)
+        if item.get("maj:min")
+    }
 
 
 def protected_physical_devices() -> set[str]:
-    """Return devices backing critical system mountpoints and their parents."""
+    """Return physical devices backing system mounts and active swap."""
     protected: set[str] = set()
     for target in ("/", "/boot", "/boot/efi", "/efi"):
         result = command(["findmnt", "-nro", "SOURCE", "--target", target], check=False)
         source = result.stdout.strip().split("[", 1)[0]
-        if not source.startswith("/dev/"):
-            continue
-        ancestors = command(["lsblk", "-s", "-nrpo", "PATH", source], check=False)
-        for item in ancestors.stdout.splitlines():
-            if item.startswith("/dev/"):
-                protected.add(canonical(item.strip()))
-        protected.add(canonical(source))
+        protected.update(_block_ancestor_paths(source))
+    swap = command(["swapon", "--noheadings", "--raw", "--output", "NAME"], check=False)
+    for line in swap.stdout.splitlines():
+        source = line.strip()
+        if source.startswith("/dev/"):
+            protected.update(_block_ancestor_paths(source))
     return protected
 
 
-def validate_target(device: str) -> int:
-    """Validate the whole target disk and return its byte capacity."""
+def inspect_target_layout(device: str) -> tuple[dict[str, object], list[dict[str, object]]]:
+    nodes = lsblk_tree(device)
+    disk = next((item for item in nodes if item.get("type") == "disk"), None)
+    if disk is None:
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    children = _flatten_block_tree([disk])
+    unsafe_types = {"crypt", "lvm", "raid", "raid0", "raid1", "raid5", "raid6", "raid10", "mpath"}
+    unsafe_fs = {"crypto_luks", "lvm2_member", "swap"}
+    for item in children:
+        if item is disk:
+            continue
+        item_type = str(item.get("type") or "").lower()
+        filesystem = str(item.get("fstype") or "").lower()
+        if item_type in unsafe_types or filesystem in unsafe_fs:
+            path = str(item.get("path") or "ismeretlen partíció")
+            label = str(item.get("label") or "")
+            raise RuntimeError(
+                f"A céllemezen védett vagy összetett kötet található ({path}, "
+                f"{filesystem or item_type}, {label}). Előbb biztonságosan válaszd le a "
+                "LUKS/LVM/RAID/swap réteget; a BootMediaKit nem bontja le automatikusan."
+            )
+    return disk, children
+
+
+def validate_target(
+    device: str,
+    expected_identity: dict[str, object] | None = None,
+) -> int:
+    """Validate whole USB disk, identity snapshot, system backing and layout."""
     if not device.startswith("/dev/"):
         raise RuntimeError("A cél nem érvényes /dev eszköz.")
     try:
@@ -119,31 +298,62 @@ def validate_target(device: str) -> int:
     if not stat.S_ISBLK(info.st_mode):
         raise RuntimeError("A cél csak valódi blokk eszköz lehet; fájlba írás nem engedélyezett.")
 
-    fields = lsblk_one(device, "TYPE,TRAN,RM,RO")
-    if len(fields) < 4 or fields[0] != "disk":
-        raise RuntimeError("Partíció helyett a teljes USB-lemezt válaszd ki.")
-    _, transport, removable, readonly = fields[:4]
-    if readonly == "1":
+    identity = device_identity(device)
+    if expected_identity is None:
+        raise RuntimeError("Hiányzik a kiválasztáskor rögzített meghajtóazonosító; válaszd ki újra a célt.")
+    compare_device_identity(expected_identity, identity)
+    disk, _ = inspect_target_layout(device)
+    if str(disk.get("type")) != "disk":
+        raise RuntimeError("Partíció helyett a teljes fizikai lemezt válaszd ki.")
+    if _as_bool(disk.get("ro")):
         raise RuntimeError("A célmeghajtó írásvédett.")
-    if transport.lower() != "usb" and removable != "1":
+    if str(disk.get("tran") or "").lower() != "usb" and not _as_bool(disk.get("rm")):
         raise RuntimeError("Biztonsági okból csak USB vagy eltávolítható lemezre lehet írni.")
     if canonical(device) in protected_physical_devices():
-        raise RuntimeError("A kiválasztott lemez a rendszer (/ vagy /boot) meghajtója. A műveletet leállítottam.")
+        raise RuntimeError(
+            "A kiválasztott lemez a rendszer vagy az aktív swap fizikai meghajtója. "
+            "A műveletet biztonsági okból leállítottam."
+        )
+    return int(identity["size"])
 
-    size_text = command(["blockdev", "--getsize64", device]).stdout.strip()
-    try:
-        return int(size_text)
-    except ValueError as exc:
-        raise RuntimeError("Nem sikerült lekérdezni a célmeghajtó kapacitását.") from exc
+
+def source_backing_majmins(image: Path) -> set[str]:
+    result = command(
+        ["findmnt", "-nro", "MAJ:MIN", "--target", str(image)],
+        check=False,
+    )
+    maj_min = result.stdout.strip()
+    if not maj_min or not Path("/dev/block", maj_min).exists():
+        return set()
+    source = canonical(str(Path("/dev/block") / maj_min))
+    return _block_ancestor_majmins(source)
+
+
+def ensure_source_not_on_target(image: Path, device: str) -> None:
+    """Reject an image whose containing filesystem is on the target disk."""
+    resolved = image.resolve(strict=True)
+    if not resolved.is_file():
+        raise RuntimeError("A forrásnak normál fájlnak kell lennie.")
+    source_majmins = source_backing_majmins(resolved)
+    target_identity = device_identity(device)
+    target_majmins = _block_ancestor_majmins(device)
+    # If the target is a whole disk, its MAJ:MIN is in the source partition's
+    # inverse tree. If the target itself is a partition alias, compare all
+    # ancestors on both sides.
+    if target_identity.get("maj_min") in source_majmins or source_majmins.intersection(target_majmins):
+        raise RuntimeError(
+            "A forrásfájl a célmeghajtó egyik kötetén található. "
+            "A céllemezt nem módosítottam; másold a lemezképet egy másik meghajtóra."
+        )
 
 
 def unmount_disk(device: str) -> None:
-    result = command(["lsblk", "-nrpo", "PATH,TYPE", device])
-    partitions: list[str] = []
-    for line in result.stdout.splitlines():
-        columns = line.split()
-        if len(columns) >= 2 and columns[1] == "part":
-            partitions.append(columns[0])
+    disk, nodes = inspect_target_layout(device)
+    partitions = [
+        str(item.get("path"))
+        for item in nodes
+        if item is not disk and item.get("type") == "part" and item.get("path")
+    ]
     for partition in partitions:
         mounts = command(
             ["findmnt", "-rn", "-S", partition, "-o", "TARGET"], check=False
@@ -152,6 +362,7 @@ def unmount_disk(device: str) -> None:
             emit(f"Partíció leválasztása: {mountpoint}", 1)
             command(["umount", "--", mountpoint])
     command(["udevadm", "settle"], check=False, timeout=15)
+
 
 
 def find_case_insensitive(root: Path, relative: str) -> Path | None:
