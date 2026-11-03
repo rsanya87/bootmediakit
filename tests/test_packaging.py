@@ -63,6 +63,11 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
         self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
         self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
+        self.assertIn("calculate_window_profile(", app)
+        self.assertIn("self._compact_ui = available_height < 850", app)
+        self.assertIn("self.setMaximumSize(740, 900)", app)
+        self.assertIn("self.log.setMaximumHeight(56 if self._compact_ui else 76)", app)
+        self.assertIn("self.file_info.setWordWrap(False)", app)
 
 
 if __name__ == "__main__":
