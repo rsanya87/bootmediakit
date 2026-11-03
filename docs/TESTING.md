@@ -88,3 +88,12 @@ The responsive-size helper uses `QScreen.availableGeometry()` (logical pixels), 
 
 
 Responsive profile unit tests currently account for four of the 65 tests. Latest run: https://github.com/rsanya87/bootmediakit/actions/runs/41677111569 (all 65 passed).
+
+
+### Partition information popover and progress header
+
+- Confirm the target card contains only capacity, identifier and model in its summary line; it no longer prints the partition list inline.
+- Hover the blue `i` next to `Partíció információk:` and verify that every partition path, filesystem, label, size and mountpoint appears in the tooltip.
+- Verify the tooltip handles no-partition devices and HTML-special characters in labels without markup injection.
+- Confirm the elapsed-time badge is a compact 30 px tall and does not stretch the progress-card header vertically.
+- Latest source-contract suite also checks that detailed partition rows are not placed in the visible summary.
