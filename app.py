@@ -117,6 +117,9 @@ def disk_identity(disk: dict[str, Any]) -> dict[str, Any]:
 def unsafe_layout_reason(disk: dict[str, Any]) -> str:
     unsafe_types = {"crypt", "lvm", "raid", "raid0", "raid1", "raid5", "raid6", "raid10", "mpath"}
     unsafe_fs = {"crypto_luks", "lvm2_member", "swap", "linux_raid_member", "isw_raid_member", "ddf_raid_member"}
+    identity = disk_identity(disk)
+    if not any(identity.get(key) for key in ("serial", "wwn", "diskseq", "by_id")):
+        return "Nem írható cél: a meghajtóhoz nem található stabil fizikai azonosító."
     for part in flatten_partitions(disk):
         kind = str(part.get("type") or "").lower()
         fstype = str(part.get("fstype") or "").lower()
@@ -556,6 +559,9 @@ class MainWindow(QMainWindow):
 
         mode = "raw" if self.raw_button.isChecked() else "windows"
         device = self.current_device
+        if device.get("unsafe_reason"):
+            QMessageBox.critical(self, "Védett meghajtó", str(device["unsafe_reason"]))
+            return
         if mode == "raw" and image.suffix.lower() == ".iso" and is_windows_install_iso(image):
             QMessageBox.warning(
                 self,
@@ -564,21 +570,59 @@ class MainWindow(QMainWindow):
                 "Válaszd a „Windows telepítő (UEFI / GPT / NTFS)” módot.",
             )
             return
-        if mode == "raw" and image.stat().st_size > device["size"]:
+        try:
+            image_size = image.stat().st_size
+        except OSError as exc:
+            QMessageBox.warning(self, "Forrásfájl", f"A forrásfájl nem olvasható:\n{exc}")
+            return
+        if mode == "raw" and image_size > device["size"]:
             QMessageBox.warning(self, "Kevés tárhely", "A lemezkép nagyobb, mint a kiválasztott USB-meghajtó.")
             return
         if mode == "windows" and image.suffix.lower() != ".iso":
             QMessageBox.warning(self, "Windows ISO szükséges", "A Windows telepítő módhoz ISO fájlt válassz.")
             return
 
-        details = (
-            f"Forrás: {image}\n"
-            f"Cél: {device['path']}\n"
-            f"Meghajtó: {device['model']} ({human_size(device['size'])})\n\n"
-            "A célmeghajtó MINDEN partíciója és adata törlődni fog."
+        partition_lines = []
+        for part in device.get("partitions") or []:
+            fs = part.get("fstype") or part.get("type") or "ismeretlen fájlrendszer"
+            label = part.get("label") or "nincs címke"
+            size = human_size(int(part.get("size") or 0))
+            mounts = part.get("mountpoints") or []
+            if isinstance(mounts, str):
+                mounts = [mounts]
+            mount_text = ", ".join(str(x) for x in mounts if x) or "nincs csatolva"
+            partition_lines.append(
+                f"  {part.get('path')}  |  {fs}  |  {label}  |  {size}  |  {mount_text}"
+            )
+        partition_text = "\n".join(partition_lines) if partition_lines else "  Nincs felismert partíció."
+        mounts = device.get("mounts") or []
+        removable = bool(device.get("rm"))
+        transport = str(device.get("tran") or "").lower()
+        large_or_nonremovable = (
+            int(device["size"]) >= 128 * 1024 * 1024 * 1024
+            or (transport == "usb" and not removable)
         )
+        identity_text = (
+            f"Modell: {device.get('model') or 'ismeretlen'}\n"
+            f"Sorozatszám/WWN: {device.get('serial') or device.get('wwn') or 'nincs'}\n"
+            f"Disk sequence: {device.get('diskseq') or 'nincs'}\n"
+            f"By-id: {device.get('by_id') or 'nincs'}\n"
+            f"Kapacitás: {human_size(device['size'])}\n"
+            f"Eszköz: {device['path']}"
+        )
+        details = (
+            f"Forrás: {image} ({human_size(image_size)})\n\n"
+            f"Cél fizikai meghajtó:\n{identity_text}\n\n"
+            f"Partíciók és kötetek:\n{partition_text}\n\n"
+            "A célmeghajtó MINDEN partíciója, fájlrendszere és adata törlődni fog."
+        )
+        if mounts:
+            details += "\n\nCsatolt útvonalak, amelyeket leválasztunk:\n" + "\n".join(mounts)
         if mode == "windows":
-            details += "\n\nA készítő GPT lemezt hoz létre: egy nagy NTFS partíciót az eredeti Windows ISO fájloknak, valamint egy 1 MiB-os FAT BMK_EFI UEFI:NTFS segédpartíciót a lemez végén. A kis FAT partíció Microsoft Basic Data típusú, GUID:63 NoDriveLetter attribútummal; szándékosan nem EFI System Partition, hogy a Windows Setup ne találjon második ESP-t. Az install.esd / install.wim változatlan marad. UEFI x64 szükséges; Secure Boot támogatás a firmware tanúsítványaitól és visszavonási listájától függ.\n\nFontos telepítési tanács: a Windows Setup több belső HDD/SSD mellett néha nem a kiválasztott céllemezt azonosítja rendszerindító lemezként. Ha a telepítés a rendszer/boot kötet előkészítésénél hibázik, próbáld ideiglenesen leválasztani a nem célként használt belső meghajtókat. A lemezek tartalmát ne töröld emiatt."
+            details += (
+                "\n\nA Windows mód GPT-t hoz létre: nagy NTFS telepítőpartíció és "
+                "1 MiB BMK_EFI FAT UEFI:NTFS segédpartíció. A Windows ISO eredeti fájljai másolódnak."
+            )
         reply = QMessageBox.warning(
             self,
             "Végleges megerősítés szükséges",
@@ -589,20 +633,56 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        if not WORKER.is_file():
-            QMessageBox.critical(self, "Hiányzó háttérfolyamat", f"Nem található a háttérfolyamat:\n{WORKER}")
+        if large_or_nonremovable:
+            second = QMessageBox.warning(
+                self,
+                "Második megerősítés – nagy vagy nem-removable meghajtó",
+                f"Ez egy {human_size(device['size'])} méretű vagy nem-removable USB-eszköz.\n\n"
+                f"Valóban ezt a teljes fizikai meghajtót akarod törölni?\n\n{device['path']} — "
+                f"{device.get('model') or 'ismeretlen modell'}",
+                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if second != QMessageBox.StandardButton.Yes:
+                return
+
+        if not PRIVILEGED_WRAPPER.is_file():
+            QMessageBox.critical(
+                self,
+                "Hiányzó biztonságos worker",
+                f"Nem található a telepített root wrapper:\n{PRIVILEGED_WRAPPER}\n\n"
+                "Telepítsd újra a BootMediaKit biztonsági kiadását.",
+            )
             return
         if not shutil.which("pkexec"):
             QMessageBox.critical(self, "Hiányzó pkexec", "A pkexec / polkit nem található. Telepítsd a polkit csomagot.")
             return
 
-        args = ["/usr/bin/python3", str(WORKER), mode, str(image), str(device["path"])]
-        args.append("1" if self.verify_checkbox.isChecked() else "0")
+        identity_json = json.dumps(
+            {
+                key: device.get(key, "")
+                for key in (
+                    "path", "size", "model", "serial", "wwn", "tran",
+                    "rm", "maj_min", "diskseq", "by_id",
+                )
+            },
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        args = [
+            str(PRIVILEGED_WRAPPER),
+            mode,
+            str(image.resolve()),
+            str(device["path"]),
+            "1" if self.verify_checkbox.isChecked() else "0",
+            identity_json,
+        ]
 
         self.progress.setValue(0)
         self.log.clear()
         self.status_label.setText("Rendszergazdai jogosultság kérése…")
         self.start_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
         self.refresh_button.setEnabled(False)
         self.browse_button.setEnabled(False)
         self.device_combo.setEnabled(False)
@@ -611,6 +691,11 @@ class MainWindow(QMainWindow):
         self.iso_edit.setEnabled(False)
 
         self.output_buffer = ""
+        self._worker_started = False
+        self._target_modified = False
+        self._operation_cancelled = False
+        self._close_after_operation = False
+        self.cancel_button.setText("Megszakítás")
         self.elapsed_timer.stop()
         self._operation_elapsed = QElapsedTimer()
         self._operation_timer_started = False
@@ -623,6 +708,46 @@ class MainWindow(QMainWindow):
         self.process.finished.connect(self.operation_finished)
         self.process.errorOccurred.connect(self.process_error)
         self.process.start()
+
+    def _send_cancel_request(self) -> None:
+        if not self.process:
+            return
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Megszakítás folyamatban…")
+        self.status_label.setText("Biztonságos megszakítás kérése…")
+        self.process.write(b"cancel\n")
+        self.process.closeWriteChannel()
+
+    def cancel_operation(self) -> None:
+        if not self.process:
+            return
+        reply = QMessageBox.warning(
+            self,
+            "Művelet megszakítása",
+            "A műveletet biztonságos írási határon állítjuk le. A pendrive részleges állapotban maradhat, "
+            "ha a törlés vagy írás már elkezdődött.\n\nBiztosan megszakítod?",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._send_cancel_request()
+
+    def closeEvent(self, event) -> None:
+        if self.process is None:
+            event.accept()
+            return
+        reply = QMessageBox.warning(
+            self,
+            "A BootMediaKit művelete még fut",
+            "Bezárás előtt biztonságosan megszakítjuk a pendrive készítését. "
+            "A célmeghajtó részleges állapotban maradhat.\n\nMegszakítod és bezárod?",
+            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._close_after_operation = True
+            self._send_cancel_request()
+        event.ignore()
 
     def read_stdout(self) -> None:
         if not self.process:
