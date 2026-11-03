@@ -377,8 +377,12 @@ class UefiNtfsLabelTests(unittest.TestCase):
             ]
             with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", len(original)), patch(
                 "worker.command", side_effect=responses
-            ) as run:
+            ) as run, patch("worker.emit") as emit:
                 result = worker.prepare_bmk_uefi_ntfs_image(upstream, destination)
+                self.assertFalse(
+                    any("RUFUS_BOOT" in str(call) or "BMK_EFI" in str(call) for call in emit.call_args_list),
+                    "The internal upstream volume-label operation must not clutter the user log.",
+                )
 
             self.assertEqual(result, destination)
             self.assertEqual(upstream.read_bytes(), original)
@@ -561,7 +565,9 @@ class KernelCopyTests(unittest.TestCase):
             with patch(
                 "worker.os.copy_file_range",
                 side_effect=OSError(errno.EXDEV, "cross-device copy not supported"),
-            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile:
+            ), patch("worker.os.sendfile", wraps=real_sendfile) as sendfile, patch(
+                "worker.emit"
+            ) as emit:
                 manifest = worker.copy_tree_progress(
                     source, destination, len(payload), hash_files=False
                 )
@@ -569,6 +575,13 @@ class KernelCopyTests(unittest.TestCase):
             self.assertGreater(sendfile.call_count, 0)
             self.assertEqual(manifest, [])
             self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+            self.assertTrue(
+                any(
+                    "fájlrendszerek közötti gyorsmásolás" in str(call)
+                    for call in emit.call_args_list
+                )
+            )
+            self.assertFalse(any("Errno 18" in str(call) for call in emit.call_args_list))
 
     @unittest.skipUnless(hasattr(os, "copy_file_range"), "copy_file_range is unavailable")
     def test_kernel_copy_falls_back_to_streaming_when_both_syscalls_fail(self):
@@ -586,13 +599,14 @@ class KernelCopyTests(unittest.TestCase):
             ), patch(
                 "worker.os.sendfile",
                 side_effect=OSError(errno.EXDEV, "sendfile cross-device copy not supported"),
-            ):
+            ), patch("worker.emit") as emit:
                 manifest = worker.copy_tree_progress(
                     source, destination, len(payload), hash_files=False
                 )
 
             self.assertEqual(manifest, [])
             self.assertEqual((destination / "boot.wim").read_bytes(), payload)
+            self.assertFalse(any("Errno 18" in str(call) for call in emit.call_args_list))
 
     def test_progress_messages_are_throttled_to_percentage_changes(self):
         with tempfile.TemporaryDirectory() as temp:
