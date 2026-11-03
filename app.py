@@ -776,6 +776,12 @@ class MainWindow(QMainWindow):
         except json.JSONDecodeError:
             self.append_log(line)
             return
+        if event.get("worker_started"):
+            self._worker_started = True
+        if "target_modified" in event:
+            self._target_modified = bool(event.get("target_modified"))
+        if event.get("cancelled"):
+            self._operation_cancelled = True
         message = str(event.get("message", ""))
         if message:
             self.status_label.setText(message)
@@ -791,8 +797,10 @@ class MainWindow(QMainWindow):
         if error == QProcess.ProcessError.FailedToStart:
             self.stop_operation_clock()
             self.set_busy(False)
-            self.status_label.setText("A háttérfolyamat nem indult el.")
+            self.status_label.setText("A privilegizált háttérfolyamat nem indult el; a céllemezt nem módosítottam.")
             self.process = None
+            if self._close_after_operation:
+                self.close()
 
     def operation_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         self.read_stdout()
@@ -801,25 +809,57 @@ class MainWindow(QMainWindow):
             self.output_buffer = ""
         self.stop_operation_clock()
         self.set_busy(False)
+        was_closing = self._close_after_operation
+
         if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
             self.progress.setValue(100)
             self.status_label.setText("Sikeres befejezés.")
             self.append_log("Kész. Biztonságosan eltávolíthatod az USB-meghajtót.")
-            QMessageBox.information(self, "Elkészült", "Az USB-meghajtó elkészült. Biztonságosan eltávolíthatod.")
+            if not was_closing:
+                QMessageBox.information(self, "Elkészült", "Az USB-meghajtó elkészült. Biztonságosan eltávolíthatod.")
+        elif self._operation_cancelled or exit_code == 130:
+            self.status_label.setText("A művelet biztonságosan megszakítva.")
+            self.append_log(
+                "A célmeghajtó részleges állapotban maradhat."
+                if self._target_modified
+                else "A megszakítás a célmeghajtó módosítása előtt történt; a lemez tartalmához nem nyúltunk."
+            )
+        elif not self._worker_started:
+            # pkexec 126/127 and failures before the worker's first structured
+            # event cannot have touched the target disk.
+            self.status_label.setText("A jogosultságkérés vagy a worker indítása nem sikerült.")
+            self.append_log(f"A pkexec kilépési kódja: {exit_code}. A célmeghajtót nem módosítottuk.")
+            if not was_closing:
+                QMessageBox.information(
+                    self,
+                    "A művelet nem indult el",
+                    "A rendszergazdai jogosultságkérés megszakadt/megtagadásra került, "
+                    "vagy a biztonságos worker nem indult el. A célmeghajtóhoz nem nyúltunk.",
+                )
         else:
             self.status_label.setText("A művelet nem fejeződött be.")
             self.append_log(f"A háttérfolyamat kilépési kódja: {exit_code}")
-            QMessageBox.critical(
-                self,
-                "Sikertelen művelet",
-                "A művelet nem fejeződött be. A naplóban látható a hiba oka. "
-                "A célmeghajtó állapota részleges lehet; újrahasználat előtt formázd meg vagy készítsd el újra.",
-            )
+            if not was_closing:
+                QMessageBox.critical(
+                    self,
+                    "Sikertelen művelet",
+                    "A művelet nem fejeződött be. A naplóban látható a hiba oka. "
+                    + (
+                        "A célmeghajtó állapota részleges lehet; újrahasználat előtt készítsd el újra."
+                        if self._target_modified
+                        else "A célmeghajtó tartalmát a worker nem módosította."
+                    ),
+                )
         self.process = None
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Megszakítás")
         self.refresh_devices(preserve_selection=True, quiet=True)
+        if was_closing:
+            self.close()
 
     def set_busy(self, busy: bool) -> None:
         self.start_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(busy)
         self.refresh_button.setEnabled(not busy)
         self.browse_button.setEnabled(not busy)
         self.device_combo.setEnabled(not busy)
