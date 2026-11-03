@@ -66,6 +66,8 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("calculate_window_profile(", app)
         self.assertIn("self._compact_ui = available_height < 850", app)
         self.assertIn("self.setMaximumSize(740, 900)", app)
+        self.assertIn("def fit_window_to_screen(self)", app)
+        self.assertIn("QTimer.singleShot(0, window.fit_window_to_screen)", app)
         self.assertIn("self.log.setMaximumHeight(56 if self._compact_ui else 76)", app)
         self.assertIn("self.file_info.setWordWrap(False)", app)
 
