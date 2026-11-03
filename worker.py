@@ -1230,31 +1230,107 @@ def write_raw(
         os.close(source_fd)
 
 
+def _assert_root_owned_path(path: Path, *, directory: bool) -> None:
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"Hiányzó vagy nem ellenőrizhető privilegizált fájl: {path}") from exc
+    if stat.S_ISLNK(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem lehet szimbolikus link: {path}")
+    if info.st_uid != 0:
+        raise RuntimeError(f"A privilegizált fájl/könyvtár nem root tulajdonú: {path}")
+    if info.st_mode & 0o022:
+        raise RuntimeError(f"A privilegizált fájl/könyvtár csoport vagy más felhasználó által írható: {path}")
+    if directory and not stat.S_ISDIR(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem könyvtár: {path}")
+    if not directory and not stat.S_ISREG(info.st_mode):
+        raise RuntimeError(f"A privilegizált útvonal nem normál fájl: {path}")
+
+
+def validate_privileged_install() -> None:
+    """Refuse root execution from a user-writable checkout or modified install."""
+    expected_worker = Path("/usr/lib/bootmediakit/worker.py")
+    expected_wrapper = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
+    current_worker = Path(__file__).resolve(strict=True)
+    if current_worker != expected_worker:
+        raise RuntimeError(
+            "A root worker csak a telepített /usr/lib/bootmediakit/worker.py útvonalról indulhat. "
+            "Forráskönyvtárból történő közvetlen root indítás tiltott."
+        )
+    for path in (
+        Path("/usr"),
+        Path("/usr/lib"),
+        Path("/usr/lib/bootmediakit"),
+        Path("/usr/libexec"),
+        Path("/usr/libexec/bootmediakit"),
+    ):
+        _assert_root_owned_path(path, directory=True)
+    _assert_root_owned_path(expected_worker, directory=False)
+    _assert_root_owned_path(expected_wrapper, directory=False)
+    try:
+        wrapper_mode = expected_wrapper.stat().st_mode
+    except OSError as exc:
+        raise RuntimeError("A BootMediaKit root wrapper nem érhető el.") from exc
+    if not wrapper_mode & 0o111:
+        raise RuntimeError("A BootMediaKit root wrapper nem végrehajtható.")
+    pkexec_uid = os.environ.get("PKEXEC_UID", "")
+    if not pkexec_uid.isdigit() or int(pkexec_uid) == 0:
+        raise RuntimeError("A worker csak a saját polkit akción keresztül indítható.")
+
+
 def main(argv: list[str]) -> int:
     global TARGET_MODIFIED
     TARGET_MODIFIED = False
-    if len(argv) < 4:
-        emit("Hibás paraméterezés.", error="Használat: worker.py raw|windows ISO DEVICE [VERIFY]")
+    CANCEL_EVENT.clear()
+    if len(argv) != 6:
+        emit(
+            "Hibás paraméterezés.",
+            error="Használat: bootmediakit-worker raw|windows ISO DEVICE VERIFY IDENTITY_JSON",
+        )
         return 2
-    mode, image_arg, device = argv[1:4]
-    image = Path(image_arg).expanduser()
+    mode, image_arg, device, verify_arg, identity_arg = argv[1:6]
     if os.geteuid() != 0:
-        emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez pkexec szükséges.")
+        emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges.")
         return 1
-    if not image.is_file() or not os.access(image, os.R_OK):
-        emit("A forrásfájl nem olvasható.", error=str(image))
-        return 1
-    verify = len(argv) >= 5 and argv[4] == "1"
     try:
+        validate_privileged_install()
+    except Exception as exc:
+        emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc))
+        return 1
+
+    try:
+        expected_identity = json.loads(identity_arg)
+        if not isinstance(expected_identity, dict):
+            raise ValueError("A meghajtóazonosító nem JSON objektum.")
+        if mode not in {"raw", "windows"}:
+            raise ValueError("Ismeretlen írási mód.")
+        if verify_arg not in {"0", "1"}:
+            raise ValueError("A visszaellenőrzés jelzője hibás.")
+        image = Path(image_arg).expanduser().resolve(strict=True)
+        if not image.is_file() or not os.access(image, os.R_OK):
+            raise RuntimeError(f"A forrásfájl nem olvasható: {image}")
+        if mode == "windows" and image.suffix.lower() != ".iso":
+            raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
+
+        start_control_reader()
+        emit("A BootMediaKit biztonságos háttérfolyamata elindult.", 0, worker_started=True)
+        check_cancelled()
+        verify = verify_arg == "1"
         if mode == "raw":
-            write_raw(image, device, verify)
-        elif mode == "windows":
-            if image.suffix.lower() != ".iso":
-                raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
-            write_windows_uefi(image, device, verify)
+            write_raw(image, device, verify, expected_identity)
         else:
-            raise RuntimeError("Ismeretlen írási mód.")
+            write_windows_uefi(image, device, verify, expected_identity)
         return 0
+    except OperationCancelled as exc:
+        if TARGET_MODIFIED:
+            detail = (
+                "A megszakítás biztonságos írási határon történt. A célmeghajtó részleges állapotban maradhat; "
+                "újrahasználat előtt készítsd el ismét."
+            )
+        else:
+            detail = "A megszakítás a célmeghajtó módosítása előtt történt; a cél tartalmához nem nyúltam."
+        emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True)
+        return 130
     except Exception as exc:
         if TARGET_MODIFIED:
             state_log = "A célmeghajtó állapota részleges lehet; ellenőrizd újracsatlakoztatás után."
