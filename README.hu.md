@@ -20,7 +20,7 @@
 - Képernyőmérethez igazodó PySide6 felület: legfeljebb 740×900-as ablak, 1366×768-as laptopon kompakt elrendezés és görgetés nélküli használatra optimalizált méret; a 10 pontos betűméret megmarad.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
 - Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
-- Jól olvasható meghajtó- és partícióadatok sötét KDE témán; a fejlesztői verziószám közvetlenül a név alatt jelenik meg.
+- Jól olvasható meghajtóadatok sötét KDE témán; a partíciók teljes listája a kis `i` információs ikon fölé húzott egérmutatóval jelenik meg.
 
 - ISO, IMG, BIN és RAW lemezképek közvetlen kiírása.
 - Nyers lemezkép írása után opcionális teljes visszaolvasás.
