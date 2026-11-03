@@ -95,14 +95,24 @@ def command(
     input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(
-            args,
-            input=input_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-        )
+        if input_text is None:
+            result = subprocess.run(
+                args,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
+        else:
+            result = subprocess.run(
+                args,
+                input=input_text,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
     except FileNotFoundError as exc:
         raise RuntimeError(f"Hiányzó rendszerprogram: {args[0]}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -1263,10 +1273,16 @@ def validate_privileged_install() -> None:
         Path("/usr/lib/bootmediakit"),
         Path("/usr/libexec"),
         Path("/usr/libexec/bootmediakit"),
+        Path("/usr/share/polkit-1"),
+        Path("/usr/share/polkit-1/actions"),
     ):
         _assert_root_owned_path(path, directory=True)
     _assert_root_owned_path(expected_worker, directory=False)
     _assert_root_owned_path(expected_wrapper, directory=False)
+    _assert_root_owned_path(
+        Path("/usr/share/polkit-1/actions/org.bootmediakit.policy"),
+        directory=False,
+    )
     try:
         wrapper_mode = expected_wrapper.stat().st_mode
     except OSError as exc:
