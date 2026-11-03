@@ -11,7 +11,7 @@ The current branch adds the following P0-focused automated tests:
 - Direct worker execution from an untrusted source checkout is rejected.
 - Polkit XML action path, root-wrapper launch command, installer ownership/mode and GUI wrapper invocation are validated.
 
-CI currently runs 65 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
+CI currently runs 67 unit/packaging tests (including responsive GUI source-contract checks, clean EXDEV fallback logging and quiet upstream label verification). Physical validation still required: install on CachyOS, confirm the polkit dialog, test cancellation on a disposable USB (during both RAW and Windows file-copy stages), confirm a different USB device cannot be substituted after selection, and confirm a source image stored on the target disk is refused without modifying it.
 
 ## 0.1.2 release validation
 
@@ -97,3 +97,6 @@ Responsive profile unit tests currently account for four of the 65 tests. Latest
 - Verify the tooltip handles no-partition devices and HTML-special characters in labels without markup injection.
 - Confirm the elapsed-time badge is a compact 30 px tall and does not stretch the progress-card header vertically.
 - Latest source-contract suite also checks that detailed partition rows are not placed in the visible summary.
+
+
+Partition-hover and progress-header checks added two more source-contract tests. Latest CI: https://github.com/rsanya87/bootmediakit/actions/runs/41683190729 (67 tests passed).
