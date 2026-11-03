@@ -247,9 +247,10 @@ class UefiNtfsLayoutTests(unittest.TestCase):
             with image.open("wb") as stream:
                 stream.truncate(disk_bytes)
             layout = worker.calculate_gpt_layout(disk_bytes // 512)
+            iso_label = "WIN10_IOT_X64"
             result = subprocess.run(
                 ["sfdisk", "--wipe", "always", str(image)],
-                input=worker.make_sfdisk_script(layout),
+                input=worker.make_sfdisk_script(layout, iso_label),
                 text=True,
                 capture_output=True,
                 timeout=30,
@@ -258,7 +259,7 @@ class UefiNtfsLayoutTests(unittest.TestCase):
 
             # Run the same post-write validation that the USB worker executes,
             # but only against a temporary sparse image file, never a device.
-            worker.verify_gpt_layout(str(image), layout)
+            worker.verify_gpt_layout(str(image), layout, iso_label)
 
     def test_sfdisk_script_uses_basic_data_and_no_drive_letter_for_both_partitions(self):
         layout = worker.calculate_gpt_layout((16 * 1024 * 1024 * 1024) // 512)
