@@ -2,13 +2,17 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, rendszergazdai jogosultsággal futó háttérfolyamat végzi.
 
-**Verzió:** `0.1.2`  
+**Fejlesztői verzió:** `0.1.3-alpha`  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
 > A 0.1.2-es verziót valódi USB 2.0 pendrive-okon is teszteltük. A Samsung RV511 gépen a Windows Telepítő eljutott az első újraindításig, majd a belső SSD-ről folytatta a telepítést. A Linux RAW/DD írás Legacy/MBR módban szintén tesztelve van. További UEFI firmware-, Secure Boot-, Windows ISO- és eszköztesztek még szükségesek; a program nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
+
+- Kompakt, átméretezhető PySide6 felület kisebb alapablakkal, a betűméret csökkentése nélkül.
+- Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
+- Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
 
 - ISO, IMG, BIN és RAW lemezképek közvetlen kiírása.
 - Nyers lemezkép írása után opcionális teljes visszaolvasás.
