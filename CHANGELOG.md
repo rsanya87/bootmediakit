@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3-alpha — UI refinement
+
+- Reduce default window size and compact panel padding/spacing without shrinking the standard 10 pt UI font.
+- Place raw-image and Windows installer mode buttons side by side.
+- Add a live elapsed-time display for the actual worker operation; authentication-dialog wait time is excluded.
+- Replace the placeholder icon with an original BootMediaKit bootable USB mark for window, taskbar and application menu.
+- Add elapsed-time formatting unit tests.
+
+
 ## 0.1.2 — 2026-11-02
 
 ### Windows UEFI media rewrite
