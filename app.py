@@ -43,7 +43,8 @@ from ui_helpers import format_elapsed_time
 
 APP_VERSION = "0.1.3-alpha"
 APP_NAME = "BootMediaKit"
-WORKER = Path(__file__).with_name("worker.py")
+WORKER = Path("/usr/lib/bootmediakit/worker.py")
+PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
 APP_ICON = Path(__file__).with_name("bootmediakit.svg")
 
 
@@ -59,11 +60,73 @@ def human_size(value: int | float) -> str:
 
 def run_lsblk() -> list[dict[str, Any]]:
     command = [
-        "lsblk", "--json", "--bytes", "--paths",
-        "--output", "PATH,NAME,TYPE,SIZE,MODEL,TRAN,RM,RO,MOUNTPOINTS"
+        "lsblk", "--json", "--bytes", "--paths", "--tree",
+        "--output",
+        "PATH,NAME,TYPE,SIZE,MODEL,SERIAL,WWN,TRAN,RM,RO,MAJ:MIN,"
+        "PKNAME,FSTYPE,LABEL,PARTTYPE,PARTLABEL,MOUNTPOINTS",
     ]
     result = subprocess.run(command, capture_output=True, text=True, check=True)
     return json.loads(result.stdout).get("blockdevices", [])
+
+
+def read_diskseq(maj_min: str) -> str:
+    try:
+        return (Path("/sys/dev/block") / maj_min / "diskseq").read_text(encoding="ascii").strip()
+    except OSError:
+        return ""
+
+
+def device_by_id(path: str) -> str:
+    wanted = os.path.realpath(path)
+    directory = Path("/dev/disk/by-id")
+    try:
+        matches = sorted(
+            str(entry) for entry in directory.iterdir()
+            if entry.is_symlink() and os.path.realpath(entry) == wanted
+        )
+    except OSError:
+        return ""
+    return next((item for item in matches if "-part" not in Path(item).name), matches[0] if matches else "")
+
+
+def flatten_partitions(node: dict[str, Any]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for child in node.get("children") or []:
+        result.append(child)
+        result.extend(flatten_partitions(child))
+    return result
+
+
+def disk_identity(disk: dict[str, Any]) -> dict[str, Any]:
+    path = str(disk.get("path") or "")
+    maj_min = str(disk.get("maj:min") or "")
+    return {
+        "path": path,
+        "size": int(disk.get("size") or 0),
+        "model": str(disk.get("model") or "").strip(),
+        "serial": str(disk.get("serial") or "").strip(),
+        "wwn": str(disk.get("wwn") or "").strip(),
+        "tran": str(disk.get("tran") or "").strip().lower(),
+        "rm": disk.get("rm") is True or str(disk.get("rm")).lower() in {"1", "true"},
+        "maj_min": maj_min,
+        "diskseq": read_diskseq(maj_min),
+        "by_id": device_by_id(path),
+    }
+
+
+def unsafe_layout_reason(disk: dict[str, Any]) -> str:
+    unsafe_types = {"crypt", "lvm", "raid", "raid0", "raid1", "raid5", "raid6", "raid10", "mpath"}
+    unsafe_fs = {"crypto_luks", "lvm2_member", "swap", "linux_raid_member", "isw_raid_member", "ddf_raid_member"}
+    for part in flatten_partitions(disk):
+        kind = str(part.get("type") or "").lower()
+        fstype = str(part.get("fstype") or "").lower()
+        if kind in unsafe_types or fstype in unsafe_fs:
+            return (
+                f"Nem írható cél: védett/összetett kötet található "
+                f"({part.get('path')}, {fstype or kind}, {part.get('label') or 'nincs címke'}). "
+                "A LUKS/LVM/RAID/swap réteget előbb külön kell kezelni."
+            )
+    return ""
 
 
 def mounted_paths(node: dict[str, Any]) -> list[str]:
@@ -90,6 +153,10 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(str(APP_ICON)))
         self.process: QProcess | None = None
         self.output_buffer = ""
+        self._worker_started = False
+        self._target_modified = False
+        self._operation_cancelled = False
+        self._close_after_operation = False
         self.current_device: dict[str, Any] | None = None
         self._selected_mode = "raw"
 
@@ -257,12 +324,16 @@ class MainWindow(QMainWindow):
         footer = QHBoxLayout()
         self.about_label = QLabel("Linux • helyi, nyílt forráskódú projekt")
         self.about_label.setObjectName("muted")
+        self.cancel_button = QPushButton("Megszakítás")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_operation)
         self.start_button = QPushButton("USB elkészítése")
         self.start_button.setObjectName("primaryButton")
         self.start_button.setMinimumWidth(168)
         self.start_button.setMinimumHeight(40)
         self.start_button.clicked.connect(self.start_operation)
         footer.addWidget(self.about_label, 1)
+        footer.addWidget(self.cancel_button)
         footer.addWidget(self.start_button)
         root_layout.addLayout(footer)
 
@@ -358,15 +429,31 @@ class MainWindow(QMainWindow):
                 continue
             model = (disk.get("model") or disk.get("name") or "USB-meghajtó").strip()
             size = int(disk.get("size") or 0)
+            identity = disk_identity(disk)
+            partitions = flatten_partitions(disk)
+            mounts = mounted_paths(disk)
+            unsafe_reason = unsafe_layout_reason(disk)
             tag = "USB" if transport == "usb" else "eltávolítható"
+            serial = identity.get("serial") or identity.get("wwn") or identity.get("diskseq") or "nincs sorozatszám"
             label = f"{model}   •   {human_size(size)}   •   {path}   [{tag}]"
+            if unsafe_reason:
+                label += "   [VÉDETT]"
             data = {
+                **identity,
                 "path": path,
                 "size": size,
                 "model": model,
-                "mounts": mounted_paths(disk),
+                "mounts": mounts,
+                "partitions": partitions,
+                "unsafe_reason": unsafe_reason,
+                "serial_display": serial,
             }
             self.device_combo.addItem(label, data)
+            if unsafe_reason:
+                item = self.device_combo.model().item(self.device_combo.count() - 1)
+                if item is not None:
+                    item.setEnabled(False)
+                    item.setToolTip(unsafe_reason)
         if current:
             for index in range(self.device_combo.count()):
                 item = self.device_combo.itemData(index)
@@ -384,11 +471,29 @@ class MainWindow(QMainWindow):
             self.device_detail.setText("Nincs kiválasztott USB-meghajtó.")
             return
         mounts = self.current_device.get("mounts") or []
-        message = f"Kapacitás: {human_size(self.current_device['size'])}."
+        message = (
+            f"Kapacitás: {human_size(self.current_device['size'])}. "
+            f"Azonosító: {self.current_device.get('serial_display') or 'ismeretlen'}."
+        )
+        partitions = self.current_device.get("partitions") or []
+        if partitions:
+            rows = []
+            for part in partitions:
+                fs = part.get("fstype") or part.get("type") or "ismeretlen"
+                label = part.get("label") or "nincs címke"
+                size = human_size(int(part.get("size") or 0))
+                part_mounts = part.get("mountpoints") or []
+                if isinstance(part_mounts, str):
+                    part_mounts = [part_mounts]
+                mount_text = ", ".join(str(x) for x in part_mounts if x) or "nincs csatolva"
+                rows.append(f"{part.get('path')} • {fs} • {label} • {size} • {mount_text}")
+            message += "\nPartíciók:\n" + "\n".join(rows)
         if mounts:
-            message += " Csatolási pont(ok): " + ", ".join(mounts) + ". A készítés előtt automatikusan le lesznek választva."
+            message += "\nCsatolási pont(ok): " + ", ".join(mounts) + ". A készítés előtt leválasztjuk őket."
         else:
-            message += " Nincs csatolt partíció."
+            message += "\nNincs csatolt partíció."
+        if self.current_device.get("unsafe_reason"):
+            message += "\n" + self.current_device["unsafe_reason"]
         self.device_detail.setText(message)
 
     def select_mode(self, mode: str) -> None:
