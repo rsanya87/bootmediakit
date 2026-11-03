@@ -478,7 +478,9 @@ def calculate_gpt_layout(total_sectors: int, image_size: int = UEFI_NTFS_IMAGE_S
 
 
 def partition_path(device: str, number: int) -> str:
-    """Resolve /dev/sdX1 and /dev/nvme0n1p1 style partition names."""
+    """Resolve partition paths for /dev, /dev/disk/by-id and NVMe devices."""
+    if device.startswith("/dev/disk/by-id/"):
+        return f"{device}-part{number}"
     base = os.path.basename(device)
     separator = "p" if base and base[-1].isdigit() else ""
     return f"{device}{separator}{number}"
