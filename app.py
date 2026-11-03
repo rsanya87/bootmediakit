@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from iso_utils import is_windows_install_iso
-from ui_helpers import format_elapsed_time
+from ui_helpers import calculate_window_profile, format_elapsed_time
 
 APP_VERSION = "0.1.3-safety-alpha"
 APP_NAME = "BootMediaKit"
