@@ -122,3 +122,12 @@ Physical validation is still pending. CI does not exercise a real Polkit agent, 
 - Removed the user-visible log entry that described the UEFI helper image's source FAT label and its replacement. The internal verification of the upstream `RUFUS_BOOT` metadata and the temporary-copy relabel to `BMK_EFI` remain unchanged; actual device labels remain `BOOTMEDIA` and `BMK_EFI` in this writer version.
 - The cross-filesystem `copy_file_range` / `sendfile` fallback is expected on some source/destination filesystem pairs. It no longer prints raw `[Errno 18] Invalid cross-device link`; the log now explains that a compatible copy method is being used. The fallback and the write path were not changed, preserving current reported transfer performance.
 - Added tests for horizontal-overflow prevention, visible version/high-contrast metadata, quiet helper-label handling and benign EXDEV fallback diagnostics.
+
+
+## 2026-11-03 — responsive window sizing follow-up
+
+- Initial window geometry now comes from `QScreen.availableGeometry()` in Qt logical pixels, with hard limits of 740×900 and a minimum of 560×520.
+- The UI selects a compact density profile below 850 logical pixels of available screen height. This reduces outer/card margins and spacing, control heights, and log height without changing the 10 pt application font.
+- ISO metadata is one concise line; the selected path stays in the line edit and the detailed filename remains available as a tooltip.
+- The selected device summary shows capacity/identifier and no more than two partition lines, with full inventory retained in the destructive confirmation dialog.
+- Responsive sizing helper and tests cover 2K/4K caps and the 1366×768 laptop profile.
