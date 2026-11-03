@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 from iso_utils import is_windows_install_iso
 from ui_helpers import calculate_window_profile, format_elapsed_time
 
-APP_VERSION = "0.1.3-safety-alpha"
+APP_VERSION = "0.1.3"
 APP_NAME = "BootMediaKit"
 WORKER = Path("/usr/lib/bootmediakit/worker.py")
 PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
