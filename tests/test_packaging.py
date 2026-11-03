@@ -50,6 +50,20 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn('os.environ.get("PKEXEC_UID", "")', worker)
         self.assertIn("Forráskönyvtárból történő közvetlen root indítás tiltott.", worker)
 
+    def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('APP_VERSION = "0.1.3-safety-alpha"', app)
+        self.assertIn('meta_row.addWidget(version', app)
+        self.assertIn('QLabel#version { color: #83bde2;', app)
+        self.assertIn('QLabel#muted { color: #b7c1cb; }', app)
+
+    def test_gui_disables_horizontal_scrollbar_and_wraps_long_iso_metadata(self):
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn("self.file_info.setWordWrap(True)", app)
+        self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
+        self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
+        self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
+
 
 if __name__ == "__main__":
     unittest.main()
