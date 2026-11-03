@@ -83,7 +83,7 @@ The responsive-size helper uses `QScreen.availableGeometry()` (logical pixels), 
 
 - 2560×1400 available work area -> 740×900, normal density.
 - 3840×2100 -> 740×900, normal density.
-- 1366×728 available work area (typical 1366×768 panel with desktop panel/taskbar) -> 740×708, compact density.
+- 1366×728 available work area (typical 1366×768 panel with desktop panel/taskbar) -> 740×704 outer window including KDE frame, compact density.
 - Verify on a real 1366×768 laptop that the vertical scrollbar stays hidden with a long Windows ISO selected and a two-partition USB inserted. The UI font remains 10 pt.
 
 
