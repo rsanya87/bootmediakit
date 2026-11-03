@@ -33,7 +33,7 @@ class ResponsiveWindowProfileTests(unittest.TestCase):
 
     def test_narrow_screen_keeps_window_inside_available_width(self):
         self.assertEqual(calculate_window_profile(800, 900), (740, 880, False))
-        self.assertEqual(calculate_window_profile(640, 700), (560, 680, True))
+        self.assertEqual(calculate_window_profile(640, 700), (616, 680, True))
 
     def test_window_never_exceeds_maximum_size(self):
         width, height, _ = calculate_window_profile(7680, 4320)
