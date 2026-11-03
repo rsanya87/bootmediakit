@@ -50,6 +50,26 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn('os.environ.get("PKEXEC_UID", "")', worker)
         self.assertIn("Forráskönyvtárból történő közvetlen root indítás tiltott.", worker)
 
+    def test_device_summary_is_compact_and_partition_list_is_in_hover_info_tooltip(self):
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('self.partition_info_label = QLabel("Partíció információk:")', app)
+        self.assertIn('self.partition_info_button.setText("i")', app)
+        self.assertIn("self.partition_info_button.setToolTip(tooltip)", app)
+        self.assertIn("self.partition_info_button.setToolTipDuration(15000)", app)
+        self.assertIn('summary = f"Kapacitás: {capacity} • Azonosító: {serial} • Eszköz: {model}"', app)
+        self.assertIn('f"Fájlrendszer: {fs}<br>"', app)
+        self.assertIn('f"Címke: {label}<br>"', app)
+        self.assertIn('f"Méret: {size}<br>"', app)
+        self.assertIn('f"Csatolás: {mount_text}"', app)
+        self.assertNotIn('lines.append(\n                f"{part.get(\'path\')}', app)
+
+    def test_elapsed_timer_cannot_expand_progress_header_vertically(self):
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn("self.elapsed_label.setFixedHeight(30)", app)
+        self.assertIn("QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed", app)
+        self.assertIn("QLabel#elapsed", app)
+        self.assertIn("QToolButton#infoButton", app)
+
     def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
         self.assertIn('APP_VERSION = "0.1.3-safety-alpha"', app)
