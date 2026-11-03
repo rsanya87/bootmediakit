@@ -1,54 +1,40 @@
 # Changelog
 
-## 0.1.3-safety-alpha — final compact device/progress panel
+## 0.1.3 — 2026-11-03
 
-- Replace the visible multi-line partition list below the target drive with a single summary line (capacity, identifier and model) plus `Partíció információk:` and a small blue `i` button.
-- Hovering the `i` button displays all partition paths, filesystems, labels, sizes and mountpoints in a 15-second tooltip. Tooltip content is HTML-escaped.
-- Limit the elapsed-time indicator to a fixed 30 px height and fixed vertical size policy so it cannot stretch the progress header and create a large blank area.
+BootMediaKit 0.1.3 is the first stable release of the Arch/CachyOS implementation.
 
-## 0.1.3-safety-alpha — responsive compact layout
+### Windows UEFI and Linux RAW/DD
 
-- Determine the initial window dimensions from the active screen's available logical geometry; cap the window at 740×900.
-- Switch to compact spacing/control heights when available screen height is below 850 logical pixels; retain the 10 pt application font.
-- On a 1366×768 display with 728 px available work area, target a 740×704 outer window (including KDE frame).
-- Reduce ISO metadata to a single concise line (full filename remains in the path field and tooltip).
-- Show device identity plus up to two compact partition summary lines; the full partition/mountpoint inventory remains in the destructive confirmation.
-- Reduce the operation log height on laptop-sized displays while retaining its internal scrollback.
+- Create Windows x64 UEFI installation media on GPT with a large NTFS partition and a 1 MiB FAT UEFI:NTFS helper partition at the end of the USB drive.
+- Preserve the original Windows ISO volume ID as the first GPT partition name and NTFS volume label. Use `BOOTMEDIA` only as a fallback when the ISO does not expose a usable label. Keep `BMK_EFI` exclusively for the helper partition.
+- Keep `install.esd`, `install.wim` and all other Windows files unchanged; no ESD-to-WIM conversion or SWM splitting.
+- Retain the Microsoft Basic Data + NoDriveLetter GUID:63 metadata for the FAT helper partition, preventing Windows Setup from seeing a second EFI System Partition.
+- Verify the pinned upstream UEFI:NTFS helper image by size and cryptographic hashes; alter only a temporary copy's FAT volume label, not the signed EFI binaries.
+- Prefer kernel NTFS3 and kernel-assisted file copying, with ntfs-3g and buffered-copy fallbacks. Hide expected cross-filesystem `EXDEV` fallbacks from the error log.
+- Support direct Linux ISO/RAW/DD writing with optional full read-back verification.
 
-## 0.1.3-safety-alpha — UX and log cleanup
+### Safety and reliability
 
-- Prevent horizontal scrolling when long ISO names or drive metadata are displayed; long file metadata wraps inside the layout.
-- Improve contrast for drive capacity, serial/WWN, partition, filesystem, label and mountpoint details on dark KDE themes.
-- Move the visible `0.1.3-safety-alpha` version string directly below the BootMediaKit title.
-- Keep the internal upstream UEFI helper FAT-label verification but remove the upstream-to-BMK_EFI relabel chatter from the user log.
-- Replace expected `EXDEV` / cross-filesystem fast-copy diagnostics with a plain-language fallback message; the copy automatically continues through sendfile or buffered I/O.
-- No USB write-performance settings or copy chunk sizes changed; current reported 8:30 / 19:10 runs remain the observed performance baseline.
+- Add a dedicated root-owned worker wrapper and BootMediaKit-specific Polkit action; run Python in isolated mode and keep the GUI unprivileged.
+- Revalidate target device identity and reject source images stored on the target physical disk.
+- Protect system and swap backing devices; reject LUKS, LVM, RAID and swap target layouts.
+- Add cooperative cancellation at safe write boundaries, flushing completed write units and performing normal cleanup.
+- Show a detailed destructive confirmation, including partitions, filesystems, labels, sizes and mountpoints; require a second confirmation for large or non-removable USB devices.
+- Use structured `lsblk --json` output and distinguish authorization failures from operations that may have modified the target.
 
+### User interface
 
-## 0.1.3-safety-alpha — P0 security hardening
+- Add BootMediaKit application icon, visible version label and elapsed operation timer.
+- Use a screen-aware compact layout capped at 740×900 logical pixels without reducing the 10 pt UI font.
+- Display partition details in a compact hover information tooltip.
 
-- Add a cooperative cancellation protocol between the unprivileged GUI and the privileged worker. The worker checks cancellation at safe chunk/file boundaries; it flushes completed write units and performs normal cleanup instead of being killed mid-write.
-- Add a dedicated `org.bootmediakit.write` Polkit action bound to a fixed root-owned `/usr/libexec/bootmediakit/bootmediakit-worker` wrapper. The wrapper launches Python with isolated mode (`-I`).
-- Refuse root worker execution from a source checkout or any installation with non-root-owned or group/world-writable worker, wrapper, policy or installation directories.
-- Snapshot and revalidate target identity (size, model, serial/WWN, major:minor, diskseq and `/dev/disk/by-id` where available) immediately before destructive operations.
-- Reject RAW or Windows source images stored on the target physical disk before unmounting or wiping it.
-- Protect physical devices backing system mountpoints and active swap (including swap files); refuse targets containing LUKS, LVM, RAID or swap layers.
-- Display target partitions, filesystem types, labels, sizes and mountpoints in the destructive confirmation; require a second confirmation for large or non-removable USB devices.
-- Distinguish Polkit authorization/worker-start failures from actual write failures; do not claim the target may be partial if the worker never started.
-- Replace worker field splitting with structured `lsblk --json` parsing, also fixing empty-transport column shifts.
-- Add P0 safety and packaging tests; current CI runs 59 tests.
+### Validation
 
-**Validation limitation:** CI verifies static rules, packaging and unit behavior. The installed Polkit agent, real device-swap race, source-on-target rejection against actual hardware, and cancellation on a disposable physical USB drive still require CachyOS testing.
-
-
-## 0.1.3-alpha — UI refinement
-
-- Reduce default window size and compact panel padding/spacing without shrinking the standard 10 pt UI font.
-- Place raw-image and Windows installer mode buttons side by side.
-- Add a live elapsed-time display for the actual worker operation; authentication-dialog wait time is excluded.
-- Replace the placeholder icon with an original BootMediaKit bootable USB mark for window, taskbar and application menu.
-- Add elapsed-time formatting unit tests.
-
+- User-tested Linux DD/RAW media booted in both Legacy BIOS and UEFI modes.
+- User-tested Windows 10 IoT Enterprise LTSC 2021 x64 in UEFI mode through successful installation.
+- User-tested cooperative cancellation on physical USB media.
+- Automated GitHub Actions suite: see the release workflow run linked from the repository.
 
 ## 0.1.2 — 2026-11-02
 
