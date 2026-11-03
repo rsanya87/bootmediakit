@@ -1,14 +1,21 @@
 # BootMediaKit
 
-BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a narrowly scoped privileged worker.
+BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Development version:** `0.1.3-alpha`  
+**Development version:** `0.1.3-safety-alpha`  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
 > Version 0.1.2 has been tested on real USB 2.0 devices and on the reported Samsung RV511: Windows Setup passed the first reboot and continued from the internal SSD. Linux raw/DD writing has also been tested in Legacy/MBR mode. UEFI firmware, Secure Boot and additional Windows ISO/device combinations still need broader testing; this is not a full Rufus feature replacement.
 
 ## Current capabilities
+
+- Dedicated root-owned worker wrapper and Polkit action; the GUI itself never runs as root.
+- Cooperative cancellation at safe write boundaries, without killing the privileged worker during I/O.
+- Source/target physical-disk collision checks and a second target-identity validation immediately before destructive writes.
+- Protection of system and active swap backing devices; refusal of targets containing LUKS, LVM, RAID or swap layers.
+- Partition/filesystem/label details in the destructive confirmation, plus a second confirmation for large or non-removable USB devices.
+
 
 - Compact, resizable PySide6 interface with a smaller default window while retaining the standard UI font size.
 - Live elapsed-time display for the actual USB creation operation.
