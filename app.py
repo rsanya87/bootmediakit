@@ -7,6 +7,7 @@ launched via pkexec when the user confirms a destructive operation.
 
 from __future__ import annotations
 
+import html
 import json
 import os
 import shutil
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
+    QToolButton,
     QWidget,
 )
 
@@ -296,9 +298,29 @@ class MainWindow(QMainWindow):
         self.device_detail.setObjectName("muted")
         self.device_detail.setWordWrap(False)
         self.device_detail.setMinimumWidth(0)
-        self.device_detail.setMaximumHeight(54 if self._compact_ui else 60)
+        self.device_detail.setMaximumHeight(24)
         self.device_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         device_layout.addWidget(self.device_detail)
+
+        partition_info_row = QHBoxLayout()
+        partition_info_row.setSpacing(5)
+        self.partition_info_label = QLabel("Partíció információk:")
+        self.partition_info_label.setObjectName("muted")
+        self.partition_info_label.setMinimumWidth(0)
+        self.partition_info_row = partition_info_row
+        self.partition_info_button = QToolButton()
+        self.partition_info_button.setObjectName("infoButton")
+        self.partition_info_button.setText("i")
+        self.partition_info_button.setAutoRaise(True)
+        self.partition_info_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.partition_info_button.setFixedSize(20, 20)
+        self.partition_info_button.setToolTip("A teljes partíciólista megjelenítése.")
+        self.partition_info_button.setToolTipDuration(15000)
+        self.partition_info_button.setAccessibleName("Partíció információk")
+        partition_info_row.addWidget(self.partition_info_label)
+        partition_info_row.addWidget(self.partition_info_button)
+        partition_info_row.addStretch(1)
+        device_layout.addLayout(partition_info_row)
         root_layout.addWidget(device_card)
 
         # Mode selection
@@ -366,6 +388,12 @@ class MainWindow(QMainWindow):
         self.elapsed_label = QLabel("Eltelt idő: 00:00")
         self.elapsed_label.setObjectName("elapsed")
         self.elapsed_label.setToolTip("A pendrive-készítés tényleges futási ideje")
+        self.elapsed_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.elapsed_label.setMinimumWidth(120)
+        self.elapsed_label.setFixedHeight(30)
+        self.elapsed_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
         progress_header.addWidget(progress_title)
         progress_header.addStretch(1)
         progress_header.addWidget(self.elapsed_label)
@@ -462,7 +490,10 @@ class MainWindow(QMainWindow):
             QLabel#version { color: #83bde2; font-size: 9pt; font-weight: 650; padding-right: 10px; }
             QLabel#sectionTitle { font-size: 15px; font-weight: 650; }
             QLabel#status { font-weight: 600; }
-            QLabel#elapsed { color: palette(highlight); font-weight: 650; border: 1px solid palette(mid); border-radius: 7px; padding: 4px 8px; }
+            QLabel#elapsed { color: palette(highlight); font-weight: 650; border: 1px solid palette(mid); border-radius: 7px; padding: 3px 8px; min-height: 24px; max-height: 24px; }
+            QToolButton#infoButton { color: palette(highlight); border: 1px solid palette(highlight); border-radius: 10px; font-weight: 750; font-size: 10pt; padding: 0; }
+            QToolButton#infoButton:hover { background: palette(alternate-base); }
+            QToolButton#infoButton:disabled { color: palette(mid); border-color: palette(mid); }
             QFrame#panel { border: 1px solid palette(mid); border-radius: 11px; }
             QFrame#warningPanel { border: 1px solid #b58136; border-radius: 10px; background: rgba(181,129,54,0.10); }
             QLabel#warningIcon { font-size: 21px; font-weight: 700; color: #d19a48; }
@@ -581,35 +612,50 @@ class MainWindow(QMainWindow):
         self.current_device = self.device_combo.itemData(index) if index >= 0 else None
         if not self.current_device:
             self.device_detail.setText("Nincs kiválasztott USB-meghajtó.")
+            self.device_detail.setToolTip("")
+            self.partition_info_label.setText("Partíció információk:")
+            self.partition_info_button.setEnabled(False)
+            self.partition_info_button.setToolTip("Nincs elérhető partícióinformáció.")
             return
-        mounts = self.current_device.get("mounts") or []
-        serial = self.current_device.get("serial_display") or "ismeretlen"
-        lines = [
-            f"{human_size(self.current_device['size'])} • Azonosító: {serial}",
-        ]
-        partitions = self.current_device.get("partitions") or []
-        for part in partitions[:2]:
-            fs = part.get("fstype") or part.get("type") or "ismeretlen"
-            label = part.get("label") or "nincs címke"
-            part_mounts = part.get("mountpoints") or []
-            if isinstance(part_mounts, str):
-                part_mounts = [part_mounts]
-            mount_text = ", ".join(str(x) for x in part_mounts if x) or "nincs csatolva"
-            lines.append(
-                f"{part.get('path')} • {fs.upper()} • {label} • {mount_text}"
-            )
-        if len(partitions) > 2:
-            lines.append(f"+ {len(partitions) - 2} további partíció")
-        if not partitions:
-            lines.append("Nincs partíció.")
-        if self.current_device.get("unsafe_reason"):
-            lines.append(str(self.current_device["unsafe_reason"]))
-        if mounts:
-            lines.append("Csatolva: " + ", ".join(mounts))
-        message = "\n".join(lines)
-        self.device_detail.setText(message)
-        self.device_detail.setToolTip(message)
 
+        model = self.current_device.get("model") or "Ismeretlen eszköz"
+        serial = self.current_device.get("serial_display") or "ismeretlen"
+        capacity = human_size(self.current_device["size"])
+        summary = f"Kapacitás: {capacity} • Azonosító: {serial} • Eszköz: {model}"
+        self.device_detail.setText(summary)
+        self.device_detail.setToolTip(
+            f"{summary}\nEszközútvonal: {self.current_device.get('path') or 'ismeretlen'}"
+        )
+
+        partitions = self.current_device.get("partitions") or []
+        if not partitions:
+            tooltip = "<b>Partíció információk</b><br>Nincs felismert partíció."
+        else:
+            rows: list[str] = []
+            for number, part in enumerate(partitions, start=1):
+                path = html.escape(str(part.get("path") or "ismeretlen"))
+                fs = html.escape(str(part.get("fstype") or part.get("type") or "ismeretlen").upper())
+                label = html.escape(str(part.get("label") or "nincs címke"))
+                size = html.escape(human_size(int(part.get("size") or 0)))
+                mounts = part.get("mountpoints") or []
+                if isinstance(mounts, str):
+                    mounts = [mounts]
+                mount_text = ", ".join(str(item) for item in mounts if item) or "nincs csatolva"
+                mount_text = html.escape(mount_text)
+                rows.append(
+                    f"<b>{number}. {path}</b><br>"
+                    f"Fájlrendszer: {fs}<br>"
+                    f"Címke: {label}<br>"
+                    f"Méret: {size}<br>"
+                    f"Csatolás: {mount_text}"
+                )
+            tooltip = "<b>Partíció információk</b><br><br>" + "<br><br>".join(rows)
+
+        self.partition_info_button.setEnabled(True)
+        self.partition_info_button.setToolTip(tooltip)
+        self.partition_info_button.setToolTipDuration(15000)
+
+    
     def select_mode(self, mode: str) -> None:
         raw = mode == "raw"
         self.raw_button.setChecked(raw)
