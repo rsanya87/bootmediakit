@@ -17,9 +17,10 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Partition/filesystem/label details in the destructive confirmation, plus a second confirmation for large or non-removable USB devices.
 
 
-- Compact, resizable PySide6 interface with a smaller default window while retaining the standard UI font size.
+- Compact, resizable PySide6 interface with a smaller default window while retaining the standard UI font size; long ISO names wrap without horizontal scrolling.
 - Live elapsed-time display for the actual USB creation operation.
 - Original BootMediaKit application icon for the window, taskbar and application menu.
+- Readable device/partition metadata on dark KDE themes and a visible development version below the title.
 
 - Write ISO, IMG, BIN, and RAW images directly to a selected USB drive.
 - Optional full read-back verification for raw image writes.
