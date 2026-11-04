@@ -181,7 +181,7 @@ class StabilityRegressionTests(unittest.TestCase):
 
     def test_btrfs_source_subvolume_suffix_resolves_to_the_real_block_device(self):
         result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "/dev/nvme0n1p2[/@]\n", ""
+            ["findmnt"], 0, "/dev/nvme0n1p2[/@] btrfs\n", ""
         )
         block_stat = type("BlockStat", (), {"st_mode": stat.S_IFBLK})()
         with patch("worker.command", return_value=result), patch(
@@ -221,7 +221,7 @@ class StabilityRegressionTests(unittest.TestCase):
 
     def test_source_backing_resolution_fails_closed_when_block_device_is_missing(self):
         result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "/dev/does-not-exist[/@]\n", ""
+            ["findmnt"], 0, "/dev/does-not-exist[/@] btrfs\n", ""
         )
         with patch("worker.command", return_value=result), patch(
             "worker.os.stat", side_effect=FileNotFoundError("missing")
