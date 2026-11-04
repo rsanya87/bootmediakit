@@ -7,7 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QProcess
+from PySide6.QtCore import QEvent, QProcess
 from PySide6.QtWidgets import QApplication
 
 import app as gui
@@ -23,9 +23,16 @@ class GuiStabilitySmokeTests(unittest.TestCase):
         start_mock = start_patcher.start()
         self.addCleanup(start_patcher.stop)
         window = gui.MainWindow()
-        self.addCleanup(window.refresh_timer.stop)
-        self.addCleanup(window.lsblk_timeout_timer.stop)
-        self.addCleanup(window.close)
+
+        def dispose_window():
+            window.close()
+            window.refresh_timer.stop()
+            window.lsblk_timeout_timer.stop()
+            window.deleteLater()
+            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            QApplication.processEvents()
+
+        self.addCleanup(dispose_window)
         return window, start_mock
 
     def test_window_initializes_and_starts_async_lsblk_without_blocking(self):
