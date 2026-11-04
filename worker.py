@@ -365,20 +365,21 @@ def source_backing_majmins(image: Path) -> set[str]:
     """Resolve the block devices backing an image's containing filesystem.
 
     findmnt MAJ:MIN is not necessarily a kernel block-device number (notably
-    for Btrfs). Resolve SOURCE instead and fail closed when a block source
-    cannot be identified.
+    for Btrfs). Resolve SOURCE instead and fail closed when the source cannot
+    be identified as a block device or a known non-block-backed filesystem.
     """
     result = command(
-        ["findmnt", "-nro", "SOURCE", "--target", str(image)],
+        ["findmnt", "-nro", "SOURCE,FSTYPE", "--target", str(image)],
         check=False,
         timeout=10,
     )
-    source_value = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    if result.returncode != 0 or not source_value:
+    fields = result.stdout.strip().split(None, 1)
+    if result.returncode != 0 or len(fields) != 2:
         raise RuntimeError(
             "Nem sikerült azonosítani a forrásfájl fájlrendszerét; biztonsági okból az írást leállítottam."
         )
 
+    source_value, filesystem_type = fields[0], fields[1].strip().lower()
     # Btrfs sources can include a subvolume suffix, e.g. /dev/nvme0n1p2[/@].
     source = source_value.split("[", 1)[0].strip()
     if source.startswith(("UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=")):
@@ -389,10 +390,22 @@ def source_backing_majmins(image: Path) -> set[str]:
                 "A forrásfájlrendszer blokkeszköz-azonosítója nem oldható fel; biztonsági okból az írást leállítottam."
             )
 
-    # Network, tmpfs, overlay and other non-block-backed filesystems do not
-    # share a physical target block device with the USB disk.
     if not source.startswith("/dev/"):
-        return set()
+        # These are unambiguously memory-backed or remote filesystems. For
+        # overlay/FUSE/unknown sources the physical backing cannot be proven,
+        # so do not silently disable the source-on-target safety check.
+        non_block_backed_types = {
+            "tmpfs", "ramfs", "proc", "sysfs", "cgroup", "cgroup2",
+            "devtmpfs", "devpts", "mqueue", "securityfs", "tracefs",
+            "debugfs", "pstore", "configfs", "rpc_pipefs",
+            "nfs", "nfs4", "cifs", "smb3", "ceph", "9p",
+        }
+        if filesystem_type in non_block_backed_types:
+            return set()
+        raise RuntimeError(
+            f"A forrás fájlrendszerének fizikai háttértára nem igazolható "
+            f"({filesystem_type}: {source_value}); biztonsági okból az írást leállítottam."
+        )
 
     try:
         source_stat = os.stat(source)
@@ -411,7 +424,6 @@ def source_backing_majmins(image: Path) -> set[str]:
             f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({source}); az írást biztonsági okból leállítottam."
         )
     return backing
-
 
 def ensure_source_not_on_target(image: Path, device: str) -> None:
     """Reject an image whose containing filesystem is on the target disk."""

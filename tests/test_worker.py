@@ -201,6 +201,24 @@ class StabilityRegressionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "fájlrendszerét"):
                 worker.source_backing_majmins(Path("/mnt/data/image.iso"))
 
+    def test_source_backing_resolution_fails_closed_for_overlay_filesystem(self):
+        result = subprocess.CompletedProcess(
+            ["findmnt"], 0, "overlay overlay\n", ""
+        )
+        with patch("worker.command", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "háttértára nem igazolható"):
+                worker.source_backing_majmins(Path("/mnt/data/image.iso"))
+
+    def test_known_tmpfs_source_is_allowed_without_block_device_backing(self):
+        result = subprocess.CompletedProcess(
+            ["findmnt"], 0, "tmpfs tmpfs\n", ""
+        )
+        with patch("worker.command", return_value=result):
+            self.assertEqual(
+                worker.source_backing_majmins(Path("/mnt/data/image.iso")),
+                set(),
+            )
+
     def test_source_backing_resolution_fails_closed_when_block_device_is_missing(self):
         result = subprocess.CompletedProcess(
             ["findmnt"], 0, "/dev/does-not-exist[/@]\n", ""
