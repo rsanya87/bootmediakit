@@ -511,6 +511,53 @@ class UefiNtfsLayoutTests(unittest.TestCase):
             self.assertEqual(worker.git_blob_sha1(path), expected)
 
 
+
+class RawWriteRegressionTests(unittest.TestCase):
+    def test_raw_write_forces_stale_partition_table_signature_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "linux.iso"
+            device = root / "usb-device"
+            payload = bytes(range(256)) * 128
+            trailing_data = b"\\xA5" * 4096
+            image.write_bytes(payload)
+            device.write_bytes(b"\\x5A" * len(payload) + trailing_data)
+            commands = []
+
+            def fake_command(args, **kwargs):
+                commands.append(list(args))
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            with patch.object(worker, "TARGET_MODIFIED", False), patch.object(
+                worker, "ensure_source_not_on_target"
+            ), patch.object(
+                worker, "validate_target", return_value=device.stat().st_size
+            ), patch.object(
+                worker, "require_programs"
+            ), patch.object(
+                worker, "unmount_disk"
+            ), patch.object(
+                worker, "assert_disk_unmounted"
+            ) as assert_unmounted, patch.object(
+                worker, "command", side_effect=fake_command
+            ), patch.object(
+                worker, "emit"
+            ):
+                worker.write_raw(image, str(device), True, expected_identity={})
+
+            self.assertEqual(device.read_bytes()[:len(payload)], payload)
+            self.assertEqual(device.read_bytes()[len(payload):], trailing_data)
+            self.assertIn(
+                ["wipefs", "--all", "--force", str(device)],
+                commands,
+            )
+            assert_unmounted.assert_called_once_with(str(device))
+            self.assertLess(
+                commands.index(["wipefs", "--all", "--force", str(device)]),
+                commands.index(["sync"]),
+            )
+
+
 class ProgressCalculationTests(unittest.TestCase):
     def test_windows_copy_progress_uses_full_range_without_sha256(self):
         self.assertEqual(worker.windows_copy_progress_span(False), 54)
