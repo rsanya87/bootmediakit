@@ -13,18 +13,12 @@
       <stop offset="0" stop-color="#edf7ff"/>
       <stop offset="1" stop-color="#a9c7df"/>
     </linearGradient>
-    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
-      <feGaussianBlur in="SourceAlpha" stdDeviation="7"/>
-      <feOffset dy="6"/>
-      <feComponentTransfer><feFuncA type="linear" slope="0.28"/></feComponentTransfer>
-      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
   </defs>
 
   <rect x="10" y="10" width="236" height="236" rx="58" fill="url(#background)"/>
   <path d="M40 63C65 27 119 14 164 28" fill="none" stroke="#8be5ff" stroke-opacity=".13" stroke-width="9" stroke-linecap="round"/>
 
-  <g filter="url(#shadow)">
+  <g>
     <!-- USB connector -->
     <rect x="91" y="39" width="74" height="51" rx="13" fill="url(#plug)"/>
     <rect x="103" y="26" width="16" height="26" rx="4" fill="#f4bd57"/>
