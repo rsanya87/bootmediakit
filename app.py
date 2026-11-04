@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QElapsedTimer, QProcess, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -1135,6 +1135,25 @@ class MainWindow(QMainWindow):
             self.refresh_timer.stop()
 
 
+def shutdown_window(window: MainWindow) -> None:
+    """Destroy the GUI object tree before PySide's interpreter-exit cleanup."""
+    window.refresh_timer.stop()
+    window.elapsed_timer.stop()
+    window.lsblk_timeout_timer.stop()
+
+    # Device discovery is non-destructive and may still be running if the
+    # window is closed immediately after startup. Reap it before deleting its
+    # owning MainWindow; the privileged writer is governed by closeEvent's
+    # cooperative-cancellation flow and is deliberately not force-killed here.
+    if window.lsblk_process.state() != QProcess.ProcessState.NotRunning:
+        window.lsblk_process.kill()
+        window.lsblk_process.waitForFinished(1000)
+
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -1147,7 +1166,14 @@ def main() -> int:
     window = MainWindow()
     window.show()
     QTimer.singleShot(0, window.fit_window_to_screen)
-    return app.exec()
+    exit_code = app.exec()
+
+    # Explicitly destroy all widgets and child QObjects while QApplication is
+    # still alive. This avoids leaving QObject wrappers for PySide's atexit
+    # cleanup to destroy after Python has started finalizing.
+    shutdown_window(window)
+    del window
+    return exit_code
 
 
 if __name__ == "__main__":

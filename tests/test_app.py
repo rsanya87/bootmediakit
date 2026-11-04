@@ -1,5 +1,7 @@
 import os
+import subprocess
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QEvent, QProcess
 from PySide6.QtWidgets import QApplication
+from shiboken6 import isValid
 
 import app as gui
 
@@ -25,12 +28,13 @@ class GuiStabilitySmokeTests(unittest.TestCase):
         window = gui.MainWindow()
 
         def dispose_window():
-            window.close()
-            window.refresh_timer.stop()
-            window.lsblk_timeout_timer.stop()
-            window.deleteLater()
-            QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-            QApplication.processEvents()
+            if isValid(window):
+                window.close()
+                window.refresh_timer.stop()
+                window.lsblk_timeout_timer.stop()
+                window.deleteLater()
+                QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                QApplication.processEvents()
 
         self.addCleanup(dispose_window)
         return window, start_mock
@@ -76,6 +80,50 @@ class GuiStabilitySmokeTests(unittest.TestCase):
         self.assertEqual(data["model"], "   ")
         self.assertEqual(data["model_display"], "/dev/sdb")
         self.assertTrue(window.device_combo.currentText().startswith("/dev/sdb"))
+
+    def test_shutdown_window_explicitly_deletes_the_qobject_tree(self):
+        window, _ = self.make_window()
+        refresh_timer = window.refresh_timer
+        discovery_process = window.lsblk_process
+        gui.shutdown_window(window)
+        self.assertFalse(isValid(window))
+        self.assertFalse(isValid(refresh_timer))
+        self.assertFalse(isValid(discovery_process))
+
+    def test_application_subprocess_exits_after_explicit_qt_cleanup(self):
+        script = textwrap.dedent(
+            """
+            import sys
+            from PySide6.QtCore import QTimer
+            from PySide6.QtWidgets import QApplication
+            import app
+
+            qt_app = QApplication([])
+            window = app.MainWindow()
+            window.show()
+            QTimer.singleShot(100, window.close)
+            exit_code = qt_app.exec()
+            app.shutdown_window(window)
+            del window
+            raise SystemExit(exit_code)
+            """
+        )
+        env = dict(os.environ)
+        env["QT_QPA_PLATFORM"] = "offscreen"
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=str(Path(__file__).resolve().parents[1]),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"GUI subprocess failed. stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}",
+        )
 
 
 if __name__ == "__main__":
