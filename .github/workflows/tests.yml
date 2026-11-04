@@ -24,8 +24,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install PySide6 for offscreen GUI tests
-        run: python -m pip install --disable-pip-version-check PySide6
+      - name: Install system and Python test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 ntfs-3g dosfstools
+          python -m pip install --disable-pip-version-check PySide6
       - name: Compile Python files
         run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py tests/test_app.py
       - name: Check shell syntax
@@ -34,10 +37,6 @@ jobs:
         run: python fetch_uefi_ntfs.py "$RUNNER_TEMP/uefi-ntfs.img"
       - name: Report verified helper SHA-256
         run: sha256sum "$RUNNER_TEMP/uefi-ntfs.img"
-      - name: Install NTFS format utility for a dry-run check
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ntfs-3g dosfstools
       - name: Validate NTFS formatting arguments on a temporary image
         run: |
           truncate -s 64M "$RUNNER_TEMP/ntfs-test.img"

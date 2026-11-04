@@ -276,11 +276,11 @@ class StabilityRegressionTests(unittest.TestCase):
             image = root / "helper.img"
             partition = root / "partition.img"
             image.write_bytes(b"BMK helper image")
-            partition.write_bytes(b"\\0" * image.stat().st_size)
+            partition.write_bytes(b"\0" * image.stat().st_size)
             responses = [
-                subprocess.CompletedProcess(["blockdev"], 0, f"{image.stat().st_size}\\n", ""),
+                subprocess.CompletedProcess(["blockdev"], 0, f"{image.stat().st_size}\n", ""),
                 subprocess.CompletedProcess(["blockdev"], 0, "", ""),
-                subprocess.CompletedProcess(["fatlabel"], 0, "BMK_EFI\\n", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "BMK_EFI\n", ""),
             ]
             with patch.object(
                 worker, "UEFI_NTFS_IMAGE_SIZE", image.stat().st_size
@@ -300,10 +300,10 @@ class StabilityRegressionTests(unittest.TestCase):
             image = root / "helper.img"
             partition = root / "partition.img"
             image.write_bytes(b"BMK")
-            partition.write_bytes(b"\\0" * 3)
+            partition.write_bytes(b"\0" * 3)
             with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", 3), patch(
                 "worker.command",
-                return_value=subprocess.CompletedProcess(["blockdev"], 0, "3\\n", ""),
+                return_value=subprocess.CompletedProcess(["blockdev"], 0, "3\n", ""),
             ), patch(
                 "worker.check_cancelled",
                 side_effect=worker.OperationCancelled("cancel"),
