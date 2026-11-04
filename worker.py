@@ -1277,9 +1277,7 @@ def write_windows_uefi(
         check_cancelled()
         assert_disk_unmounted(device)
         TARGET_MODIFIED = True
-        # util-linux needs --force to erase a block-device partition-table signature.
-        # assert_disk_unmounted() above ensures the target is not mounted.
-        command(["wipefs", "--all", "--force", device])
+        command(["wipefs", "--all", device])
         script = make_sfdisk_script(layout, iso_label)
         command(["sfdisk", "--wipe", "never", device], input_text=script)
         command(["blockdev", "--rereadpt", device], check=False)
@@ -1425,9 +1423,7 @@ def write_raw(
         assert_disk_unmounted(device)
         emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
         TARGET_MODIFIED = True
-        # util-linux needs --force to erase a block-device partition-table signature.
-        # assert_disk_unmounted() above ensures the target is not mounted.
-        command(["wipefs", "--all", "--force", device])
+        command(["wipefs", "--all", device])
         command(["sync"])
 
         emit("Lemezkép kiírása…", 3)
