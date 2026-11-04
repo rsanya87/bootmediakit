@@ -19,14 +19,14 @@ class GuiStabilitySmokeTests(unittest.TestCase):
         cls.qt_app = QApplication.instance() or QApplication([])
 
     def make_window(self):
-        start_patch = patch.object(QProcess, "start")
-        start_patch.start()
-        self.addCleanup(start_patch.stop)
+        start_patcher = patch.object(QProcess, "start")
+        start_mock = start_patcher.start()
+        self.addCleanup(start_patcher.stop)
         window = gui.MainWindow()
         self.addCleanup(window.refresh_timer.stop)
         self.addCleanup(window.lsblk_timeout_timer.stop)
         self.addCleanup(window.close)
-        return window, start_patch
+        return window, start_mock
 
     def test_window_initializes_and_starts_async_lsblk_without_blocking(self):
         window, start_patch = self.make_window()
