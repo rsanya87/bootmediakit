@@ -362,66 +362,77 @@ def validate_target(
 
 
 def source_backing_majmins(image: Path) -> set[str]:
-    """Resolve the block devices backing an image's containing filesystem.
+    """Resolve every backing block device for the mount containing an image.
 
-    findmnt MAJ:MIN is not necessarily a kernel block-device number (notably
-    for Btrfs). Resolve SOURCE instead and fail closed when the source cannot
-    be identified as a block device or a known non-block-backed filesystem.
+    Mountinfo is used instead of findmnt --target because --target can return
+    only one entry and therefore hide an autofs/CIFS over-mount stack. All
+    entries at the deepest matching mountpoint are examined so hidden
+    block-backed layers cannot be ignored.
     """
-    result = command(
-        ["findmnt", "-nro", "SOURCE,FSTYPE", "--target", str(image)],
-        check=False,
-        timeout=10,
-    )
-    fields = result.stdout.strip().split(None, 1)
-    if result.returncode != 0 or len(fields) != 2:
-        raise RuntimeError(
-            "Nem sikerült azonosítani a forrásfájl fájlrendszerét; biztonsági okból az írást leállítottam."
-        )
+    entries = _source_mounts_for_path(image)
+    non_block_backed_types = {
+        "tmpfs", "ramfs", "proc", "sysfs", "cgroup", "cgroup2",
+        "devtmpfs", "devpts", "mqueue", "securityfs", "tracefs",
+        "debugfs", "pstore", "configfs", "rpc_pipefs",
+        "nfs", "nfs4", "cifs", "smb3", "ceph", "9p",
+    }
+    backing: set[str] = set()
+    has_autofs = False
+    has_real_filesystem = False
 
-    source_value, filesystem_type = fields[0], fields[1].strip().lower()
-    # Btrfs sources can include a subvolume suffix, e.g. /dev/nvme0n1p2[/@].
-    source = source_value.split("[", 1)[0].strip()
-    if source.startswith(("UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=")):
-        resolved = command(["findfs", source], check=False, timeout=10)
-        source = resolved.stdout.strip().splitlines()[0] if resolved.stdout.strip() else ""
-        if resolved.returncode != 0 or not source:
+    for _major_minor, _mountpoint, filesystem_type, source_value in entries:
+        source = source_value.split("[", 1)[0].strip()
+        if filesystem_type == "autofs":
+            has_autofs = True
+            continue
+
+        has_real_filesystem = True
+        if source.startswith(("UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=")):
+            resolved = command(["findfs", source], check=False, timeout=10)
+            source = resolved.stdout.strip().splitlines()[0] if resolved.stdout.strip() else ""
+            if resolved.returncode != 0 or not source:
+                raise RuntimeError(
+                    "A forrásfájlrendszer blokkeszköz-azonosítója nem oldható fel; "
+                    "biztonsági okból az írást leállítottam."
+                )
+
+        if source.startswith("/dev/"):
+            try:
+                source_stat = os.stat(source)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"A forrásfájlrendszer blokkeszköze nem érhető el ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                ) from exc
+            if not stat.S_ISBLK(source_stat.st_mode):
+                raise RuntimeError(
+                    f"A mountinfo által megadott forrás nem blokkeszköz ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                )
+            resolved_backing = _block_ancestor_majmins(source)
+            if not resolved_backing:
+                raise RuntimeError(
+                    f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                )
+            backing.update(resolved_backing)
+        elif filesystem_type not in non_block_backed_types:
             raise RuntimeError(
-                "A forrásfájlrendszer blokkeszköz-azonosítója nem oldható fel; biztonsági okból az írást leállítottam."
+                "A forrás fájlrendszerének fizikai háttértára nem igazolható "
+                f"({filesystem_type}: {source_value}); biztonsági okból az írást leállítottam."
             )
 
-    if not source.startswith("/dev/"):
-        # These are unambiguously memory-backed or remote filesystems. For
-        # overlay/FUSE/unknown sources the physical backing cannot be proven,
-        # so do not silently disable the source-on-target safety check.
-        non_block_backed_types = {
-            "tmpfs", "ramfs", "proc", "sysfs", "cgroup", "cgroup2",
-            "devtmpfs", "devpts", "mqueue", "securityfs", "tracefs",
-            "debugfs", "pstore", "configfs", "rpc_pipefs",
-            "nfs", "nfs4", "cifs", "smb3", "ceph", "9p",
-        }
-        if filesystem_type in non_block_backed_types:
-            return set()
+    # An autofs record is only an automounter layer, not the mounted data
+    # filesystem. Require the corresponding active filesystem to be visible.
+    if has_autofs and not has_real_filesystem:
         raise RuntimeError(
-            f"A forrás fájlrendszerének fizikai háttértára nem igazolható "
-            f"({filesystem_type}: {source_value}); biztonsági okból az írást leállítottam."
+            "Az autofs csatolás mögötti tényleges fájlrendszer nem azonosítható; "
+            "biztonsági okból az írást leállítottam."
         )
-
-    try:
-        source_stat = os.stat(source)
-    except OSError as exc:
+    if not has_real_filesystem:
         raise RuntimeError(
-            f"A forrásfájlrendszer blokkeszköze nem érhető el ({source}); az írást biztonsági okból leállítottam."
-        ) from exc
-    if not stat.S_ISBLK(source_stat.st_mode):
-        raise RuntimeError(
-            f"A findmnt által megadott forrás nem blokkeszköz ({source}); az írást biztonsági okból leállítottam."
-        )
-
-    backing = _block_ancestor_majmins(source)
-    if not backing:
-        raise RuntimeError(
-            f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({source}); az írást biztonsági okból leállítottam."
+            "Nem sikerült azonosítani a forrásfájl tényleges fájlrendszerét; "
+            "biztonsági okból az írást leállítottam."
         )
     return backing
 
@@ -461,21 +472,64 @@ def _decode_findmnt_target(value: str) -> str:
     )
 
 
-def _read_mountinfo() -> list[tuple[str, str]]:
+def _read_mountinfo_records() -> list[tuple[str, str, str, str]]:
+    """Read MAJ:MIN, mountpoint, filesystem type and source from mountinfo."""
     try:
         lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise RuntimeError(
-            "Nem ellenőrizhető a csatolási állapot (/proc/self/mountinfo); az írást biztonsági okból leállítottam."
+            "Nem ellenőrizhető a csatolási állapot (/proc/self/mountinfo); "
+            "az írást biztonsági okból leállítottam."
         ) from exc
 
-    entries: list[tuple[str, str]] = []
+    entries: list[tuple[str, str, str, str]] = []
     for line in lines:
         fields = line.split()
-        if len(fields) < 6:
-            raise RuntimeError("Hibás /proc/self/mountinfo sor; a csatolási állapot nem ellenőrizhető.")
-        entries.append((fields[2], _decode_mountinfo_field(fields[4])))
+        try:
+            separator = fields.index("-")
+        except ValueError as exc:
+            raise RuntimeError(
+                "Hibás /proc/self/mountinfo sor; a fájlrendszer forrása nem ellenőrizhető."
+            ) from exc
+        if len(fields) < 6 or separator < 6 or len(fields) <= separator + 2:
+            raise RuntimeError(
+                "Hibás /proc/self/mountinfo sor; a fájlrendszer forrása nem ellenőrizhető."
+            )
+        entries.append(
+            (
+                fields[2],
+                _decode_mountinfo_field(fields[4]),
+                fields[separator + 1].lower(),
+                _decode_mountinfo_field(fields[separator + 2]),
+            )
+        )
     return entries
+
+
+def _source_mounts_for_path(image: Path) -> list[tuple[str, str, str, str]]:
+    """Return all mount layers at the deepest mountpoint containing image."""
+    image_path = str(image.resolve(strict=True))
+    matches = [
+        entry
+        for entry in _read_mountinfo_records()
+        if entry[1] == "/"
+        or image_path == entry[1]
+        or image_path.startswith(entry[1].rstrip("/") + os.sep)
+    ]
+    if not matches:
+        raise RuntimeError(
+            "Nem található csatolási bejegyzés a forrásfájlhoz; "
+            "biztonsági okból az írást leállítottam."
+        )
+    deepest_length = max(len(entry[1]) for entry in matches)
+    return [entry for entry in matches if len(entry[1]) == deepest_length]
+
+
+def _read_mountinfo() -> list[tuple[str, str]]:
+    return [
+        (major_minor, mountpoint)
+        for major_minor, mountpoint, _filesystem_type, _source in _read_mountinfo_records()
+    ]
 
 
 def _disk_mount_targets(device: str) -> set[str]:

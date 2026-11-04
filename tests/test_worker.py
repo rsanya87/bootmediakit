@@ -180,11 +180,11 @@ class StabilityRegressionTests(unittest.TestCase):
         worker.compare_device_identity(identity, dict(identity, model="Generic USB"))
 
     def test_btrfs_source_subvolume_suffix_resolves_to_the_real_block_device(self):
-        result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "/dev/nvme0n1p2[/@] btrfs\n", ""
-        )
         block_stat = type("BlockStat", (), {"st_mode": stat.S_IFBLK})()
-        with patch("worker.command", return_value=result), patch(
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("259:2", "/mnt/data", "btrfs", "/dev/nvme0n1p2[/@]")],
+        ), patch(
             "worker.os.stat", return_value=block_stat
         ), patch(
             "worker._block_ancestor_majmins", return_value={"259:2", "259:0"}
@@ -195,35 +195,77 @@ class StabilityRegressionTests(unittest.TestCase):
             )
         resolve.assert_called_once_with("/dev/nvme0n1p2")
 
-    def test_source_backing_resolution_fails_closed_when_findmnt_has_no_source(self):
-        result = subprocess.CompletedProcess(["findmnt"], 1, "", "not found")
-        with patch("worker.command", return_value=result):
-            with self.assertRaisesRegex(RuntimeError, "fájlrendszerét"):
+    def test_source_backing_resolution_fails_closed_when_mountinfo_has_no_source(self):
+        with patch(
+            "worker._source_mounts_for_path",
+            side_effect=RuntimeError("Nem található csatolási bejegyzés a forrásfájlhoz."),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "csatolási bejegyzés"):
                 worker.source_backing_majmins(Path("/mnt/data/image.iso"))
 
     def test_source_backing_resolution_fails_closed_for_overlay_filesystem(self):
-        result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "overlay overlay\n", ""
-        )
-        with patch("worker.command", return_value=result):
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("0:42", "/mnt/data", "overlay", "overlay")],
+        ):
             with self.assertRaisesRegex(RuntimeError, "háttértára nem igazolható"):
                 worker.source_backing_majmins(Path("/mnt/data/image.iso"))
 
     def test_known_tmpfs_source_is_allowed_without_block_device_backing(self):
-        result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "tmpfs tmpfs\n", ""
-        )
-        with patch("worker.command", return_value=result):
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("0:42", "/run", "tmpfs", "tmpfs")],
+        ):
             self.assertEqual(
-                worker.source_backing_majmins(Path("/mnt/data/image.iso")),
+                worker.source_backing_majmins(Path("/run/image.iso")),
                 set(),
             )
 
+    def test_autofs_and_cifs_overmount_stack_is_allowed(self):
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[
+                ("0:46", "/mnt/smb/Kozos", "autofs", "systemd-1"),
+                ("0:107", "/mnt/smb/Kozos", "cifs", "//10.0.0.5/Kozos"),
+            ],
+        ):
+            self.assertEqual(
+                worker.source_backing_majmins(Path("/mnt/smb/Kozos/image.iso")),
+                set(),
+            )
+
+    def test_autofs_without_visible_backing_filesystem_fails_closed(self):
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("0:46", "/mnt/smb/Kozos", "autofs", "systemd-1")],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "autofs"):
+                worker.source_backing_majmins(Path("/mnt/smb/Kozos/image.iso"))
+
+    def test_source_mount_lookup_keeps_all_layers_at_the_deepest_mountpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"image")
+            records = [
+                ("8:1", "/", "ext4", "/dev/sda1"),
+                ("0:46", temp, "autofs", "systemd-1"),
+                ("0:107", temp, "cifs", "//10.0.0.5/Kozos"),
+                ("0:43", "/proc", "proc", "proc"),
+            ]
+            with patch("worker._read_mountinfo_records", return_value=records):
+                self.assertEqual(
+                    worker._source_mounts_for_path(image),
+                    [
+                        ("0:46", temp, "autofs", "systemd-1"),
+                        ("0:107", temp, "cifs", "//10.0.0.5/Kozos"),
+                    ],
+                )
+
     def test_source_backing_resolution_fails_closed_when_block_device_is_missing(self):
-        result = subprocess.CompletedProcess(
-            ["findmnt"], 0, "/dev/does-not-exist[/@] btrfs\n", ""
-        )
-        with patch("worker.command", return_value=result), patch(
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("259:2", "/mnt/data", "btrfs", "/dev/does-not-exist[/@]")],
+        ), patch(
             "worker.os.stat", side_effect=FileNotFoundError("missing")
         ):
             with self.assertRaisesRegex(RuntimeError, "nem érhető el"):
