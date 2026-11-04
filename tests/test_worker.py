@@ -5,6 +5,7 @@ import os
 import struct
 import subprocess
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -149,6 +150,168 @@ class P0SecurityTests(unittest.TestCase):
         with patch.object(Path, "resolve", return_value=Path("/home/test/checkout/worker.py")):
             with self.assertRaisesRegex(RuntimeError, "Forráskönyvtárból"):
                 worker.validate_privileged_install()
+
+
+class StabilityRegressionTests(unittest.TestCase):
+    def test_model_identity_comparison_collapses_whitespace(self):
+        identity = {
+            "size": 1024,
+            "maj_min": "8:16",
+            "model": "  USB   Flash  ",
+            "serial": "ABC123",
+            "wwn": "",
+            "tran": "usb",
+            "diskseq": "41",
+            "by_id": "",
+        }
+        worker.compare_device_identity(identity, dict(identity, model="USB Flash"))
+
+    def test_empty_model_is_not_fabricated_into_a_mismatch(self):
+        identity = {
+            "size": 1024,
+            "maj_min": "8:16",
+            "model": "   ",
+            "serial": "ABC123",
+            "wwn": "",
+            "tran": "usb",
+            "diskseq": "41",
+            "by_id": "",
+        }
+        worker.compare_device_identity(identity, dict(identity, model="Generic USB"))
+
+    def test_btrfs_source_subvolume_suffix_resolves_to_the_real_block_device(self):
+        result = subprocess.CompletedProcess(
+            ["findmnt"], 0, "/dev/nvme0n1p2[/@]\n", ""
+        )
+        block_stat = type("BlockStat", (), {"st_mode": stat.S_IFBLK})()
+        with patch("worker.command", return_value=result), patch(
+            "worker.os.stat", return_value=block_stat
+        ), patch(
+            "worker._block_ancestor_majmins", return_value={"259:2", "259:0"}
+        ) as resolve:
+            self.assertEqual(
+                worker.source_backing_majmins(Path("/mnt/data/image.iso")),
+                {"259:2", "259:0"},
+            )
+        resolve.assert_called_once_with("/dev/nvme0n1p2")
+
+    def test_source_backing_resolution_fails_closed_when_findmnt_has_no_source(self):
+        result = subprocess.CompletedProcess(["findmnt"], 1, "", "not found")
+        with patch("worker.command", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "fájlrendszerét"):
+                worker.source_backing_majmins(Path("/mnt/data/image.iso"))
+
+    def test_source_backing_resolution_fails_closed_when_block_device_is_missing(self):
+        result = subprocess.CompletedProcess(
+            ["findmnt"], 0, "/dev/does-not-exist[/@]\n", ""
+        )
+        with patch("worker.command", return_value=result), patch(
+            "worker.os.stat", side_effect=FileNotFoundError("missing")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "nem érhető el"):
+                worker.source_backing_majmins(Path("/mnt/data/image.iso"))
+
+    def test_mountinfo_detects_a_filesystem_mounted_on_the_whole_disk(self):
+        disk = {"type": "disk", "path": "/dev/sdb", "maj:min": "8:16"}
+        with patch(
+            "worker.inspect_target_layout", return_value=(disk, [disk])
+        ), patch(
+            "worker._read_mountinfo", return_value=[("8:16", "/media/superfloppy")]
+        ), patch(
+            "worker.command",
+            return_value=subprocess.CompletedProcess(["findmnt"], 1, "", ""),
+        ):
+            self.assertEqual(
+                worker._disk_mount_targets("/dev/sdb"),
+                {"/media/superfloppy"},
+            )
+
+    def test_mountinfo_mountpoint_escape_sequences_are_decoded(self):
+        self.assertEqual(
+            worker._decode_mountinfo_field("/media/USB\\040Drive"),
+            "/media/USB Drive",
+        )
+
+    def test_unmount_disk_includes_mounts_on_the_whole_disk(self):
+        with patch(
+            "worker._disk_mount_targets",
+            side_effect=[{"/media/superfloppy"}, set()],
+        ), patch("worker.command") as run, patch("worker.emit"):
+            worker.unmount_disk("/dev/sdb")
+        self.assertIn(
+            (["umount", "--", "/media/superfloppy"],),
+            [call.args for call in run.call_args_list],
+        )
+
+    def test_assert_disk_unmounted_rejects_a_remaining_mount(self):
+        with patch(
+            "worker._disk_mount_targets", return_value={"/media/superfloppy"}
+        ):
+            with self.assertRaisesRegex(RuntimeError, "még csatolva"):
+                worker.assert_disk_unmounted("/dev/sdb")
+
+    def test_emit_reports_a_closed_stdout_pipe_without_raising(self):
+        old_broken = worker.OUTPUT_BROKEN
+        worker.OUTPUT_BROKEN = False
+        try:
+            with patch("builtins.print", side_effect=BrokenPipeError()):
+                self.assertFalse(worker.emit("test"))
+            self.assertTrue(worker.OUTPUT_BROKEN)
+        finally:
+            worker.OUTPUT_BROKEN = old_broken
+
+    def test_emit_handles_other_stdout_os_errors_without_raising(self):
+        old_broken = worker.OUTPUT_BROKEN
+        worker.OUTPUT_BROKEN = False
+        try:
+            with patch("builtins.print", side_effect=OSError("closed")):
+                self.assertFalse(worker.emit("test"))
+            self.assertTrue(worker.OUTPUT_BROKEN)
+        finally:
+            worker.OUTPUT_BROKEN = old_broken
+
+    def test_uefi_helper_flushes_partition_before_readback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "helper.img"
+            partition = root / "partition.img"
+            image.write_bytes(b"BMK helper image")
+            partition.write_bytes(b"\\0" * image.stat().st_size)
+            responses = [
+                subprocess.CompletedProcess(["blockdev"], 0, f"{image.stat().st_size}\\n", ""),
+                subprocess.CompletedProcess(["blockdev"], 0, "", ""),
+                subprocess.CompletedProcess(["fatlabel"], 0, "BMK_EFI\\n", ""),
+            ]
+            with patch.object(
+                worker, "UEFI_NTFS_IMAGE_SIZE", image.stat().st_size
+            ), patch("worker.command", side_effect=responses) as run, patch("worker.emit"):
+                worker.write_uefi_ntfs_image(image, str(partition))
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertIn(["blockdev", "--flushbufs", str(partition)], commands)
+            self.assertLess(
+                commands.index(["blockdev", "--flushbufs", str(partition)]),
+                commands.index(["fatlabel", str(partition)]),
+            )
+            self.assertEqual(partition.read_bytes(), image.read_bytes())
+
+    def test_uefi_helper_cancellation_does_not_call_fsync(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "helper.img"
+            partition = root / "partition.img"
+            image.write_bytes(b"BMK")
+            partition.write_bytes(b"\\0" * 3)
+            with patch.object(worker, "UEFI_NTFS_IMAGE_SIZE", 3), patch(
+                "worker.command",
+                return_value=subprocess.CompletedProcess(["blockdev"], 0, "3\\n", ""),
+            ), patch(
+                "worker.check_cancelled",
+                side_effect=worker.OperationCancelled("cancel"),
+            ), patch("worker.os.fsync") as fsync, patch("worker.emit"):
+                with self.assertRaises(worker.OperationCancelled):
+                    worker.write_uefi_ntfs_image(image, str(partition))
+            fsync.assert_not_called()
+
 
 
 class IsoVolumeLabelTests(unittest.TestCase):
