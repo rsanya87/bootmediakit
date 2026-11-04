@@ -519,9 +519,9 @@ class RawWriteRegressionTests(unittest.TestCase):
             image = root / "linux.iso"
             device = root / "usb-device"
             payload = bytes(range(256)) * 128
-            trailing_data = b"\\xA5" * 4096
+            trailing_data = bytes([0xA5]) * 4096
             image.write_bytes(payload)
-            device.write_bytes(b"\\x5A" * len(payload) + trailing_data)
+            device.write_bytes(bytes([0x5A]) * len(payload) + trailing_data)
             commands = []
 
             def fake_command(args, **kwargs):
