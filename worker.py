@@ -13,6 +13,7 @@ import hashlib
 import json
 import struct
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -38,6 +39,7 @@ GPT_NO_DRIVE_LETTER_ATTR = "GUID:63"
 GPT_ALIGNMENT_SECTORS = 2048
 GPT_RESERVED_SECTORS = 34
 TARGET_MODIFIED = False
+OUTPUT_BROKEN = False
 CANCEL_EVENT = threading.Event()
 
 
@@ -46,6 +48,8 @@ class OperationCancelled(Exception):
 
 
 def check_cancelled() -> None:
+    if OUTPUT_BROKEN:
+        raise OperationCancelled("A grafikus felülettel megszakadt a kapcsolat.")
     if CANCEL_EVENT.is_set():
         raise OperationCancelled("A felhasználó megszakította a műveletet.")
 
@@ -72,7 +76,9 @@ def emit(
     error: str | None = None,
     worker_started: bool | None = None,
     cancelled: bool = False,
-) -> None:
+) -> bool:
+    """Send one structured event; return False when the GUI pipe is closed."""
+    global OUTPUT_BROKEN
     event: dict[str, object] = {"message": message, "target_modified": TARGET_MODIFIED}
     if percent is not None:
         event["percent"] = max(0, min(100, int(percent)))
@@ -84,7 +90,20 @@ def emit(
         event["worker_started"] = worker_started
     if cancelled:
         event["cancelled"] = True
-    print(json.dumps(event, ensure_ascii=False), flush=True)
+    try:
+        print(json.dumps(event, ensure_ascii=False), flush=True)
+    except (BrokenPipeError, OSError):
+        OUTPUT_BROKEN = True
+        return False
+    return True
+
+
+def _write_stderr_safely(message: str) -> None:
+    """Best-effort fallback logging when the GUI output pipe is unavailable."""
+    try:
+        print(message, file=sys.stderr, flush=True)
+    except OSError:
+        pass
 
 
 def command(
@@ -203,7 +222,7 @@ def device_identity(device: str) -> dict[str, object]:
     identity = {
         "path": path,
         "size": int(node.get("size") or 0),
-        "model": str(node.get("model") or "").strip(),
+        "model": str(node.get("model") or ""),
         "serial": str(node.get("serial") or "").strip(),
         "wwn": str(node.get("wwn") or "").strip(),
         "tran": str(node.get("tran") or "").strip().lower(),
@@ -220,14 +239,20 @@ def device_identity(device: str) -> dict[str, object]:
     return identity
 
 
+def _normalize_identity_value(value: object) -> str:
+    """Collapse whitespace without changing a model's meaningful characters."""
+    return " ".join(str(value or "").split())
+
+
 def compare_device_identity(expected: dict[str, object], current: dict[str, object]) -> None:
     """Reject path reuse, device swaps, and changes to the selected disk."""
     for key in ("size", "maj_min"):
         if expected.get(key) in (None, "") or str(expected.get(key)) != str(current.get(key)):
             raise RuntimeError(f"A célmeghajtó azonosítója megváltozott ({key}); válaszd ki újra a meghajtót.")
     for key in ("model", "serial", "wwn", "tran", "diskseq", "by_id"):
-        old_value = str(expected.get(key) or "").strip()
-        if old_value and old_value != str(current.get(key) or "").strip():
+        normalize = _normalize_identity_value if key == "model" else lambda value: str(value or "").strip()
+        old_value = normalize(expected.get(key))
+        if old_value and old_value != normalize(current.get(key)):
             raise RuntimeError(f"A célmeghajtó fizikai azonossága megváltozott ({key}); az írást leállítottam.")
     if not any(str(expected.get(key) or "").strip() for key in ("serial", "wwn", "diskseq", "by_id")):
         raise RuntimeError("A kiválasztáskor nem volt rögzítve stabil meghajtóazonosító.")
@@ -337,16 +362,79 @@ def validate_target(
 
 
 def source_backing_majmins(image: Path) -> set[str]:
-    result = command(
-        ["findmnt", "-nro", "MAJ:MIN", "--target", str(image)],
-        check=False,
-    )
-    maj_min = result.stdout.strip()
-    if not maj_min or not Path("/dev/block", maj_min).exists():
-        return set()
-    source = canonical(str(Path("/dev/block") / maj_min))
-    return _block_ancestor_majmins(source)
+    """Resolve every backing block device for the mount containing an image.
 
+    Mountinfo is used instead of findmnt --target because --target can return
+    only one entry and therefore hide an autofs/CIFS over-mount stack. All
+    entries at the deepest matching mountpoint are examined so hidden
+    block-backed layers cannot be ignored.
+    """
+    entries = _source_mounts_for_path(image)
+    non_block_backed_types = {
+        "tmpfs", "ramfs", "proc", "sysfs", "cgroup", "cgroup2",
+        "devtmpfs", "devpts", "mqueue", "securityfs", "tracefs",
+        "debugfs", "pstore", "configfs", "rpc_pipefs",
+        "nfs", "nfs4", "cifs", "smb3", "ceph", "9p",
+    }
+    backing: set[str] = set()
+    has_autofs = False
+    has_real_filesystem = False
+
+    for _major_minor, _mountpoint, filesystem_type, source_value in entries:
+        source = source_value.split("[", 1)[0].strip()
+        if filesystem_type == "autofs":
+            has_autofs = True
+            continue
+
+        has_real_filesystem = True
+        if source.startswith(("UUID=", "LABEL=", "PARTUUID=", "PARTLABEL=")):
+            resolved = command(["findfs", source], check=False, timeout=10)
+            source = resolved.stdout.strip().splitlines()[0] if resolved.stdout.strip() else ""
+            if resolved.returncode != 0 or not source:
+                raise RuntimeError(
+                    "A forrásfájlrendszer blokkeszköz-azonosítója nem oldható fel; "
+                    "biztonsági okból az írást leállítottam."
+                )
+
+        if source.startswith("/dev/"):
+            try:
+                source_stat = os.stat(source)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"A forrásfájlrendszer blokkeszköze nem érhető el ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                ) from exc
+            if not stat.S_ISBLK(source_stat.st_mode):
+                raise RuntimeError(
+                    f"A mountinfo által megadott forrás nem blokkeszköz ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                )
+            resolved_backing = _block_ancestor_majmins(source)
+            if not resolved_backing:
+                raise RuntimeError(
+                    f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({source}); "
+                    "az írást biztonsági okból leállítottam."
+                )
+            backing.update(resolved_backing)
+        elif filesystem_type not in non_block_backed_types:
+            raise RuntimeError(
+                "A forrás fájlrendszerének fizikai háttértára nem igazolható "
+                f"({filesystem_type}: {source_value}); biztonsági okból az írást leállítottam."
+            )
+
+    # An autofs record is only an automounter layer, not the mounted data
+    # filesystem. Require the corresponding active filesystem to be visible.
+    if has_autofs and not has_real_filesystem:
+        raise RuntimeError(
+            "Az autofs csatolás mögötti tényleges fájlrendszer nem azonosítható; "
+            "biztonsági okból az írást leállítottam."
+        )
+    if not has_real_filesystem:
+        raise RuntimeError(
+            "Nem sikerült azonosítani a forrásfájl tényleges fájlrendszerét; "
+            "biztonsági okból az írást leállítottam."
+        )
+    return backing
 
 def ensure_source_not_on_target(image: Path, device: str) -> None:
     """Reject an image whose containing filesystem is on the target disk."""
@@ -366,21 +454,139 @@ def ensure_source_not_on_target(image: Path, device: str) -> None:
         )
 
 
-def unmount_disk(device: str) -> None:
-    disk, nodes = inspect_target_layout(device)
-    partitions = [
-        str(item.get("path"))
-        for item in nodes
-        if item is not disk and item.get("type") == "part" and item.get("path")
+def _decode_mountinfo_field(value: str) -> str:
+    """Decode the octal escapes used by /proc/self/mountinfo."""
+    return re.sub(
+        r"\\([0-7]{3})",
+        lambda match: chr(int(match.group(1), 8)),
+        value,
+    )
+
+
+def _decode_findmnt_target(value: str) -> str:
+    """Decode util-linux findmnt's hexadecimal path escapes."""
+    return re.sub(
+        r"\\x([0-9a-fA-F]{2})",
+        lambda match: chr(int(match.group(1), 16)),
+        value,
+    )
+
+
+def _read_mountinfo_records() -> list[tuple[str, str, str, str]]:
+    """Read MAJ:MIN, mountpoint, filesystem type and source from mountinfo."""
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise RuntimeError(
+            "Nem ellenőrizhető a csatolási állapot (/proc/self/mountinfo); "
+            "az írást biztonsági okból leállítottam."
+        ) from exc
+
+    entries: list[tuple[str, str, str, str]] = []
+    for line in lines:
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+        except ValueError as exc:
+            raise RuntimeError(
+                "Hibás /proc/self/mountinfo sor; a fájlrendszer forrása nem ellenőrizhető."
+            ) from exc
+        if len(fields) < 6 or separator < 6 or len(fields) <= separator + 2:
+            raise RuntimeError(
+                "Hibás /proc/self/mountinfo sor; a fájlrendszer forrása nem ellenőrizhető."
+            )
+        entries.append(
+            (
+                fields[2],
+                _decode_mountinfo_field(fields[4]),
+                fields[separator + 1].lower(),
+                _decode_mountinfo_field(fields[separator + 2]),
+            )
+        )
+    return entries
+
+
+def _source_mounts_for_path(image: Path) -> list[tuple[str, str, str, str]]:
+    """Return all mount layers at the deepest mountpoint containing image."""
+    image_path = str(image.resolve(strict=True))
+    matches = [
+        entry
+        for entry in _read_mountinfo_records()
+        if entry[1] == "/"
+        or image_path == entry[1]
+        or image_path.startswith(entry[1].rstrip("/") + os.sep)
     ]
-    for partition in partitions:
-        mounts = command(
-            ["findmnt", "-rn", "-S", partition, "-o", "TARGET"], check=False
-        ).stdout.splitlines()
-        for mountpoint in sorted((m.strip() for m in mounts if m.strip()), key=len, reverse=True):
-            emit(f"Partíció leválasztása: {mountpoint}", 1)
-            command(["umount", "--", mountpoint])
+    if not matches:
+        raise RuntimeError(
+            "Nem található csatolási bejegyzés a forrásfájlhoz; "
+            "biztonsági okból az írást leállítottam."
+        )
+    deepest_length = max(len(entry[1]) for entry in matches)
+    return [entry for entry in matches if len(entry[1]) == deepest_length]
+
+
+def _read_mountinfo() -> list[tuple[str, str]]:
+    return [
+        (major_minor, mountpoint)
+        for major_minor, mountpoint, _filesystem_type, _source in _read_mountinfo_records()
+    ]
+
+
+def _disk_mount_targets(device: str) -> set[str]:
+    """Return all mountpoints backed by the disk or any of its child nodes."""
+    _disk, nodes = inspect_target_layout(device)
+    paths: set[str] = set()
+    majmins: set[str] = set()
+    for item in nodes:
+        path = str(item.get("path") or "")
+        if path:
+            paths.add(path)
+        maj_min = str(item.get("maj:min") or "")
+        if maj_min:
+            majmins.add(maj_min)
+    if not majmins:
+        raise RuntimeError(
+            "A célmeghajtó MAJ:MIN azonosítója hiányzik; a csatolási állapot nem ellenőrizhető."
+        )
+
+    targets = {
+        target
+        for major_minor, target in _read_mountinfo()
+        if major_minor in majmins
+    }
+    # findmnt source matching also catches aliases and source strings that do
+    # not map directly to a mountinfo MAJ:MIN entry.
+    for path in paths:
+        result = command(
+            ["findmnt", "-rn", "-S", path, "-o", "TARGET"],
+            check=False,
+            timeout=10,
+        )
+        targets.update(
+            _decode_findmnt_target(line.strip())
+            for line in result.stdout.splitlines()
+            if line.strip()
+        )
+    return targets
+
+
+def assert_disk_unmounted(device: str) -> None:
+    remaining = _disk_mount_targets(device)
+    if remaining:
+        mounts = ", ".join(sorted(remaining))
+        raise RuntimeError(
+            f"A célmeghajtó vagy valamelyik kötete még csatolva van ({mounts}); "
+            "a törlést biztonsági okból leállítottam."
+        )
+
+
+def unmount_disk(device: str) -> None:
+    mountpoints = _disk_mount_targets(device)
+    for mountpoint in sorted(mountpoints, key=lambda value: (value.count(os.sep), len(value)), reverse=True):
+        emit(f"Meghajtó leválasztása: {mountpoint}", 1)
+        command(["umount", "--", mountpoint], timeout=120)
     command(["udevadm", "settle"], check=False, timeout=15)
+    assert_disk_unmounted(device)
 
 
 
@@ -416,7 +622,9 @@ def git_blob_sha1(path: Path) -> str:
     return digest.hexdigest()
 
 
-def verify_uefi_ntfs_image(path: Path = UEFI_NTFS_IMAGE) -> None:
+def verify_uefi_ntfs_image(path: Path | None = None) -> None:
+    if path is None:
+        path = UEFI_NTFS_IMAGE
     if not path.is_file():
         raise RuntimeError(
             "Hiányzik az UEFI:NTFS indítópartíció képfájlja. "
@@ -545,8 +753,8 @@ def verify_gpt_layout(
     layout: dict[str, int],
     iso_label: str = "BOOTMEDIA",
 ) -> None:
-    iso_label = normalize_iso_volume_label(iso_label)
     """Read back the GPT and reject an ESP-typed UEFI:NTFS helper partition."""
+    iso_label = normalize_iso_volume_label(iso_label)
     command(["sfdisk", "--verify", device])
     result = command(["sfdisk", "--json", device])
     try:
@@ -632,11 +840,11 @@ def scan_windows_iso(iso_root: Path) -> tuple[Path, Path, int]:
         current_path = Path(current)
         for name in list(dirs):
             if (current_path / name).is_symlink():
-                raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+                raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz; ez a fájltípus biztonsági okból nem támogatott.")
         for name in files:
             file_path = current_path / name
             if file_path.is_symlink():
-                raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+                raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz; ez a fájltípus biztonsági okból nem támogatott.")
             if not file_path.is_file():
                 raise RuntimeError(f"Nem szabályos fájl található az ISO-ban: {file_path.relative_to(iso_root)}")
             total_bytes += file_path.stat().st_size
@@ -899,13 +1107,10 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
                     view = view[written:]
                 remaining -= len(data)
         os.fsync(fd)
-    except OperationCancelled:
-        # Flush the last completed write unit before reporting cancellation.
-        os.fsync(fd)
-        raise
     finally:
         os.close(fd)
 
+    command(["blockdev", "--flushbufs", partition])
     digest = hashlib.sha256()
     fd = os.open(partition, os.O_RDONLY)
     try:
@@ -1070,7 +1275,10 @@ def write_windows_uefi(
         validate_target(device, expected_identity)
         ensure_source_not_on_target(image, device)
         check_cancelled()
+        assert_disk_unmounted(device)
         TARGET_MODIFIED = True
+        # util-linux needs --force to erase a block-device partition-table signature.
+        # assert_disk_unmounted() above ensures the target is not mounted.
         command(["wipefs", "--all", "--force", device])
         script = make_sfdisk_script(layout, iso_label)
         command(["sfdisk", "--wipe", "never", device], input_text=script)
@@ -1214,8 +1422,11 @@ def write_raw(
         ensure_source_not_on_target(image, device)
         validate_target(device, expected_identity)
         check_cancelled()
+        assert_disk_unmounted(device)
         emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
         TARGET_MODIFIED = True
+        # util-linux needs --force to erase a block-device partition-table signature.
+        # assert_disk_unmounted() above ensures the target is not mounted.
         command(["wipefs", "--all", "--force", device])
         command(["sync"])
 
@@ -1240,10 +1451,6 @@ def write_raw(
                 percent = 3 + int((offset / source_size) * (57 if verify else 96))
                 emit(f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt", percent)
             os.fsync(fd)
-        except OperationCancelled:
-            # Make already-written chunks durable before cleanup returns to GUI.
-            os.fsync(fd)
-            raise
         finally:
             os.close(fd)
 
@@ -1352,23 +1559,27 @@ def validate_privileged_install() -> None:
 
 
 def main(argv: list[str]) -> int:
-    global TARGET_MODIFIED
+    global TARGET_MODIFIED, OUTPUT_BROKEN
     TARGET_MODIFIED = False
+    OUTPUT_BROKEN = False
     CANCEL_EVENT.clear()
     if len(argv) != 6:
-        emit(
+        if not emit(
             "Hibás paraméterezés.",
             error="Használat: bootmediakit-worker raw|windows ISO DEVICE VERIFY IDENTITY_JSON",
-        )
+        ):
+            _write_stderr_safely("HIBA: Hibás BootMediaKit worker paraméterezés.")
         return 2
     mode, image_arg, device, verify_arg, identity_arg = argv[1:6]
     if os.geteuid() != 0:
-        emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges.")
+        if not emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges."):
+            _write_stderr_safely("HIBA: A BootMediaKit worker nem kapott rendszergazdai jogosultságot.")
         return 1
     try:
         validate_privileged_install()
     except Exception as exc:
-        emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc))
+        if not emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc)):
+            _write_stderr_safely(f"HIBA: A privilegizált worker biztonsági ellenőrzése sikertelen: {exc}")
         return 1
 
     try:
@@ -1402,14 +1613,16 @@ def main(argv: list[str]) -> int:
             )
         else:
             detail = "A megszakítás a célmeghajtó módosítása előtt történt; a cél tartalmához nem nyúltam."
-        emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True)
+        if not emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True):
+            _write_stderr_safely(f"Megszakítva: {exc}. {detail}")
         return 130
     except Exception as exc:
         if TARGET_MODIFIED:
             state_log = "A célmeghajtó állapota részleges lehet; ellenőrizd újracsatlakoztatás után."
         else:
             state_log = "A célmeghajtó tartalmát nem módosítottam; az előellenőrzés állította le a műveletet."
-        emit("A művelet megszakadt.", error=str(exc), log=state_log)
+        if not emit("A művelet megszakadt.", error=str(exc), log=state_log):
+            _write_stderr_safely(f"HIBA: {exc}. {state_log}")
         return 1
 
 

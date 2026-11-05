@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.1.3`  
+**Verzió:** `0.2.1` (stabil kiadás, 2026-11-05)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.1.3-at valódi pendrive-okon teszteltük: a Linux DD/RAW mód Legacy BIOS és UEFI indítással is működött, a Windows 10 IoT Enterprise LTSC 2021 x64 telepítő pedig UEFI módban sikeresen végigtelepült. A megszakítási funkciót is kipróbáltuk. A Secure Boot külön hardveres ellenőrzése és a további disztribúciók támogatása még nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.2.1 stabil kiadás automatizált GitHub Actions ellenőrzései és fizikai USB-tesztjei sikeresek. A Linux Mint 22.3 Cinnamon DD/RAW pendrive a tesztelt gépen UEFI és Legacy BIOS/MBR módban is elindult. A Windows 10 és Windows 11 IoT Enterprise LTSC x64 telepítése sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot kikapcsolt és bekapcsolt állapotában is eljutott a Windows Telepítő partícióválasztó képernyőjéig; a telepítés ezen túl nem lett végigtesztelve. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 
@@ -54,13 +54,15 @@ A Windows ISO fájljai eredeti formában kerülnek az NTFS partícióra. Így a 
 
 A Rufus által közzétett UEFI:NTFS segédkép tartalmaz Secure Boot aláírású x64 UEFI:NTFS összetevőket. Ez **nem jelent minden gépen garantált Secure Boot kompatibilitást**: a firmware tanúsítványtárolója, a Microsoft harmadik féltől származó UEFI CA beállítása és a visszavonási lista eltérhet. Egyes gépeken engedélyezni kell a harmadik féltől származó UEFI tanúsítványokat, más esetben a firmware visszautasíthat egy visszavont aláírást. A BootMediaKit nem kapcsolja ki a Secure Bootot és nem módosít firmware-beállításokat.
 
+A kiadás fizikai tesztje során a normál Windows 11 26H2 x64 telepítő Secure Boot kikapcsolt és bekapcsolt állapotában is eljutott a Windows Telepítő partícióválasztó képernyőjéig. A telepítés ezen túl nem folytatódott. Ez kizárólag a tesztelt firmware-en megfigyelt eredmény; más alaplapok és UEFI firmware-ek eltérően viselkedhetnek.
+
 ### Jelenlegi korlátozások
 
 - Windows telepítő: **UEFI x64**. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
 - Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
 - A jelenlegi elrendezés 512 bájtos logikai szektorú USB-meghajtót igényel.
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
-- A Windows 10 IoT Enterprise LTSC 2021 x64 UEFI telepítése a felhasználó által tesztelve sikeresen befejeződött. Más Windows ISO-k és további hardverkonfigurációk tesztelése a következő fejlesztési szakasz feladata.
+- A Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítése a tesztelt rendszeren sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot be- és kikapcsolt állapotában is eljutott a partícióválasztó képernyőig; a telepítés további része nem lett igazolva.
 - A fájl-ellenőrzés a másolt fájlok méretét és SHA-256 hashét ellenőrzi. Az ISO eredetiségét vagy kiadói aláírását nem vizsgálja.
 
 ## Telepítés Arch-alapú Linuxon

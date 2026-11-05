@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QElapsedTimer, QProcess, Qt, QTimer
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -43,9 +42,8 @@ from PySide6.QtWidgets import (
 from iso_utils import is_windows_install_iso
 from ui_helpers import calculate_window_profile, format_elapsed_time
 
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.2.1"
 APP_NAME = "BootMediaKit"
-WORKER = Path("/usr/lib/bootmediakit/worker.py")
 PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
 APP_ICON = Path(__file__).with_name("bootmediakit.svg")
 
@@ -67,7 +65,7 @@ def run_lsblk() -> list[dict[str, Any]]:
         "PATH,NAME,TYPE,SIZE,MODEL,SERIAL,WWN,TRAN,RM,RO,MAJ:MIN,"
         "PKNAME,FSTYPE,LABEL,PARTTYPE,PARTLABEL,MOUNTPOINTS",
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=5)
     return json.loads(result.stdout).get("blockdevices", [])
 
 
@@ -105,7 +103,7 @@ def disk_identity(disk: dict[str, Any]) -> dict[str, Any]:
     return {
         "path": path,
         "size": int(disk.get("size") or 0),
-        "model": str(disk.get("model") or "").strip(),
+        "model": str(disk.get("model") or ""),
         "serial": str(disk.get("serial") or "").strip(),
         "wwn": str(disk.get("wwn") or "").strip(),
         "tran": str(disk.get("tran") or "").strip().lower(),
@@ -186,6 +184,20 @@ class MainWindow(QMainWindow):
         self.elapsed_timer = QTimer(self)
         self.elapsed_timer.setInterval(1000)
         self.elapsed_timer.timeout.connect(self.update_elapsed_display)
+
+        # Device discovery runs asynchronously so a slow USB controller cannot
+        # block painting, input handling, or cancellation controls.
+        self.lsblk_process = QProcess(self)
+        self.lsblk_process.finished.connect(self._lsblk_finished)
+        self.lsblk_process.errorOccurred.connect(self._lsblk_process_error)
+        self._lsblk_request_active = False
+        self._lsblk_preserve_selection = False
+        self._lsblk_quiet = False
+        self._lsblk_current_selection: dict[str, Any] | None = None
+        self.lsblk_timeout_timer = QTimer(self)
+        self.lsblk_timeout_timer.setSingleShot(True)
+        self.lsblk_timeout_timer.setInterval(5000)
+        self.lsblk_timeout_timer.timeout.connect(self._lsblk_timed_out)
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
@@ -446,12 +458,11 @@ class MainWindow(QMainWindow):
         scroll_area.setWidget(root)
         self.setCentralWidget(scroll_area)
         self.apply_style()
-        self.refresh_devices()
-
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
         self.refresh_timer.timeout.connect(self.refresh_devices_silently)
         self.refresh_timer.start()
+        self.refresh_devices()
 
     def fit_window_to_screen(self) -> None:
         """Fit the outer window frame inside the active screen's work area."""
@@ -544,14 +555,98 @@ class MainWindow(QMainWindow):
             self.refresh_devices(preserve_selection=True, quiet=True)
 
     def refresh_devices(self, preserve_selection: bool = False, quiet: bool = False) -> None:
-        current = self.device_combo.currentData() if preserve_selection else None
-        try:
-            devices = run_lsblk()
-        except (subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as exc:
-            if not quiet:
-                QMessageBox.warning(self, "Meghajtók listázása", f"Nem sikerült lekérdezni az USB-meghajtókat.\n\n{exc}")
+        if self.process is not None or self._lsblk_request_active:
+            return
+        if self.lsblk_process.state() != QProcess.ProcessState.NotRunning:
             return
 
+        self._lsblk_request_active = True
+        self._lsblk_preserve_selection = preserve_selection
+        self._lsblk_quiet = quiet
+        self._lsblk_current_selection = (
+            self.device_combo.currentData() if preserve_selection else None
+        )
+        self.refresh_button.setEnabled(False)
+        self.lsblk_process.start(
+            "lsblk",
+            [
+                "--json", "--bytes", "--paths", "--tree",
+                "--output",
+                "PATH,NAME,TYPE,SIZE,MODEL,SERIAL,WWN,TRAN,RM,RO,MAJ:MIN,"
+                "PKNAME,FSTYPE,LABEL,PARTTYPE,PARTLABEL,MOUNTPOINTS",
+            ],
+        )
+        self.lsblk_timeout_timer.start()
+
+    def _finish_lsblk_error(self, message: str) -> None:
+        if not self._lsblk_request_active:
+            return
+        self._lsblk_request_active = False
+        self.lsblk_timeout_timer.stop()
+        if self.lsblk_process.state() != QProcess.ProcessState.NotRunning:
+            self.lsblk_process.kill()
+        if self.process is None:
+            self.refresh_button.setEnabled(True)
+        if self._lsblk_quiet:
+            self.append_log(message)
+        else:
+            QMessageBox.warning(self, "Meghajtók listázása", message)
+
+    def _lsblk_process_error(self, error: QProcess.ProcessError) -> None:
+        if error == QProcess.ProcessError.FailedToStart:
+            self._finish_lsblk_error("Az lsblk parancs nem indítható el.")
+        elif error == QProcess.ProcessError.Crashed:
+            self._finish_lsblk_error("Az lsblk parancs váratlanul leállt.")
+
+    def _lsblk_timed_out(self) -> None:
+        self._finish_lsblk_error(
+            "Az lsblk lekérdezés 5 másodperc után időtúllépéssel leállt. "
+            "Ellenőrizd a csatlakoztatott USB-eszközt vagy az USB-vezérlőt."
+        )
+
+    def _lsblk_finished(
+        self,
+        exit_code: int,
+        exit_status: QProcess.ExitStatus,
+    ) -> None:
+        if not self._lsblk_request_active:
+            return
+        self.lsblk_timeout_timer.stop()
+
+        stdout = bytes(self.lsblk_process.readAllStandardOutput()).decode(
+            "utf-8", errors="replace"
+        )
+        stderr = bytes(self.lsblk_process.readAllStandardError()).decode(
+            "utf-8", errors="replace"
+        ).strip()
+        if exit_status != QProcess.ExitStatus.NormalExit or exit_code != 0:
+            self._finish_lsblk_error(
+                stderr or f"Az lsblk sikertelenül állt le (kilépési kód: {exit_code})."
+            )
+            return
+        try:
+            devices = json.loads(stdout).get("blockdevices", [])
+            if not isinstance(devices, list):
+                raise ValueError("Az lsblk válasza nem tartalmazott eszközlistát.")
+        except (json.JSONDecodeError, AttributeError, ValueError) as exc:
+            self._finish_lsblk_error(f"Nem sikerült feldolgozni az lsblk válaszát: {exc}")
+            return
+
+        self._lsblk_request_active = False
+        if self.process is None:
+            self.refresh_button.setEnabled(True)
+        self._populate_devices(
+            devices,
+            self._lsblk_current_selection,
+            self._lsblk_quiet,
+        )
+
+    def _populate_devices(
+        self,
+        devices: list[dict[str, Any]],
+        current: dict[str, Any] | None,
+        quiet: bool,
+    ) -> None:
         self.device_combo.blockSignals(True)
         self.device_combo.clear()
         for disk in devices:
@@ -569,7 +664,10 @@ class MainWindow(QMainWindow):
             path = disk.get("path")
             if not path:
                 continue
-            model = (disk.get("model") or disk.get("name") or "USB-meghajtó").strip()
+            raw_model = str(disk.get("model") or "")
+            model_display = raw_model.strip() or str(disk.get("name") or "USB-meghajtó").strip()
+            if not model_display:
+                model_display = "USB-meghajtó"
             size = int(disk.get("size") or 0)
             identity = disk_identity(disk)
             partitions = flatten_partitions(disk)
@@ -577,14 +675,14 @@ class MainWindow(QMainWindow):
             unsafe_reason = unsafe_layout_reason(disk)
             tag = "USB" if transport == "usb" else "eltávolítható"
             serial = identity.get("serial") or identity.get("wwn") or identity.get("diskseq") or "nincs sorozatszám"
-            label = f"{model}   •   {human_size(size)}   •   {path}   [{tag}]"
+            label = f"{model_display}   •   {human_size(size)}   •   {path}   [{tag}]"
             if unsafe_reason:
                 label += "   [VÉDETT]"
             data = {
                 **identity,
                 "path": path,
                 "size": size,
-                "model": model,
+                "model_display": model_display,
                 "mounts": mounts,
                 "partitions": partitions,
                 "unsafe_reason": unsafe_reason,
@@ -617,7 +715,7 @@ class MainWindow(QMainWindow):
             self.partition_info_button.setToolTip("Nincs elérhető partícióinformáció.")
             return
 
-        model = self.current_device.get("model") or "Ismeretlen eszköz"
+        model = self.current_device.get("model_display") or self.current_device.get("model") or "Ismeretlen eszköz"
         serial = self.current_device.get("serial_display") or "ismeretlen"
         capacity = human_size(self.current_device["size"])
         summary = f"Kapacitás: {capacity} • Azonosító: {serial} • Eszköz: {model}"
@@ -1017,6 +1115,11 @@ class MainWindow(QMainWindow):
             self.close()
 
     def set_busy(self, busy: bool) -> None:
+        if busy and self._lsblk_request_active:
+            self.lsblk_timeout_timer.stop()
+            self._lsblk_request_active = False
+            if self.lsblk_process.state() != QProcess.ProcessState.NotRunning:
+                self.lsblk_process.kill()
         self.start_button.setEnabled(not busy)
         self.cancel_button.setEnabled(busy)
         self.refresh_button.setEnabled(not busy)
@@ -1025,10 +1128,30 @@ class MainWindow(QMainWindow):
         self.raw_button.setEnabled(not busy)
         self.windows_button.setEnabled(not busy)
         self.iso_edit.setEnabled(not busy)
+        self.refresh_button.setEnabled(not busy and not self._lsblk_request_active)
         if not busy:
             self.refresh_timer.start()
         else:
             self.refresh_timer.stop()
+
+
+def shutdown_window(window: MainWindow) -> None:
+    """Destroy the GUI object tree before PySide's interpreter-exit cleanup."""
+    window.refresh_timer.stop()
+    window.elapsed_timer.stop()
+    window.lsblk_timeout_timer.stop()
+
+    # Device discovery is non-destructive and may still be running if the
+    # window is closed immediately after startup. Reap it before deleting its
+    # owning MainWindow; the privileged writer is governed by closeEvent's
+    # cooperative-cancellation flow and is deliberately not force-killed here.
+    if window.lsblk_process.state() != QProcess.ProcessState.NotRunning:
+        window.lsblk_process.kill()
+        window.lsblk_process.waitForFinished(1000)
+
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QCoreApplication.processEvents()
 
 
 def main() -> int:
@@ -1043,7 +1166,14 @@ def main() -> int:
     window = MainWindow()
     window.show()
     QTimer.singleShot(0, window.fit_window_to_screen)
-    return app.exec()
+    exit_code = app.exec()
+
+    # Explicitly destroy all widgets and child QObjects while QApplication is
+    # still alive. This avoids leaving QObject wrappers for PySide's atexit
+    # cleanup to destroy after Python has started finalizing.
+    shutdown_window(window)
+    del window
+    return exit_code
 
 
 if __name__ == "__main__":
