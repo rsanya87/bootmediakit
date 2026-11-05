@@ -1,49 +1,48 @@
 # Roadmap
 
-A feature is complete only after automated checks and its relevant real-device tests are recorded.
+A feladat csak akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzá tartozó valós eszközös tesztek eredménye is rögzítve van.
 
-## 0.1.3 — Stable Arch/CachyOS release
+## 0.2.1 — Stabilizálás és kiadásra jelölt változat
 
-- [x] Linux ISOHybrid/DD writing verified in Legacy BIOS and UEFI modes.
-- [x] Windows 10 IoT Enterprise LTSC 2021 x64 UEFI installation completed successfully on physical hardware.
-- [x] Preserve the original Windows ISO volume ID on the large NTFS partition; keep `BMK_EFI` exclusive to the 1 MiB helper partition.
-- [x] GPT Microsoft Basic Data + NoDriveLetter GUID:63 metadata for the UEFI:NTFS helper partition.
-- [x] Verified pinned upstream UEFI:NTFS helper image; only the temporary copy is relabelled.
-- [x] Safety checks, dedicated Polkit action, root-owned worker wrapper, target identity validation and cooperative cancellation.
-- [x] Screen-aware compact GUI, custom icon, visible version, elapsed timer and partition information tooltip.
-- [x] Automated unit, packaging and CI checks.
-- [x] Close the original Windows Setup missing-media-driver issue (#2) after successful UEFI installation.
+- [x] Aszinkron USB-meghajtó-felderítés Qt-folyamattal, időkorláttal és párhuzamos frissítés elleni védelemmel.
+- [x] Forrás/cél fizikai meghajtó-ütközésvizsgálatának megerősítése Btrfs al-köteteknél és egymásra épülő autofs/CIFS csatolásoknál.
+- [x] Biztonságos leállás, ha a forrásfájlt tartalmazó fájlrendszer fizikai meghajtója nem állapítható meg egyértelműen.
+- [x] Worker-eseményküldés kezelése bezáródó GUI vagy megszakadt csővezeték esetén; a duplikált hibajelzés elkerülése.
+- [x] Qt objektumok és gyermekfolyamatok rendezett leállítása az alkalmazás bezárásakor.
+- [x] Qt SVG-megjelenítővel nem kompatibilis szűrőelem eltávolítása.
+- [x] RAW írás előtti aláírástörlés és a műveleti sorrendet ellenőrző regressziós teszt.
+- [x] Automatizált Python-, shell-, csomagolási és offscreen GUI-ellenőrzések.
+- [x] Első fizikai RC smoke teszt: Linux Mint 22.3 Cinnamon DD/RAW indítása sikeres a legutóbbi RAW-író frissítéssel.
+- [ ] Végső RC elfogadási teszt: Linux DD/RAW UEFI és Legacy BIOS módban, valamint Windows x64 UEFI telepítő az RC builddel. A Windows RC újratesztelése még függőben van.
 
-## 0.2.1-beta — Next development stage
+## 0.2.2+ — Következő fejlesztési és tesztelési célok
 
-The next development cycle will expand test coverage and prepare the project for wider use without changing the tested 0.1.3 writing workflow unnecessarily.
+- [ ] ISO kötetcímke-megőrzés tesztelése további Windows ISO-kon, szóközökkel és vegyes kis-/nagybetűkkel.
+- [ ] További Windows-verziók és UEFI firmware-ek tesztelése.
+- [ ] Secure Boot be- és kikapcsolt állapotának célzott vizsgálata több firmware-en.
+- [ ] Célmeghajtó kihúzásának/visszacsatlakoztatásának, valamint a forrás céllemezen található esetének fizikai tesztje.
+- [ ] Loop-device integrációs tesztek GPT, NTFS, FAT, hibakezelés és megszakítás utáni takarítás vizsgálatára.
+- [ ] Arch PKGBUILD és reprodukálható csomagellenőrzések.
+- [ ] Eszközkompatibilitási és hibadiagnosztikai információk bővítése az USB 2.0 írási sebesség romlása nélkül.
+- [ ] Debian/Ubuntu támogatás felmérése; a disztribúciófüggő csomagtelepítés és Polkit-beállítás különválasztása az író logikától.
+- [ ] Fedora támogatás felmérése a Debian/Ubuntu csomagolás megtervezése után.
 
-- [ ] Test ISO volume-label preservation with additional Windows ISO images, including labels with spaces and mixed case.
-- [ ] Test more Windows versions and hardware/UEFI firmware combinations.
-- [ ] Run dedicated Secure Boot enabled/disabled tests and document firmware-specific behavior.
-- [ ] Exercise target hot-unplug/replug and source-on-target protection on disposable hardware.
-- [ ] Add loop-device integration tests for GPT, NTFS, FAT and failure/cancellation cleanup.
-- [ ] Add an Arch PKGBUILD and reproducible package checksums.
-- [ ] Improve progress diagnostics and device compatibility reporting without slowing USB 2.0 writes.
-- [ ] Evaluate Debian/Ubuntu support; keep distribution-specific dependency installation and Polkit setup separate from the writer.
-- [ ] Evaluate Fedora support after Debian/Ubuntu packaging is designed.
+## Későbbi platform- és funkciótámogatás
 
-## Later distribution and feature support
+A projekt egyszerre egy disztribúciócsaládot céloz, és csak a jelenlegi Arch/CachyOS folyamat stabilizálása után bővíti a támogatott rendszereket.
 
-The project will target one distribution family at a time, after the Arch/CachyOS workflow remains stable.
+1. Arch Linux család (elsőként CachyOS) — jelenlegi célplatform.
+2. Debian és Ubuntu — tervezett támogatás.
+3. Fedora — tervezett támogatás.
 
-1. Arch Linux family (CachyOS first) — current stable target.
-2. Debian and Ubuntu — planned, after dependency mapping, installer/uninstaller adapters and tests.
-3. Fedora — planned, after RPM/DNF packaging and tests.
+A grafikus felület és a lemezírási logika maradjon disztribúciófüggetlen. A csomagtelepítés, függőségfelismerés, asztali integráció és Polkit-konfiguráció külön disztribúciós adapterekbe kerüljön.
 
-The GUI and writing logic should remain distribution-neutral. Package installation, dependency detection, desktop integration and Polkit setup should be separate distribution adapters.
+## Hosszabb távú ötletek
 
-## Longer-term ideas
-
-- Windows Legacy BIOS/CSM media.
-- Windows To Go and FreeDOS.
+- Windows Legacy BIOS/CSM telepítő.
+- Windows To Go és FreeDOS.
 - Linux persistence.
-- USB device health/capacity tests.
-- Image checksums and publisher-signature verification.
-- Optional ISO download/catalog support.
-- More flexible formatting options.
+- USB-meghajtó állapot- és kapacitástesztek.
+- Lemezkép-ellenőrzőösszegek és kiadói aláírás ellenőrzése.
+- Opcionális ISO-letöltés/katalógus.
+- Rugalmasabb formázási lehetőségek.

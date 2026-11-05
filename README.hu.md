@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.1.3`  
+**Verzió:** `0.2.1` (RC1 – kiadásra jelölt, még nem végleges változat)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.1.3-at valódi pendrive-okon teszteltük: a Linux DD/RAW mód Legacy BIOS és UEFI indítással is működött, a Windows 10 IoT Enterprise LTSC 2021 x64 telepítő pedig UEFI módban sikeresen végigtelepült. A megszakítási funkciót is kipróbáltuk. A Secure Boot külön hardveres ellenőrzése és a további disztribúciók támogatása még nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.2.1 RC1 automatizált tesztjeit a kiadásra jelölt ágon futtatjuk. A legutóbbi RC RAW/DD frissítés után a Linux Mint 22.3 Cinnamon ISO fizikai pendrive-ról sikeresen elindult. A Windows UEFI telepítő újbóli tesztje és a további hardveres ellenőrzések még hátravannak; ezek előtt nem tekintjük végleges kiadásnak. A Secure Boot és a további disztribúciók támogatása nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 

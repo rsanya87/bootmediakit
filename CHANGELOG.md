@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.1 — 2026-11-05 (Release Candidate 1)
+
+BootMediaKit 0.2.1 focuses on reliability, device-safety checks, GUI lifecycle stability and regression coverage. This is a release candidate, not the final public release.
+
+### Reliability and safety
+
+- Resolve source/target disk relationships through stacked mounts, autofs/CIFS mount layers and Btrfs subvolumes; reject ambiguous backing-device information instead of guessing.
+- Strengthen whole-disk unmount verification before destructive RAW writing.
+- Keep stale filesystem/partition signature cleanup ahead of the raw image write and add a regression test for its command ordering.
+- Handle broken GUI/worker event pipes safely and avoid duplicate error reporting.
+- Avoid unnecessary disk flushes during cancellation cleanup.
+- Flush block-device buffers before UEFI:NTFS helper read-back verification.
+
+### GUI and compatibility
+
+- Discover USB devices asynchronously through Qt's process interface, with a timeout and protection against overlapping refresh requests.
+- Shut down Qt widgets and child processes explicitly to avoid interpreter-finalization crashes.
+- Remove an SVG filter primitive unsupported by Qt's SVG renderer.
+
+### Validation status for RC1
+
+- The automated GitHub Actions suite passed on the final beta source before release metadata was applied. The RC branch runs the same suite and must pass independently.
+- Linux Mint 22.3 Cinnamon DD/RAW media was physically boot-tested successfully after the latest RAW-writer update.
+- Windows x64 UEFI media must be retested on the RC build before final release.
+- Secure Boot, additional Windows ISO families and additional Linux distributions remain outside the verified release scope.
+
 ## 0.1.3 — 2026-11-03
 
 BootMediaKit 0.1.3 is the first stable release of the Arch/CachyOS implementation.

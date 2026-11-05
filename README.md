@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.1.3`  
+**Version:** `0.2.1` (Release Candidate 1; not yet a final release)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> Version 0.1.3 has been tested on physical USB drives: Linux DD/RAW media booted in both Legacy BIOS and UEFI modes, and Windows 10 IoT Enterprise LTSC 2021 x64 completed installation in UEFI mode. The cooperative cancellation flow was also tested. Secure Boot still needs a dedicated hardware test, and support for additional distributions is future work; this is not a full Rufus feature replacement.
+> The 0.2.1 RC1 automated test suite is being run on the release-candidate branch. Linux Mint 22.3 Cinnamon DD/RAW media has been physically confirmed to boot in the latest RC smoke test. A fresh Windows UEFI media retest and broader hardware checks are still pending before final release. Secure Boot and additional distributions remain outside the verified scope; this is not a full Rufus feature replacement.
 
 ## Current capabilities
 

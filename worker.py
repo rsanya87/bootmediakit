@@ -840,11 +840,11 @@ def scan_windows_iso(iso_root: Path) -> tuple[Path, Path, int]:
         current_path = Path(current)
         for name in list(dirs):
             if (current_path / name).is_symlink():
-                raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+                raise RuntimeError("Az ISO szimbolikus könyvtárlinket tartalmaz; ez a fájltípus biztonsági okból nem támogatott.")
         for name in files:
             file_path = current_path / name
             if file_path.is_symlink():
-                raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz; ez az alpha verzió nem másolja át biztonságosan.")
+                raise RuntimeError("Az ISO szimbolikus fájllinket tartalmaz; ez a fájltípus biztonsági okból nem támogatott.")
             if not file_path.is_file():
                 raise RuntimeError(f"Nem szabályos fájl található az ISO-ban: {file_path.relative_to(iso_root)}")
             total_bytes += file_path.stat().st_size
