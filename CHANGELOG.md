@@ -21,7 +21,7 @@ BootMediaKit 0.2.1 focuses on reliability, device-safety checks, GUI lifecycle s
 
 ### Validation status for RC1
 
-- The automated GitHub Actions suite passed on the final beta source before release metadata was applied. The RC branch runs the same suite and must pass independently.
+- The GitHub Actions suite passed on the RC1 commit in the `release/0.2.1-rc1` branch: [run 41980555416](https://github.com/rsanya87/bootmediakit/actions/runs/41980555416).
 - Linux Mint 22.3 Cinnamon DD/RAW media was physically boot-tested successfully after the latest RAW-writer update.
 - Windows x64 UEFI media must be retested on the RC build before final release.
 - Secure Boot, additional Windows ISO families and additional Linux distributions remain outside the verified release scope.

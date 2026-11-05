@@ -4,7 +4,7 @@
 
 ### Automated checks
 
-The GitHub Actions workflow on the RC branch is the required automated release gate. It runs:
+The GitHub Actions workflow on the RC branch is the required automated release gate. RC1 run 41980555416 passed: https://github.com/rsanya87/bootmediakit/actions/runs/41980555416. It runs:
 
 - Python compilation for the GUI, worker, ISO helpers and UI helpers.
 - Shell syntax checks for the installer, uninstaller and privileged worker wrapper.

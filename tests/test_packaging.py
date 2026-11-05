@@ -75,6 +75,8 @@ class PrivilegedPackagingTests(unittest.TestCase):
     def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
         self.assertIn('APP_VERSION = "0.2.1"', app)
+        fetcher = (ROOT / "fetch_uefi_ntfs.py").read_text(encoding="utf-8")
+        self.assertIn('"User-Agent": "BootMediaKit/0.2.1"', fetcher)
         self.assertIn('meta_row.addWidget(version', app)
         self.assertIn('QLabel#version { color: #83bde2;', app)
         self.assertIn('QLabel#muted { color: #b7c1cb; }', app)

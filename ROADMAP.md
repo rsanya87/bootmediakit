@@ -27,6 +27,18 @@ A feladat csak akkor tekinthető késznek, ha az automatizált ellenőrzések é
 - [ ] Debian/Ubuntu támogatás felmérése; a disztribúciófüggő csomagtelepítés és Polkit-beállítás különválasztása az író logikától.
 - [ ] Fedora támogatás felmérése a Debian/Ubuntu csomagolás megtervezése után.
 
+## 0.1.3 — Korábbi stabil Arch/CachyOS kiadás
+
+- [x] Linux ISOHybrid/DD írás ellenőrzése Legacy BIOS és UEFI módban.
+- [x] Windows 10 IoT Enterprise LTSC 2021 x64 UEFI telepítés sikeres befejezése fizikai hardveren.
+- [x] Eredeti Windows ISO kötetcímkéjének megőrzése az NTFS partíción; a `BMK_EFI` kizárólag az 1 MiB-os segédpartíció címkéje.
+- [x] GPT Microsoft Basic Data + NoDriveLetter GUID:63 attribútum az UEFI:NTFS segédpartíción.
+- [x] Rögzített upstream UEFI:NTFS segédkép ellenőrzése; csak az ideiglenes másolat címkézése.
+- [x] Biztonsági ellenőrzések, saját Polkit akció, root tulajdonú worker-wrapper, célmeghajtó-azonosítás és együttműködő megszakítás.
+- [x] Kompakt, képernyőmérethez igazodó GUI, saját ikon, látható verziószám, elteltidő-kijelzés és partíció-információs buborék.
+- [x] Automatizált unit-, csomagolási és CI-ellenőrzések.
+- [x] Az eredeti Windows Setup hiányzó médiaillesztő-problémájának lezárása (#2) a sikeres UEFI telepítés után.
+
 ## Későbbi platform- és funkciótámogatás
 
 A projekt egyszerre egy disztribúciócsaládot céloz, és csak a jelenlegi Arch/CachyOS folyamat stabilizálása után bővíti a támogatott rendszereket.

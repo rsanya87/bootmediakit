@@ -6,7 +6,7 @@
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.2.1 RC1 automatizált tesztjeit a kiadásra jelölt ágon futtatjuk. A legutóbbi RC RAW/DD frissítés után a Linux Mint 22.3 Cinnamon ISO fizikai pendrive-ról sikeresen elindult. A Windows UEFI telepítő újbóli tesztje és a további hardveres ellenőrzések még hátravannak; ezek előtt nem tekintjük végleges kiadásnak. A Secure Boot és a további disztribúciók támogatása nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.2.1 RC1 automatizált tesztjei sikeresen lefutottak a kiadásra jelölt ágon. A legutóbbi RC RAW/DD frissítés után a Linux Mint 22.3 Cinnamon ISO fizikai pendrive-ról sikeresen elindult. A Windows UEFI telepítő újbóli tesztje és a további hardveres ellenőrzések még hátravannak; ezek előtt nem tekintjük végleges kiadásnak. A Secure Boot és a további disztribúciók támogatása nincs igazolva; a BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 

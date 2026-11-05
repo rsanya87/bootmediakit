@@ -6,7 +6,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> The 0.2.1 RC1 automated test suite is being run on the release-candidate branch. Linux Mint 22.3 Cinnamon DD/RAW media has been physically confirmed to boot in the latest RC smoke test. A fresh Windows UEFI media retest and broader hardware checks are still pending before final release. Secure Boot and additional distributions remain outside the verified scope; this is not a full Rufus feature replacement.
+> The 0.2.1 RC1 automated test suite passes on the release-candidate branch. Linux Mint 22.3 Cinnamon DD/RAW media has been physically confirmed to boot in the latest RC smoke test. A fresh Windows UEFI media retest and broader hardware checks are still pending before final release. Secure Boot and additional distributions remain outside the verified scope; this is not a full Rufus feature replacement.
 
 ## Current capabilities
 
