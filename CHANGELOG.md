@@ -1,14 +1,14 @@
 # Changelog
 
-## 0.2.1 — 2026-11-05 (Release Candidate 1)
+## 0.2.1 — 2026-11-05
 
-BootMediaKit 0.2.1 focuses on reliability, device-safety checks, GUI lifecycle stability and regression coverage. This is a release candidate, not the final public release.
+BootMediaKit 0.2.1 is the first stable release of the 0.2.x line. This release concentrates on disk-write safety, reliability under failure and cancellation, GUI lifecycle stability, and regression coverage. It retains the Arch Linux family as its initial supported platform.
 
-### Reliability and safety
+### Reliability and disk safety
 
 - Resolve source/target disk relationships through stacked mounts, autofs/CIFS mount layers and Btrfs subvolumes; reject ambiguous backing-device information instead of guessing.
 - Strengthen whole-disk unmount verification before destructive RAW writing.
-- Keep stale filesystem/partition signature cleanup ahead of the raw image write and add a regression test for its command ordering.
+- Keep stale filesystem/partition signature cleanup ahead of the raw image write and add regression coverage for the command ordering.
 - Handle broken GUI/worker event pipes safely and avoid duplicate error reporting.
 - Avoid unnecessary disk flushes during cancellation cleanup.
 - Flush block-device buffers before UEFI:NTFS helper read-back verification.
@@ -18,13 +18,15 @@ BootMediaKit 0.2.1 focuses on reliability, device-safety checks, GUI lifecycle s
 - Discover USB devices asynchronously through Qt's process interface, with a timeout and protection against overlapping refresh requests.
 - Shut down Qt widgets and child processes explicitly to avoid interpreter-finalization crashes.
 - Remove an SVG filter primitive unsupported by Qt's SVG renderer.
+- Preserve the existing screen-aware layout, visible version information, operation timer and compact device-information presentation.
 
-### Validation status for RC1
+### Validation
 
-- The GitHub Actions suite passed on the RC1 commit in the `release/0.2.1-rc1` branch: [run 41980555416](https://github.com/rsanya87/bootmediakit/actions/runs/41980555416).
-- Linux Mint 22.3 Cinnamon DD/RAW media was physically boot-tested successfully after the latest RAW-writer update.
-- Windows x64 UEFI media must be retested on the RC build before final release.
-- Secure Boot, additional Windows ISO families and additional Linux distributions remain outside the verified release scope.
+- GitHub Actions automated checks passed on the final 0.2.1 source branch: [workflow run 41980736701](https://github.com/rsanya87/bootmediakit/actions/runs/41980736701).
+- Linux Mint 22.3 Cinnamon DD/RAW media was physically confirmed to boot in both UEFI and Legacy BIOS/MBR modes.
+- Windows 10 and Windows 11 IoT Enterprise LTSC x64 installation media were physically tested; installation completed successfully on the tested system(s).
+- The latest standard Windows 11 26H2 x64 ISO reached the Windows Setup disk-selection/partitioning screen with Secure Boot both disabled and enabled. Installation beyond that screen was not completed, so this is not recorded as a full installation test.
+- Secure Boot behavior was therefore observed on the tested firmware, but broad compatibility across different firmware implementations is not claimed.
 
 ## 0.1.3 — 2026-11-03
 

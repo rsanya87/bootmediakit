@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.2.1` (Release Candidate 1; not yet a final release)  
+**Version:** `0.2.1` (stable release, 2026-11-05)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> The 0.2.1 RC1 automated test suite passes on the release-candidate branch. Linux Mint 22.3 Cinnamon DD/RAW media has been physically confirmed to boot in the latest RC smoke test. A fresh Windows UEFI media retest and broader hardware checks are still pending before final release. Secure Boot and additional distributions remain outside the verified scope; this is not a full Rufus feature replacement.
+> The 0.2.1 stable release has passed its automated GitHub Actions checks and physical USB validation. Linux Mint 22.3 Cinnamon DD/RAW media boots in UEFI and Legacy BIOS/MBR modes on the tested hardware. Windows 10 and Windows 11 IoT Enterprise LTSC x64 installation tests completed successfully. The standard Windows 11 26H2 x64 ISO reached the Setup disk-selection screen with Secure Boot both enabled and disabled; installation beyond that screen was not verified. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
 
 ## Current capabilities
 
@@ -51,13 +51,15 @@ The Windows files are copied without converting the install image. This avoids t
 
 The upstream UEFI:NTFS helper image contains Secure Boot-signed x64 UEFI:NTFS components. This does **not** guarantee that every machine will boot it with Secure Boot enabled: firmware trust databases, Microsoft third-party UEFI CA settings, and revocation lists vary. A firmware may require third-party UEFI certificates to be enabled, or may reject a revoked signature. BootMediaKit does not disable Secure Boot or alter firmware settings.
 
+On the hardware used for release validation, the standard Windows 11 26H2 x64 installer reached the Windows Setup disk-selection screen with Secure Boot both enabled and disabled. The installation was not continued beyond that point. This confirms the observed boot path on that test firmware only; other systems may differ.
+
 ### Current scope and limitations
 
 - Windows target: **UEFI x64 only**. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
 - Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
 - The current layout requires a 512-byte logical-sector USB device.
 - The current installer targets Arch-based distributions only. Debian/Ubuntu and Fedora support are future work.
-- The user has confirmed that Windows 10 IoT Enterprise LTSC 2021 x64 completed UEFI installation on the previously reported PC. Additional Windows ISO families and hardware combinations remain future validation work.
+- Physical UEFI installation tests for Windows 10 and Windows 11 IoT Enterprise LTSC x64 completed successfully on the tested system(s). The standard Windows 11 26H2 x64 ISO was also tested with Secure Boot enabled and disabled and reached the Setup disk-selection screen; installation beyond that point was not verified.
 - USB file verification checks file sizes and SHA-256 hashes after copying. It does not validate the Windows ISO publisher signature or the authenticity of the ISO itself.
 
 ## Install on Arch-based systems

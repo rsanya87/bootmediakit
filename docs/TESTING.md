@@ -1,10 +1,10 @@
 # Testing
 
-## BootMediaKit 0.2.1 — Release Candidate 1
+## BootMediaKit 0.2.1 — Stable release (2026-11-05)
 
 ### Automated checks
 
-The GitHub Actions workflow on the RC branch is the required automated release gate. RC1 run 41980555416 passed: https://github.com/rsanya87/bootmediakit/actions/runs/41980555416. It runs:
+The GitHub Actions suite passed on the final release-candidate source commit: [run 41980736701](https://github.com/rsanya87/bootmediakit/actions/runs/41980736701). The workflow covers:
 
 - Python compilation for the GUI, worker, ISO helpers and UI helpers.
 - Shell syntax checks for the installer, uninstaller and privileged worker wrapper.
@@ -21,21 +21,20 @@ bash -n install.sh uninstall.sh bootmediakit-worker
 python3 -m unittest discover -s tests -v
 ```
 
-### Physical validation status
+### Physical validation confirmed for 0.2.1
 
-- **Linux DD/RAW:** Linux Mint 22.3 Cinnamon ISO was successfully booted from physical USB media after the latest RC RAW-writer update. This is an initial smoke test, not yet the complete release matrix.
-- **Windows UEFI:** Windows x64 UEFI media must be recreated and retested using the 0.2.1 RC build before final release. The earlier 0.1.3 Windows 10 IoT Enterprise LTSC 2021 test is historical validation only.
-- **Legacy BIOS:** confirm Linux DD/RAW boot again on the RC build with an ISO that supports Legacy BIOS.
-- **Read-back:** run at least one RAW write with full read-back verification enabled.
-- **GUI lifecycle:** confirm normal launch, device refresh and clean application exit.
+- **Linux DD/RAW:** Linux Mint 22.3 Cinnamon media booted successfully from physical USB in UEFI mode and in Legacy BIOS/MBR mode.
+- **Windows IoT LTSC:** Windows 10 and Windows 11 IoT Enterprise LTSC x64 installation media completed UEFI installation successfully on the tested system(s).
+- **Windows 11 26H2 standard ISO:** Windows Setup reached the disk-selection/partitioning screen with Secure Boot disabled and also with Secure Boot enabled. Installation beyond the partition-selection screen was not completed and is not claimed as a passed full-install test.
+- **Secure Boot scope:** the successful 26H2 Setup launch confirms the observed boot path on the test firmware only. It does not establish compatibility with every UEFI implementation, certificate database or revocation state.
 
-### RC acceptance checklist
+### Release acceptance record
 
-- Linux Mint 22.3 Cinnamon DD/RAW boot (UEFI; Legacy BIOS where supported by the test machine).
-- RAW full read-back verification.
-- Windows 10 IoT Enterprise LTSC 2021 x64 UEFI media creation and setup continuation through the first reboot.
-- Verify the Windows USB GPT layout, preserved source ISO volume label, and `BMK_EFI` helper partition metadata.
-- Confirm that the GUI starts and exits cleanly on the target CachyOS environment.
+- Linux DD/RAW boot in UEFI and Legacy BIOS/MBR modes: passed.
+- Windows 10 and Windows 11 IoT Enterprise LTSC UEFI installations: passed.
+- Windows 11 26H2 standard ISO, Secure Boot off and on, through Setup disk selection: passed to that stage.
+- Windows 11 26H2 installation beyond disk selection: not tested.
+- Additional firmware, non-Arch distributions, physical hot-unplug/replug races and source-on-target rejection remain outside this release's verified test matrix.
 
 Do not treat mocked unit tests as proof of physical hardware behavior. Destructive tests must use disposable media only. Never use a drive containing the source ISO or user data as a test target.
 

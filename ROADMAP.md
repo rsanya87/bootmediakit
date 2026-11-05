@@ -1,8 +1,10 @@
 # Roadmap
 
-A feladat csak akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzá tartozó valós eszközös tesztek eredménye is rögzítve van.
+A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
-## 0.2.1 — Stabilizálás és kiadásra jelölt változat
+## 0.2.1 — Stabil kiadás
+
+### Elkészült fejlesztések
 
 - [x] Aszinkron USB-meghajtó-felderítés Qt-folyamattal, időkorláttal és párhuzamos frissítés elleni védelemmel.
 - [x] Forrás/cél fizikai meghajtó-ütközésvizsgálatának megerősítése Btrfs al-köteteknél és egymásra épülő autofs/CIFS csatolásoknál.
@@ -10,10 +12,24 @@ A feladat csak akkor tekinthető késznek, ha az automatizált ellenőrzések é
 - [x] Worker-eseményküldés kezelése bezáródó GUI vagy megszakadt csővezeték esetén; a duplikált hibajelzés elkerülése.
 - [x] Qt objektumok és gyermekfolyamatok rendezett leállítása az alkalmazás bezárásakor.
 - [x] Qt SVG-megjelenítővel nem kompatibilis szűrőelem eltávolítása.
-- [x] RAW írás előtti aláírástörlés és a műveleti sorrendet ellenőrző regressziós teszt.
+- [x] RAW írás előtti aláírástörlés, a teljes lemez leválasztásának ellenőrzése és a műveleti sorrendet ellenőrző regressziós tesztek.
 - [x] Automatizált Python-, shell-, csomagolási és offscreen GUI-ellenőrzések.
-- [x] Első fizikai RC smoke teszt: Linux Mint 22.3 Cinnamon DD/RAW indítása sikeres a legutóbbi RAW-író frissítéssel.
-- [ ] Végső RC elfogadási teszt: Linux DD/RAW UEFI és Legacy BIOS módban, valamint Windows x64 UEFI telepítő az RC builddel. A Windows RC újratesztelése még függőben van.
+
+### Fizikai validáció
+
+- [x] Linux Mint 22.3 Cinnamon DD/RAW pendrive sikeres indítása UEFI módban.
+- [x] Linux DD/RAW pendrive sikeres indítása Legacy BIOS/MBR módban.
+- [x] Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítés sikeres befejezése a tesztelt rendszeren.
+- [x] A normál Windows 11 26H2 x64 telepítő eljutott a Windows Setup partícióválasztó képernyőjéig Secure Boot kikapcsolt állapotában.
+- [x] Ugyanez a Windows 11 26H2 x64 teszt Secure Boot bekapcsolt állapotában is eljutott a partícióválasztó képernyőig.
+- [ ] A Windows 11 26H2 telepítés folytatása és befejezése – ez a lépés nem része az igazolt 0.2.1 teszteredménynek.
+- [ ] További alaplapokon és UEFI firmware-eken végzett Secure Boot kompatibilitási tesztek.
+
+### Automatizált ellenőrzések
+
+- [x] GitHub Actions: Python fordítási, shell szintaktikai, UEFI:NTFS segédkép-ellenőrzési, NTFS formázási dry-run, FAT címkézési, unit-, csomagolási és offscreen GUI-tesztek. Sikeres futás: [41980736701](https://github.com/rsanya87/bootmediakit/actions/runs/41980736701).
+
+## 0.2.2+ — Következő fejlesztési és tesztelési célok
 
 ## 0.2.2+ — Következő fejlesztési és tesztelési célok
 
