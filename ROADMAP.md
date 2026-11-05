@@ -31,8 +31,6 @@ A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a h
 
 ## 0.2.2+ — Következő fejlesztési és tesztelési célok
 
-## 0.2.2+ — Következő fejlesztési és tesztelési célok
-
 - [ ] ISO kötetcímke-megőrzés tesztelése további Windows ISO-kon, szóközökkel és vegyes kis-/nagybetűkkel.
 - [ ] További Windows-verziók és UEFI firmware-ek tesztelése.
 - [ ] Secure Boot be- és kikapcsolt állapotának célzott vizsgálata több firmware-en.
