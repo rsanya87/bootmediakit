@@ -168,6 +168,55 @@ class SingleVersionSourceTests(unittest.TestCase):
         self.assertEqual(offenders, [], msg="kódolt verziószöveg a version.py-n kívül")
 
 
+class TestCommandDocumentationTests(unittest.TestCase):
+    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py"
+    SHELL_SYNTAX = "bash -n install.sh uninstall.sh bootmediakit-worker"
+    UNIT = "QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v"
+    SHELLCHECK = "shellcheck -S warning install.sh uninstall.sh bootmediakit-worker"
+    INTEGRATION = (
+        "sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen "
+        "python3 -m unittest discover -s tests/integration -v"
+    )
+    DOCUMENTS = ("README.md", "README.hu.md", "CONTRIBUTING.md", "docs/TESTING.md")
+
+    def test_documented_test_commands_match_ci(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        for command in (self.COMPILE, self.SHELL_SYNTAX, self.SHELLCHECK, self.INTEGRATION):
+            self.assertIn(command, workflow)
+        self.assertIn("unittest discover -s tests -v", workflow)
+        self.assertIn("QT_QPA_PLATFORM: offscreen", workflow)
+        for document in self.DOCUMENTS:
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for command in (
+                "python3 " + self.COMPILE, self.SHELL_SYNTAX, self.UNIT,
+                self.SHELLCHECK, self.INTEGRATION,
+            ):
+                self.assertIn(command, text, msg=f"{document}: hiányzik: {command}")
+            self.assertIn("PySide6", text)
+
+    def test_compile_command_lists_every_application_module(self):
+        listed = set(self.COMPILE.split()[2:])
+        self.assertEqual(listed, {path.name for path in ROOT.glob("*.py")})
+
+    def test_ci_cannot_pass_the_integration_step_by_skipping(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn('BMK_INTEGRATION_REQUIRED: "1"', workflow)
+
+    def test_integration_tests_are_opt_in_and_never_run_for_non_root(self):
+        helper = (ROOT / "tests/integration/loop_helpers.py").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("BMK_INTEGRATION") != "1"', helper)
+        self.assertIn("os.geteuid() != 0", helper)
+        self.assertIn("unittest.SkipTest", helper)
+        for program in ("losetup", "sfdisk", "wipefs", "mkfs.ext4", "mkfs.ntfs", "fatlabel"):
+            self.assertIn(f'"{program}"', helper)
+
+    def test_loop_stand_in_exists_only_in_the_test_helper(self):
+        for name in ("worker.py", "app.py"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            self.assertNotIn("BMK_INTEGRATION", text)
+            self.assertNotIn('"loop"', text)
+
+
 class SafetyDocumentationTests(unittest.TestCase):
     def test_both_readmes_document_the_partially_written_state(self):
         english = (ROOT / "README.md").read_text(encoding="utf-8")

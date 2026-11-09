@@ -93,12 +93,20 @@ KDE users need an active polkit authentication agent.
 ## Run the automated tests
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
-bash -n install.sh uninstall.sh
-python3 -m unittest discover -s tests -v
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+bash -n install.sh uninstall.sh bootmediakit-worker
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-The unit tests cover target safety, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests and SHA-256 verification. They do not replace real USB, firmware or Windows Setup tests.
+The GUI tests (`tests/test_app.py`) need `PySide6`; CI additionally runs `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker`.
+
+The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW and Windows writers against a disk image as root:
+
+```bash
+sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+```
+
+They are skipped without `BMK_INTEGRATION=1`, root and the required tools; see [docs/TESTING.md](docs/TESTING.md). Neither level replaces real USB, firmware or Windows Setup tests.
 
 ## Development direction
 

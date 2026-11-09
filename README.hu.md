@@ -96,12 +96,20 @@ KDE alatt aktív polkit hitelesítő ügynök szükséges.
 ## Automatikus tesztek
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
-bash -n install.sh uninstall.sh
-python3 -m unittest discover -s tests -v
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+bash -n install.sh uninstall.sh bootmediakit-worker
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet és az SHA-256 visszaellenőrzést. Ezek nem helyettesítik a valódi USB-s, firmware-es és Windows Telepítő tesztet.
+A GUI-tesztekhez (`tests/test_app.py`) `PySide6` kell; a CI ezen felül a `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker` parancsot is futtatja.
+
+Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütközésvizsgálatot, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet, az SHA-256 visszaellenőrzést, a megszakítást és a csomagolást. Az opcionális loop-eszközös integrációs tesztek a valódi RAW és Windows írót futtatják rootként egy lemezképfájlon:
+
+```bash
+sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+```
+
+`BMK_INTEGRATION=1`, root jog és a szükséges programok nélkül ezek kimaradnak; részletek: [docs/TESTING.md](docs/TESTING.md). Egyik szint sem helyettesíti a valódi USB-s, firmware-es és Windows Telepítő tesztet.
 
 ## Fejlesztési irány
 
