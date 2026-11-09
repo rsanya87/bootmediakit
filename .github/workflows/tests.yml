@@ -28,12 +28,14 @@ jobs:
       - name: Install system and Python test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 ntfs-3g dosfstools
+          sudo apt-get install -y libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full
           python -m pip install --disable-pip-version-check PySide6
       - name: Compile Python files
-        run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py tests/test_app.py
+        run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
       - name: Check shell syntax
         run: bash -n install.sh uninstall.sh bootmediakit-worker
+      - name: Lint shell scripts with shellcheck
+        run: shellcheck -S warning install.sh uninstall.sh bootmediakit-worker
       - name: Fetch and verify the pinned UEFI:NTFS helper image
         run: python fetch_uefi_ntfs.py "$RUNNER_TEMP/uefi-ntfs.img"
       - name: Report verified helper SHA-256
@@ -54,3 +56,8 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -v
+      - name: Run loop-device integration tests as root
+        env:
+          BMK_INTEGRATION_REQUIRED: "1"
+          BMK_UEFI_NTFS_IMAGE: ${{ runner.temp }}/uefi-ntfs.img
+        run: sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
