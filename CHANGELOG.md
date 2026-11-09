@@ -6,6 +6,7 @@
 - Multi-device Btrfs sources: every member listed under `/sys/fs/btrfs/<UUID>/devices/` now takes part in the source/target collision check; an unreadable member list stops the operation (T2).
 - GUI: an unchanged `lsblk` error during automatic device refresh is logged once instead of every 5 seconds; it may be logged again after a successful refresh. Manual refresh still shows the dialog (T3).
 - Tests and README: a GUI pipe that breaks during a Windows-mode or RAW write is now covered by regression tests (safe stop at the next cancellation point, cleanup, exit code 130), and the Safety section documents that the USB drive may be left partially written (T4).
+- Single version source: new `version.py`, read by the GUI and by the UEFI:NTFS fetcher and installed by `install.sh`; packaging tests keep the READMEs, `CHANGELOG.md` and `docs/TESTING.md` in step with it. The privileged worker does not import it (T5).
 
 ## 0.2.1 — 2026-11-05
 
