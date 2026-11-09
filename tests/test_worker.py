@@ -754,6 +754,154 @@ class RawWriteRegressionTests(unittest.TestCase):
             )
 
 
+class GuiPipeBrokenTests(unittest.TestCase):
+    """The GUI closes or crashes mid-write: stdout becomes a broken pipe."""
+
+    def setUp(self):
+        for name in ("TARGET_MODIFIED", "OUTPUT_BROKEN"):
+            patcher = patch.object(worker, name, False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        worker.CANCEL_EVENT.clear()
+
+    @staticmethod
+    def pipe_breaks_once_target_is_modified(*args, **kwargs):
+        if worker.TARGET_MODIFIED:
+            raise BrokenPipeError()
+
+    def test_windows_writer_stops_at_next_safe_point_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "windows.iso"
+            image.write_bytes(b"ISO")
+            temp_root = root / "bootmediakit-run"
+            commands = []
+
+            def fake_mkdtemp(**kwargs):
+                temp_root.mkdir()
+                return str(temp_root)
+
+            def fake_command(args, **kwargs):
+                commands.append(list(args))
+                stdout = ""
+                if args[:2] == ["blockdev", "--getss"]:
+                    stdout = "512\n"
+                elif args[:2] == ["blockdev", "--getsz"]:
+                    stdout = f"{16 * 1024**3 // 512}\n"
+                return subprocess.CompletedProcess(args, 0, stdout, "")
+
+            def fake_mount_iso(_image, mountpoint):
+                mountpoint.mkdir(parents=True)
+
+            iso_mount = temp_root / "iso"
+            with patch("worker.require_programs"), patch(
+                "worker.ensure_source_not_on_target"
+            ), patch("worker.validate_target", return_value=16 * 1024**3), patch(
+                "worker.verify_uefi_ntfs_image"
+            ), patch("worker.tempfile.mkdtemp", side_effect=fake_mkdtemp), patch(
+                "worker.mount_iso", side_effect=fake_mount_iso
+            ), patch(
+                "worker.scan_windows_iso",
+                return_value=(iso_mount / "sources/install.wim", iso_mount / "sources/boot.wim", 4096),
+            ), patch("worker.read_iso_volume_label", return_value="WIN_TEST"), patch(
+                "worker.prepare_bmk_uefi_ntfs_image", return_value=temp_root / "helper.img"
+            ), patch("worker.unmount_disk") as unmount_disk, patch(
+                "worker.assert_disk_unmounted"
+            ), patch("worker.verify_gpt_layout"), patch(
+                "worker.command", side_effect=fake_command
+            ), patch(
+                "builtins.print", side_effect=self.pipe_breaks_once_target_is_modified
+            ):
+                with self.assertRaisesRegex(
+                    worker.OperationCancelled, "megszakadt a kapcsolat"
+                ):
+                    worker.write_windows_uefi(image, "/dev/sdz", False, expected_identity={})
+                self.assertTrue(worker.TARGET_MODIFIED)
+                self.assertTrue(worker.OUTPUT_BROKEN)
+
+            # The destructive boundary was crossed, with the mandatory --force.
+            self.assertIn(["wipefs", "--all", "--force", "/dev/sdz"], commands)
+            # ...but the writer stopped before formatting anything.
+            self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+            self.assertFalse(any(args[0] == "mount" for args in commands))
+            # Cleanup: ISO unmounted, target unmounted again, temp dir removed.
+            self.assertIn(["umount", "--", str(iso_mount)], commands)
+            self.assertGreaterEqual(unmount_disk.call_count, 2)
+            self.assertEqual(unmount_disk.call_args.args, ("/dev/sdz",))
+            self.assertFalse(temp_root.exists())
+
+    def test_raw_writer_stops_at_next_safe_point_without_fsync(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "linux.iso"
+            device = root / "usb-device"
+            chunk = 4096
+            payload = bytes(range(256)) * (8 * chunk // 256)
+            image.write_bytes(payload)
+            device.write_bytes(bytes([0x5A]) * len(payload))
+            commands = []
+
+            def fake_command(args, **kwargs):
+                commands.append(list(args))
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            def pipe_breaks_on_first_progress_event(text, *args, **kwargs):
+                if "Lemezkép kiírása… " in json.loads(text)["message"]:
+                    raise BrokenPipeError()
+
+            with patch.object(worker, "CHUNK", chunk), patch(
+                "worker.ensure_source_not_on_target"
+            ), patch(
+                "worker.validate_target", return_value=device.stat().st_size
+            ), patch("worker.require_programs"), patch("worker.unmount_disk"), patch(
+                "worker.assert_disk_unmounted"
+            ), patch("worker.command", side_effect=fake_command), patch(
+                "worker.os.fsync"
+            ) as fsync, patch(
+                "builtins.print", side_effect=pipe_breaks_on_first_progress_event
+            ):
+                with self.assertRaisesRegex(
+                    worker.OperationCancelled, "megszakadt a kapcsolat"
+                ):
+                    worker.write_raw(image, str(device), True, expected_identity={})
+                self.assertTrue(worker.TARGET_MODIFIED)
+                self.assertTrue(worker.OUTPUT_BROKEN)
+
+            fsync.assert_not_called()
+            written = device.read_bytes()
+            self.assertEqual(written[:chunk], payload[:chunk])
+            self.assertEqual(written[chunk:], bytes([0x5A]) * (len(payload) - chunk))
+            self.assertIn(["wipefs", "--all", "--force", str(device)], commands)
+            # Nothing after the write loop ran: no final sync, no read-back, no rereadpt.
+            self.assertEqual(commands.count(["sync"]), 1)
+            self.assertFalse(any(args[0] == "blockdev" for args in commands))
+
+    def test_main_reports_partial_target_on_stderr_and_exits_130(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "linux.iso"
+            image.write_bytes(b"ISO test")
+
+            def writer_loses_the_gui(*args, **kwargs):
+                worker.TARGET_MODIFIED = True
+                worker.emit("progress")
+                worker.check_cancelled()
+
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch(
+                "worker.write_raw", side_effect=writer_loses_the_gui
+            ), patch(
+                "builtins.print", side_effect=self.pipe_breaks_once_target_is_modified
+            ), patch("worker._write_stderr_safely") as stderr:
+                result = worker.main(
+                    ["bootmediakit-worker", "raw", str(image), "/dev/sdz", "0", "{}"]
+                )
+        self.assertEqual(result, 130)
+        stderr.assert_called_once()
+        self.assertIn("megszakadt a kapcsolat", stderr.call_args.args[0])
+        self.assertIn("részleges állapotban maradhat", stderr.call_args.args[0])
+
+
 class ProgressCalculationTests(unittest.TestCase):
     def test_windows_copy_progress_uses_full_range_without_sha256(self):
         self.assertEqual(worker.windows_copy_progress_span(False), 54)

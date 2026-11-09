@@ -112,6 +112,8 @@ A Windows Setup log containing `GetMachineInfo: Couldn't find info for boot disk
 
 Writing to a USB device erases its contents. Always check the selected device path, model and capacity before confirming a write. Use a drive with no data you need. The application validates the target again immediately before writing and refuses the system disk, but software cannot eliminate the risk of selecting the wrong device.
 
+If the graphical interface is closed or its connection to the worker is lost while writing, the worker stops safely at the next write boundary, but the USB drive may be left partially written. In that case the device must be written again before use.
+
 ## Third-party components
 
 BootMediaKit does not contain copied Rufus application source code. It downloads a separately licensed UEFI:NTFS helper image from the pinned upstream Rufus repository at install time; that image contains third-party UEFI bootloader and filesystem-driver binaries. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution, source repositories and license references.

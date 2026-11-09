@@ -115,6 +115,8 @@ Ha a `setupact.log` naplóban `GetMachineInfo: Couldn't find info for boot disk`
 
 Az USB teljes tartalma törlődik. Mindig ellenőrizd a meghajtó eszköznevét, típusát és kapacitását. Csak olyan pendrive-ot használj, amelyen nincs megőrzendő adat. A program írás előtt újraellenőrzi a céleszközt és tiltja a rendszerlemezt, de a téves eszközválasztás kockázatát semmilyen program nem tudja teljesen megszüntetni.
 
+Ha a grafikus felület írás közben bezárul vagy megszakad a kapcsolata a workerrel, a worker a következő írási határon biztonságosan leáll, de a pendrive részlegesen írt állapotban maradhat. Ilyenkor az eszközt használat előtt újra kell írni.
+
 ## Külső összetevők
 
 A BootMediaKit nem tartalmaz átmásolt Rufus alkalmazás-forráskódot. Telepítéskor a hivatalos Rufus tárolóból külön licencű UEFI:NTFS segédképet tölt le; ez harmadik féltől származó UEFI bootloader- és fájlrendszer-driver binárisokat tartalmaz. A forrásokra, szerzői jogokra és licencekre vonatkozó részletek: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
