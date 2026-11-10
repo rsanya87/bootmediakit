@@ -126,6 +126,35 @@ def monitor_command(sock_path: Path, command: str, timeout: float = 10.0) -> str
     return "\n".join(lines)
 
 
+# QEMU "sendkey" names for the characters the diagnostic GRUB commands use
+# (US layout, as GRUB assumes).
+SENDKEY_NAMES = {
+    " ": "spc", "/": "slash", ".": "dot", "-": "minus", "_": "shift-minus",
+    "$": "shift-4", "(": "shift-9", ")": "shift-0", ",": "comma", "=": "equal",
+    "\n": "ret",
+}
+GRUB_DIAGNOSTIC_COMMANDS = (
+    "echo $prefix $root",
+    "ls /",
+    "ls /grub",
+    "cat /grub/grub.cfg",
+    "ntldr /bootmgr",
+)
+
+
+def type_into_guest(sock_path: Path, text: str) -> None:
+    """Type text on the guest keyboard through the QEMU monitor."""
+    for char in text:
+        if char.isascii() and (char.islower() or char.isdigit()):
+            key = char
+        elif char.isascii() and char.isupper():
+            key = "shift-" + char.lower()
+        else:
+            key = SENDKEY_NAMES[char]
+        monitor_command(sock_path, f"sendkey {key}")
+        time.sleep(0.03)
+
+
 def vga_text_screen(xp_output: str) -> str:
     """Decode 'xp /2000hx 0xb8000' output (80x25 text cells) into lines."""
     values: list[str] = []
@@ -285,6 +314,8 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
                 time.sleep(0.25)
             if not found and process.poll() is None:
                 diagnostics = self.collect_qemu_diagnostics(monitor_socket)
+                if "grub>" in diagnostics:
+                    diagnostics += "\n" + self.probe_grub_shell(monitor_socket, output)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -324,6 +355,30 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
         except OSError as exc:
             parts.append(f"[T0 QEMU diag] registers not readable: {exc}")
         return "\n".join(parts)
+
+    @staticmethod
+    def probe_grub_shell(monitor_socket: Path, debugcon: Path) -> str:
+        """At a grub> prompt, run read-only commands and capture each screen.
+
+        Diagnostics only: the media and grub.cfg are not changed. The last
+        command repeats the configured "ntldr /bootmgr" by hand so that its
+        error message (if any) is not cleared by the prompt's screen reset.
+        """
+        parts: list[str] = []
+        try:
+            for command in GRUB_DIAGNOSTIC_COMMANDS:
+                type_into_guest(monitor_socket, "clear\n")
+                time.sleep(1.0)
+                type_into_guest(monitor_socket, command + "\n")
+                time.sleep(3.0)
+                screen = vga_text_screen(monitor_command(monitor_socket, "xp /2000hx 0xb8000"))
+                parts.append(f"[T0 QEMU diag] grub> {command}\n" + (screen or "(empty)"))
+            if debugcon.is_file() and BOOT_MARKER in debugcon.read_bytes():
+                parts.append("[T0 QEMU diag] BMK-BOOT-OK appeared after the manual ntldr command.")
+        except (OSError, KeyError) as exc:
+            parts.append(f"[T0 QEMU diag] GRUB shell probe failed: {exc!r}")
+        return "\n".join(parts)
+
 
 if __name__ == "__main__":
     unittest.main()

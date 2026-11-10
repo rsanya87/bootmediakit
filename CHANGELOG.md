@@ -4,6 +4,7 @@
 
 - Tests: T0 feasibility gate for the Legacy BIOS/MBR Windows mode. A loop-device integration test builds an MBR disk with one active NTFS partition, runs `grub-install --target=i386-pc` (no `--force`) and chainloads a test `bootmgr` with `ntldr /bootmgr`; with `BMK_QEMU=1` it boots the image in QEMU/SeaBIOS and waits for `BMK-BOOT-OK` on the debug port (T0).
 - Tests: when the T0 QEMU boot check fails, it now prints the GRUB and QEMU versions, the SeaBIOS log (port 0x402), the guest's VGA text screen and CPU registers, so the stage where booting stops is visible in CI logs (T0).
+- Tests: if the failed T0 boot stops at a `grub>` prompt, the test types read-only commands (`echo $prefix $root`, `ls`, `cat /grub/grub.cfg`, a manual `ntldr /bootmgr`) through the QEMU monitor and prints the screen after each (T0).
 - CI: installs `grub-pc-bin`, `grub2-common` and `qemu-system-x86`, and runs the integration tests with `BMK_QEMU=1` (T0).
 - CI fix: the integration variables (`BMK_INTEGRATION_REQUIRED`, `BMK_QEMU`, `BMK_UEFI_NTFS_IMAGE`) are passed to `env` after `sudo`, because the runner's `sudo -E` did not forward the step's `env:` block (seen on `ubuntu-26.04` since the 0.2.2 runs). A new step checks under `sudo` that they arrive; packaging tests guard both.
 
