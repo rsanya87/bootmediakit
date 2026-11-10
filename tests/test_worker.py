@@ -1972,6 +1972,71 @@ class WindowsVerifyArgumentTests(unittest.TestCase):
             write.assert_not_called()
 
 
+class WorkerModeDispatchTests(unittest.TestCase):
+    """main() mode names, including windows-bios (0.3.0 T5)."""
+
+    IDENTITY = {
+        "path": "/dev/sdb", "size": 8 * 1024**3, "maj_min": "8:16",
+        "model": "USB Disk", "serial": "ABC123", "wwn": "",
+        "tran": "usb", "rm": False, "diskseq": "4", "by_id": "/dev/disk/by-id/usb-ABC",
+    }
+
+    def run_main(self, mode: str, verify: str = "1", suffix: str = ".iso"):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / f"source{suffix}"
+            image.write_bytes(b"image")
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch("worker.emit") as emit, patch(
+                "worker.write_windows_uefi"
+            ) as uefi, patch("worker.write_windows_bios") as bios, patch("worker.write_raw") as raw:
+                result = worker.main(
+                    ["bootmediakit-worker", mode, str(image), "/dev/sdb", verify, json.dumps(self.IDENTITY)]
+                )
+            return result, {"uefi": uefi, "bios": bios, "raw": raw}, image.resolve(), emit
+
+    def test_windows_bios_mode_calls_the_bios_writer_with_verify_flag_and_identity(self):
+        for verify in ("0", "1"):
+            with self.subTest(verify=verify):
+                result, writers, image, _emit = self.run_main("windows-bios", verify)
+                self.assertEqual(result, 0)
+                writers["bios"].assert_called_once_with(image, "/dev/sdb", verify == "1", self.IDENTITY)
+                writers["uefi"].assert_not_called()
+                writers["raw"].assert_not_called()
+
+    def test_existing_modes_keep_their_writers(self):
+        for mode, name in (("windows", "uefi"), ("raw", "raw")):
+            with self.subTest(mode=mode):
+                result, writers, image, _emit = self.run_main(mode, "1")
+                self.assertEqual(result, 0)
+                writers[name].assert_called_once_with(image, "/dev/sdb", True, self.IDENTITY)
+                for other, mock in writers.items():
+                    if other != name:
+                        mock.assert_not_called()
+
+    def test_unknown_mode_names_are_still_errors(self):
+        for mode in ("bios", "windows_bios", "Windows-BIOS", "windows-uefi", ""):
+            with self.subTest(mode=mode):
+                result, writers, _image, emit = self.run_main(mode)
+                self.assertEqual(result, 1)
+                for mock in writers.values():
+                    mock.assert_not_called()
+                self.assertIn("Ismeretlen írási mód", str(emit.call_args))
+
+    def test_windows_bios_mode_requires_an_iso_file(self):
+        result, writers, _image, emit = self.run_main("windows-bios", suffix=".img")
+        self.assertEqual(result, 1)
+        writers["bios"].assert_not_called()
+        self.assertIn("ISO fájl szükséges", str(emit.call_args))
+
+    def test_wrapper_and_polkit_policy_pass_arguments_through_unchanged(self):
+        root = Path(__file__).resolve().parents[1]
+        wrapper = (root / "bootmediakit-worker").read_text(encoding="utf-8")
+        self.assertIn('exec /usr/bin/python3 -I /usr/lib/bootmediakit/worker.py "$@"', wrapper)
+        # The polkit action is bound to the wrapper path only; no argument filter.
+        policy = (root / "org.bootmediakit.policy").read_text(encoding="utf-8")
+        self.assertIn("org.freedesktop.policykit.exec.path", policy)
+        self.assertNotIn("argv", policy)
 
 
 class KernelCopyTests(unittest.TestCase):

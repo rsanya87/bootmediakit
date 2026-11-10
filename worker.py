@@ -2054,6 +2054,10 @@ def validate_privileged_install() -> None:
         raise RuntimeError("A worker csak a saját polkit akción keresztül indítható.")
 
 
+# "windows" stays the UEFI (GPT) mode name used by earlier GUI versions.
+WORKER_MODES = frozenset({"raw", "windows", "windows-bios"})
+
+
 def main(argv: list[str]) -> int:
     global TARGET_MODIFIED, OUTPUT_BROKEN
     TARGET_MODIFIED = False
@@ -2062,7 +2066,7 @@ def main(argv: list[str]) -> int:
     if len(argv) != 6:
         if not emit(
             "Hibás paraméterezés.",
-            error="Használat: bootmediakit-worker raw|windows ISO DEVICE VERIFY IDENTITY_JSON",
+            error="Használat: bootmediakit-worker raw|windows|windows-bios ISO DEVICE VERIFY IDENTITY_JSON",
         ):
             _write_stderr_safely("HIBA: Hibás BootMediaKit worker paraméterezés.")
         return 2
@@ -2082,14 +2086,14 @@ def main(argv: list[str]) -> int:
         expected_identity = json.loads(identity_arg)
         if not isinstance(expected_identity, dict):
             raise ValueError("A meghajtóazonosító nem JSON objektum.")
-        if mode not in {"raw", "windows"}:
+        if mode not in WORKER_MODES:
             raise ValueError("Ismeretlen írási mód.")
         if verify_arg not in {"0", "1"}:
             raise ValueError("A visszaellenőrzés jelzője hibás.")
         image = Path(image_arg).expanduser().resolve(strict=True)
         if not image.is_file() or not os.access(image, os.R_OK):
             raise RuntimeError(f"A forrásfájl nem olvasható: {image}")
-        if mode == "windows" and image.suffix.lower() != ".iso":
+        if mode in {"windows", "windows-bios"} and image.suffix.lower() != ".iso":
             raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
 
         start_control_reader()
@@ -2098,6 +2102,8 @@ def main(argv: list[str]) -> int:
         verify = verify_arg == "1"
         if mode == "raw":
             write_raw(image, device, verify, expected_identity)
+        elif mode == "windows-bios":
+            write_windows_bios(image, device, verify, expected_identity)
         else:
             write_windows_uefi(image, device, verify, expected_identity)
         return 0
