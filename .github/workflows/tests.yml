@@ -56,9 +56,16 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -v
+      # The runner's sudo does not pass a step's env: block through "sudo -E"
+      # (seen on ubuntu-26.04), so the variables are given to env after sudo.
+      - name: Check that the root test process receives the integration variables
+        run: >-
+          sudo env BMK_INTEGRATION_REQUIRED=1 BMK_QEMU=1 BMK_UEFI_NTFS_IMAGE="$RUNNER_TEMP/uefi-ntfs.img"
+          python3 -I -c 'import os, sys;
+          e = os.environ;
+          bad = [k for k in ("BMK_INTEGRATION_REQUIRED", "BMK_QEMU") if e.get(k) != "1"];
+          bad += [] if os.path.isfile(e.get("BMK_UEFI_NTFS_IMAGE", "")) else ["BMK_UEFI_NTFS_IMAGE"];
+          bad += [] if os.geteuid() == 0 else ["root"];
+          sys.exit("missing under sudo: " + ", ".join(bad)) if bad else print("root test environment OK")'
       - name: Run loop-device integration tests as root
-        env:
-          BMK_INTEGRATION_REQUIRED: "1"
-          BMK_QEMU: "1"
-          BMK_UEFI_NTFS_IMAGE: ${{ runner.temp }}/uefi-ntfs.img
-        run: sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+        run: sudo env BMK_INTEGRATION_REQUIRED=1 BMK_QEMU=1 BMK_UEFI_NTFS_IMAGE="$RUNNER_TEMP/uefi-ntfs.img" BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v

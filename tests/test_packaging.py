@@ -177,12 +177,21 @@ class TestCommandDocumentationTests(unittest.TestCase):
         "sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen "
         "python3 -m unittest discover -s tests/integration -v"
     )
+    # CI cannot rely on "sudo -E" (the runner's sudo drops the step's env:
+    # block), so it passes its variables to env after sudo and then runs the
+    # same command as the documented one.
+    CI_ROOT_ENV = (
+        'sudo env BMK_INTEGRATION_REQUIRED=1 BMK_QEMU=1 '
+        'BMK_UEFI_NTFS_IMAGE="$RUNNER_TEMP/uefi-ntfs.img" '
+    )
+    CI_INTEGRATION = CI_ROOT_ENV + INTEGRATION.removeprefix("sudo -E env ")
     DOCUMENTS = ("README.md", "README.hu.md", "CONTRIBUTING.md", "docs/TESTING.md")
 
     def test_documented_test_commands_match_ci(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
-        for command in (self.COMPILE, self.SHELL_SYNTAX, self.SHELLCHECK, self.INTEGRATION):
+        for command in (self.COMPILE, self.SHELL_SYNTAX, self.SHELLCHECK, self.CI_INTEGRATION):
             self.assertIn(command, workflow)
+        self.assertTrue(self.INTEGRATION.startswith("sudo -E env BMK_INTEGRATION=1 "))
         self.assertIn("unittest discover -s tests -v", workflow)
         self.assertIn("QT_QPA_PLATFORM: offscreen", workflow)
         for document in self.DOCUMENTS:
@@ -200,7 +209,19 @@ class TestCommandDocumentationTests(unittest.TestCase):
 
     def test_ci_cannot_pass_the_integration_step_by_skipping(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
-        self.assertIn('BMK_INTEGRATION_REQUIRED: "1"', workflow)
+        # BMK_INTEGRATION_REQUIRED must reach the root process: it is given to
+        # env after sudo, both in the test run and in a preceding check step.
+        root_lines = [line for line in workflow.splitlines() if "sudo " in line and "BMK_" in line]
+        self.assertTrue(root_lines)
+        for line in root_lines:
+            self.assertNotIn("sudo -E", line)
+            self.assertIn(self.CI_ROOT_ENV.strip(), line)
+        check = workflow.split("name: Check that the root test process receives the integration variables", 1)
+        self.assertEqual(len(check), 2, msg="hiányzik a root környezetet ellenőrző CI-lépés")
+        check_step, after = check[1].split("- name:", 1)[0], check[1]
+        self.assertIn(self.CI_ROOT_ENV.strip(), check_step)
+        self.assertIn("sys.exit(", check_step)
+        self.assertLess(after.index("python3 -I -c"), after.index(self.CI_INTEGRATION))
 
     def test_integration_tests_are_opt_in_and_never_run_for_non_root(self):
         helper = (ROOT / "tests/integration/loop_helpers.py").read_text(encoding="utf-8")
