@@ -1508,6 +1508,118 @@ def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
         return "ntfs-3g"
 
 
+# -- Steps shared by the Windows UEFI and Legacy BIOS writers ---------------
+# Moved verbatim from write_windows_uefi; the UEFI path runs the same
+# commands with the same arguments, messages and order as before.
+
+
+def read_512_byte_sector_count(device: str) -> int:
+    """Reject non-512-byte logical sectors; return the size in sectors."""
+    sector_size = int(command(["blockdev", "--getss", device]).stdout.strip())
+    if sector_size != 512:
+        raise RuntimeError(
+            f"Ez a verzió 512 bájtos logikai szektort vár; a célmeghajtó {sector_size} bájtos szektorokat jelez."
+        )
+    return int(command(["blockdev", "--getsz", device]).stdout.strip())
+
+
+def write_partition_table(device: str, script: str) -> None:
+    """Apply an sfdisk script to the already wiped target and re-read it."""
+    command(["sfdisk", "--wipe", "never", device], input_text=script)
+    command(["blockdev", "--rereadpt", device], check=False)
+    command(["partprobe", device], check=False)
+    command(["udevadm", "settle"], check=False, timeout=20)
+
+
+def wait_for_partition_nodes(partitions: Iterable[str], error: str, timeout: float = 20) -> None:
+    """Wait until every partition node exists as a block device."""
+    partitions = tuple(partitions)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        check_cancelled()
+        if all(os.path.exists(partition) for partition in partitions):
+            try:
+                if all(stat.S_ISBLK(os.stat(partition).st_mode) for partition in partitions):
+                    return
+            except OSError:
+                pass
+        time.sleep(0.25)
+    raise RuntimeError(error)
+
+
+def format_ntfs(partition: str, label: str, start_sector: int) -> None:
+    """mkfs.ntfs with the BPB geometry Windows boot code expects."""
+    command(["mkfs.ntfs", "--fast", "--force", "--label", label, "--partition-start", str(start_sector), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", partition], timeout=300)
+
+
+def copy_windows_files(
+    iso_mount: Path,
+    usb_mount: Path,
+    total_copy_bytes: int,
+    verify: bool,
+    boot_files: tuple[str, ...],
+    missing_boot_file_message: str,
+) -> None:
+    """Copy the ISO tree, flush, recheck boot files and optionally verify SHA-256."""
+    copy_span = windows_copy_progress_span(verify)
+    copy_end_percent = 42 + copy_span
+    manifest = copy_tree_progress(
+        iso_mount,
+        usb_mount,
+        total_copy_bytes,
+        base_percent=42,
+        span=copy_span,
+        hash_files=verify,
+    )
+
+    # Commit all writes in one batch. Per-file fsync is particularly slow
+    # on low-end USB 2.0 flash drives; unmount also performs final flushing.
+    check_cancelled()
+    emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
+    sync_filesystem(usb_mount)
+
+    # Recheck the boot chain files on the destination before unmounting.
+    for relative in boot_files:
+        check_cancelled()
+        copied = find_case_insensitive(usb_mount, relative)
+        if copied is None or not copied.is_file():
+            raise RuntimeError(f"{missing_boot_file_message}: {relative}")
+    if verify:
+        emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86)
+        verify_copied_files(usb_mount, manifest)
+    else:
+        emit(
+            "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.",
+            copy_end_percent,
+        )
+
+
+def cleanup_windows_write(
+    device: str,
+    temp_root: Path,
+    iso_mount: Path,
+    usb_mount: Path,
+    mounted_iso: bool,
+    mounted_usb: bool,
+) -> None:
+    """Unmount everything the Windows writers mounted and remove temp files."""
+    if mounted_usb:
+        try:
+            sync_filesystem(usb_mount)
+        except Exception:
+            pass
+        command(["umount", "--", str(usb_mount)], check=False, timeout=120)
+    if mounted_iso:
+        command(["umount", "--", str(iso_mount)], check=False, timeout=120)
+    if TARGET_MODIFIED:
+        try:
+            unmount_disk(device)
+        except Exception:
+            pass
+    shutil.rmtree(temp_root, ignore_errors=True)
+    command(["udevadm", "settle"], check=False, timeout=20)
+
+
 def write_windows_uefi(
     image: Path,
     device: str,
@@ -1526,12 +1638,7 @@ def write_windows_uefi(
     ensure_source_not_on_target(image, device)
     target_size = validate_target(device, expected_identity)
     verify_uefi_ntfs_image()
-    sector_size = int(command(["blockdev", "--getss", device]).stdout.strip())
-    if sector_size != 512:
-        raise RuntimeError(
-            f"Ez a verzió 512 bájtos logikai szektort vár; a célmeghajtó {sector_size} bájtos szektorokat jelez."
-        )
-    total_sectors = int(command(["blockdev", "--getsz", device]).stdout.strip())
+    total_sectors = read_512_byte_sector_count(device)
     layout = calculate_gpt_layout(total_sectors)
     if layout["first_bytes"] + layout["second_bytes"] > target_size:
         raise RuntimeError("A partíciók számított mérete nagyobb, mint a célmeghajtó kapacitása.")
@@ -1592,11 +1699,7 @@ def write_windows_uefi(
         # util-linux needs --force to erase a block-device partition-table signature.
         # assert_disk_unmounted() above ensures the target is not mounted.
         command(["wipefs", "--all", "--force", device])
-        script = make_sfdisk_script(layout, iso_label)
-        command(["sfdisk", "--wipe", "never", device], input_text=script)
-        command(["blockdev", "--rereadpt", device], check=False)
-        command(["partprobe", device], check=False)
-        command(["udevadm", "settle"], check=False, timeout=20)
+        write_partition_table(device, make_sfdisk_script(layout, iso_label))
         verify_gpt_layout(device, layout, iso_label)
         emit(
             "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
@@ -1606,21 +1709,13 @@ def write_windows_uefi(
 
         ntfs_partition = partition_path(device, 1)
         uefi_partition = partition_path(device, 2)
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            check_cancelled()
-            if os.path.exists(ntfs_partition) and os.path.exists(uefi_partition):
-                try:
-                    if stat.S_ISBLK(os.stat(ntfs_partition).st_mode) and stat.S_ISBLK(os.stat(uefi_partition).st_mode):
-                        break
-                except OSError:
-                    pass
-            time.sleep(0.25)
-        else:
-            raise RuntimeError("A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.")
+        wait_for_partition_nodes(
+            (ntfs_partition, uefi_partition),
+            "A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.",
+        )
 
         emit("NTFS fájlrendszer létrehozása…", 25)
-        command(["mkfs.ntfs", "--fast", "--force", "--label", iso_label, "--partition-start", str(layout["first_start"]), "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", ntfs_partition], timeout=300)
+        format_ntfs(ntfs_partition, iso_label, layout["first_start"])
         validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
         write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
 
@@ -1631,37 +1726,14 @@ def write_windows_uefi(
         unmount_disk(device)
         mount_ntfs_volume(ntfs_partition, usb_mount)
         mounted_usb = True
-        copy_span = windows_copy_progress_span(verify)
-        copy_end_percent = 42 + copy_span
-        manifest = copy_tree_progress(
+        copy_windows_files(
             iso_mount,
             usb_mount,
             total_copy_bytes,
-            base_percent=42,
-            span=copy_span,
-            hash_files=verify,
+            verify,
+            ("efi/boot/bootx64.efi", "sources/boot.wim"),
+            "A Windows UEFI indításhoz szükséges fájl hiányzik az USB-ről",
         )
-
-        # Commit all writes in one batch. Per-file fsync is particularly slow
-        # on low-end USB 2.0 flash drives; unmount also performs final flushing.
-        check_cancelled()
-        emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
-        sync_filesystem(usb_mount)
-
-        # Recheck the boot chain files on the destination before unmounting.
-        for relative in ("efi/boot/bootx64.efi", "sources/boot.wim"):
-            check_cancelled()
-            copied = find_case_insensitive(usb_mount, relative)
-            if copied is None or not copied.is_file():
-                raise RuntimeError(f"A Windows UEFI indításhoz szükséges fájl hiányzik az USB-ről: {relative}")
-        if verify:
-            emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86)
-            verify_copied_files(usb_mount, manifest)
-        else:
-            emit(
-                "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.",
-                copy_end_percent,
-            )
 
         check_cancelled()
         emit("Fájlrendszer kiürítése és leválasztása…", 99)
@@ -1681,21 +1753,133 @@ def write_windows_uefi(
             ),
         )
     finally:
-        if mounted_usb:
-            try:
-                sync_filesystem(usb_mount)
-            except Exception:
-                pass
-            command(["umount", "--", str(usb_mount)], check=False, timeout=120)
-        if mounted_iso:
-            command(["umount", "--", str(iso_mount)], check=False, timeout=120)
-        if TARGET_MODIFIED:
-            try:
-                unmount_disk(device)
-            except Exception:
-                pass
-        shutil.rmtree(temp_root, ignore_errors=True)
+        cleanup_windows_write(device, temp_root, iso_mount, usb_mount, mounted_iso, mounted_usb)
+
+
+WINDOWS_BIOS_PROGRAMS = (
+    "lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync",
+    "mount", "partprobe", "sfdisk", "mkfs.ntfs", "blkid", "7z",
+)
+
+
+def write_windows_bios(
+    image: Path,
+    device: str,
+    verify: bool = True,
+    expected_identity: dict[str, object] | None = None,
+) -> None:
+    """Windows Setup USB for Legacy BIOS/CSM: MBR, one active NTFS, GRUB ntldr."""
+    global TARGET_MODIFIED
+    require_programs(WINDOWS_BIOS_PROGRAMS)
+
+    # Everything that can refuse the operation runs before the first write.
+    check_cancelled()
+    ensure_source_not_on_target(image, device)
+    target_size = validate_target(device, expected_identity)
+    require_bios_grub()
+    total_sectors = read_512_byte_sector_count(device)
+    layout = calculate_mbr_layout(total_sectors)
+    if layout["start"] * 512 + layout["bytes"] > target_size:
+        raise RuntimeError("A partíció számított mérete nagyobb, mint a célmeghajtó kapacitása.")
+
+    temp_root = Path(tempfile.mkdtemp(prefix="bootmediakit-", dir="/run"))
+    iso_mount = temp_root / "iso"
+    usb_mount = temp_root / "usb"
+    mounted_iso = False
+    mounted_usb = False
+    try:
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        emit("Windows ISO ellenőrzése a Legacy BIOS módhoz…", 1)
+        mount_iso(image, iso_mount)
+        mounted_iso = True
+        install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount, boot_mode="bios")
+        iso_label = read_iso_volume_label(image)
+        reserve_bytes = 128 * 1024 * 1024
+        if total_copy_bytes + reserve_bytes > layout["bytes"]:
+            raise RuntimeError(
+                "Kevés a pendrive kapacitása a Windows ISO fájljaihoz. "
+                f"Szükséges legalább {total_copy_bytes + reserve_bytes:,} bájt, "
+                f"az NTFS partíció mérete {layout['bytes']:,} bájt. "
+                "A pendrive tartalmához még nem nyúltam."
+            )
+        emit(
+            "ISO előellenőrzés kész; a pendrive-ot még nem módosítottam.",
+            8,
+            log=(
+                f"Windows PE: {boot_wim.relative_to(iso_mount)}; "
+                f"telepítőkép: {install_image.relative_to(iso_mount)}; "
+                f"ISO kötetcímke: {iso_label}; "
+                f"másolandó fájlméret: {total_copy_bytes:,} bájt."
+            ),
+        )
+
+        check_cancelled()
+        ensure_source_not_on_target(image, device)
+        validate_target(device, expected_identity)
+        emit("USB lemez leválasztása és MBR partíció létrehozása…", 10)
+        unmount_disk(device)
+        # Last-moment identity and source checks after unmounting but before wipefs.
+        validate_target(device, expected_identity)
+        ensure_source_not_on_target(image, device)
+        check_cancelled()
+        assert_disk_unmounted(device)
+        TARGET_MODIFIED = True
+        # util-linux needs --force to erase a block-device partition-table signature.
+        # assert_disk_unmounted() above ensures the target is not mounted.
+        command(["wipefs", "--all", "--force", device])
+        write_partition_table(device, make_mbr_sfdisk_script(layout))
+        verify_mbr_layout(device, layout)
+        emit("MBR ellenőrzése sikeres: egy aktív NTFS partíció.", 22)
+
+        ntfs_partition = partition_path(device, 1)
+        wait_for_partition_nodes(
+            (ntfs_partition,),
+            "Az MBR elkészült, de a kernel nem hozta létre időben a partíció-eszközt.",
+        )
+
+        emit("NTFS fájlrendszer létrehozása…", 25)
+        format_ntfs(ntfs_partition, iso_label, layout["start"])
+        validate_ntfs_boot_sector(ntfs_partition, layout["start"])
+
+        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
+        usb_mount.mkdir(parents=True, exist_ok=True)
+        check_cancelled()
+        validate_target(device, expected_identity)
+        unmount_disk(device)
+        mount_ntfs_volume(ntfs_partition, usb_mount)
+        mounted_usb = True
+        # The SHA-256 manifest covers the ISO files only; /grub is added later.
+        copy_windows_files(
+            iso_mount,
+            usb_mount,
+            total_copy_bytes,
+            verify,
+            ("bootmgr", "boot/bcd", "sources/boot.wim"),
+            "A Windows Legacy BIOS indításhoz szükséges fájl hiányzik az USB-ről",
+        )
+
+        install_bios_chainloader(device, usb_mount, expected_identity, layout)
+
+        check_cancelled()
+        emit("Fájlrendszer kiürítése és leválasztása…", 99)
+        sync_filesystem(usb_mount)
+        command(["umount", "--", str(usb_mount)], timeout=120)
+        mounted_usb = False
         command(["udevadm", "settle"], check=False, timeout=20)
+        verify_mbr_layout(device, layout)
+        emit(
+            "A Windows Legacy BIOS telepítő USB elkészült.",
+            100,
+            log=(
+                "MBR: egyetlen aktív NTFS partíció a Windows fájlokkal; "
+                "GRUB láncbetöltő az MBR-ben és a /grub könyvtárban, amely a Windows bootmgr-t indítja. "
+                "A pendrive csak Legacy BIOS / CSM módban indul, UEFI módban nem. "
+                "A Windows ISO fájljai eredeti formájukban kerültek át."
+            ),
+        )
+    finally:
+        cleanup_windows_write(device, temp_root, iso_mount, usb_mount, mounted_iso, mounted_usb)
 
 
 def write_raw(

@@ -1408,6 +1408,230 @@ class BiosChainloaderTests(unittest.TestCase):
             run.assert_not_called()
 
 
+class WindowsBiosWriterTests(unittest.TestCase):
+    """write_windows_bios with mocked system commands (0.3.0 T4)."""
+
+    DEVICE = "/dev/sdz"
+    DISK_BYTES = 16 * 1024**3
+
+    def setUp(self):
+        for name in ("TARGET_MODIFIED", "OUTPUT_BROKEN"):
+            patcher = patch.object(worker, name, False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        worker.CANCEL_EVENT.clear()
+        self.addCleanup(worker.CANCEL_EVENT.clear)
+
+    def run_writer(self, *, verify=True, total_sectors=None, on_command=None, extra_patches=(),
+                   print_effect=None):
+        """Run write_windows_bios; return (events, commands, temp_root, error)."""
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        image = root / "windows.iso"
+        image.write_bytes(b"ISO")
+        temp_root = root / "bootmediakit-run"
+        iso_mount = temp_root / "iso"
+        events: list[str] = []
+        commands: list[list[str]] = []
+        sectors = self.DISK_BYTES // 512 if total_sectors is None else total_sectors
+
+        def record(name):
+            def effect(*args, **kwargs):
+                events.append(name)
+            return effect
+
+        def fake_mkdtemp(**kwargs):
+            events.append("mkdtemp")
+            temp_root.mkdir()
+            return str(temp_root)
+
+        def fake_command(args, **kwargs):
+            commands.append(list(args))
+            events.append("cmd:" + " ".join(args[:2]))
+            if on_command:
+                on_command(list(args))
+            stdout = ""
+            if args[:2] == ["blockdev", "--getss"]:
+                stdout = "512\n"
+            elif args[:2] == ["blockdev", "--getsz"]:
+                stdout = f"{sectors}\n"
+            return subprocess.CompletedProcess(args, 0, stdout, "")
+
+        def fake_mount_iso(_image, mountpoint):
+            events.append("mount_iso")
+            mountpoint.mkdir(parents=True)
+
+        def fake_scan(path, boot_mode="uefi"):
+            events.append(f"scan:{boot_mode}")
+            return path / "sources/install.wim", path / "sources/boot.wim", 4096
+
+        def fake_copy(iso, usb, total, verify_flag, boot_files, message):
+            events.append("copy")
+            self.copy_args = (iso, usb, total, verify_flag, boot_files, message)
+
+        def fake_chainloader(device, mount, identity, layout):
+            events.append("install_bios_chainloader")
+            self.chainloader_args = (device, mount, identity, layout)
+
+        patches = [
+            patch("worker.require_programs", side_effect=lambda programs: events.append("require_programs")),
+            patch("worker.ensure_source_not_on_target", side_effect=record("ensure_source")),
+            patch("worker.validate_target", side_effect=lambda *a: events.append("validate_target") or self.DISK_BYTES),
+            patch("worker.require_bios_grub", side_effect=record("require_bios_grub")),
+            patch("worker.tempfile.mkdtemp", side_effect=fake_mkdtemp),
+            patch("worker.mount_iso", side_effect=fake_mount_iso),
+            patch("worker.scan_windows_iso", side_effect=fake_scan),
+            patch("worker.read_iso_volume_label", return_value="WIN_TEST"),
+            patch("worker.unmount_disk", side_effect=record("unmount_disk")),
+            patch("worker.assert_disk_unmounted", side_effect=record("assert_disk_unmounted")),
+            patch("worker.verify_mbr_layout", side_effect=record("verify_mbr_layout")),
+            patch("worker.wait_for_partition_nodes", side_effect=lambda *a, **k: (worker.check_cancelled(), events.append("wait_partitions"))),
+            patch("worker.validate_ntfs_boot_sector", side_effect=record("validate_ntfs_boot_sector")),
+            patch("worker.mount_ntfs_volume", side_effect=lambda *a: events.append("mount_ntfs") or "ntfs3"),
+            patch("worker.copy_windows_files", side_effect=fake_copy),
+            patch("worker.install_bios_chainloader", side_effect=fake_chainloader),
+            patch("worker.command", side_effect=fake_command),
+            patch("builtins.print", side_effect=print_effect),
+            *extra_patches,
+        ]
+        error = None
+        import contextlib
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            try:
+                worker.write_windows_bios(image, self.DEVICE, verify, {"serial": "x"})
+            except Exception as exc:  # noqa: BLE001 - returned for assertions
+                error = exc
+        self.iso_mount = iso_mount
+        return events, commands, temp_root, error
+
+    def test_full_sequence_matches_the_work_description(self):
+        events, commands, temp_root, error = self.run_writer()
+        self.assertIsNone(error)
+        usb_mount = str(temp_root / "usb")
+        order = [
+            "require_programs", "ensure_source", "validate_target", "require_bios_grub",
+            "cmd:blockdev --getss", "cmd:blockdev --getsz", "mkdtemp",
+            "ensure_source", "mount_iso", "scan:bios",
+            "ensure_source", "validate_target", "unmount_disk",
+            "validate_target", "ensure_source", "assert_disk_unmounted",
+            "cmd:wipefs --all", "cmd:sfdisk --wipe", "cmd:blockdev --rereadpt", "cmd:partprobe /dev/sdz",
+            "cmd:udevadm settle", "verify_mbr_layout", "wait_partitions",
+            "cmd:mkfs.ntfs --fast", "validate_ntfs_boot_sector",
+            "validate_target", "unmount_disk", "mount_ntfs", "copy", "install_bios_chainloader",
+            "cmd:sync --file-system", "cmd:umount --", "cmd:udevadm settle", "verify_mbr_layout",
+        ]
+        self.assertEqual(events[: len(order)], order)
+        self.assertIn(["wipefs", "--all", "--force", self.DEVICE], commands)
+        self.assertIn(["umount", "--", usb_mount], commands)
+        sfdisk = next(args for args in commands if args[0] == "sfdisk")
+        self.assertEqual(sfdisk, ["sfdisk", "--wipe", "never", self.DEVICE])
+        mkfs = next(args for args in commands if args[0] == "mkfs.ntfs")
+        self.assertEqual(
+            mkfs,
+            ["mkfs.ntfs", "--fast", "--force", "--label", "WIN_TEST", "--partition-start", "2048",
+             "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63",
+             "--cluster-size", "4096", "/dev/sdz1"],
+        )
+        self.assertTrue(worker.TARGET_MODIFIED)
+        self.assertFalse(temp_root.exists())
+
+    def test_grub_is_installed_after_the_copy_and_before_the_final_unmount(self):
+        events, _commands, temp_root, error = self.run_writer()
+        self.assertIsNone(error)
+        copy = events.index("copy")
+        grub = events.index("install_bios_chainloader")
+        final_umount = events.index("cmd:umount --", grub)
+        self.assertLess(copy, grub)
+        self.assertLess(grub, final_umount)
+        self.assertEqual(self.chainloader_args[0], self.DEVICE)
+        self.assertEqual(self.chainloader_args[1], temp_root / "usb")
+        self.assertEqual(self.chainloader_args[2], {"serial": "x"})
+        self.assertEqual(self.chainloader_args[3]["start"], 2048)
+
+    def test_copy_checks_bios_boot_files_and_passes_the_verify_flag(self):
+        for verify in (True, False):
+            with self.subTest(verify=verify):
+                worker.TARGET_MODIFIED = False
+                _events, _commands, _temp_root, error = self.run_writer(verify=verify)
+                self.assertIsNone(error)
+                self.assertEqual(self.copy_args[3], verify)
+                self.assertEqual(self.copy_args[4], ("bootmgr", "boot/bcd", "sources/boot.wim"))
+                self.assertIn("Legacy BIOS", self.copy_args[5])
+
+    def test_missing_grub_leaves_the_target_untouched(self):
+        def no_grub():
+            raise RuntimeError(worker.GRUB_MISSING_MESSAGE.format(detail="nincs grub-install"))
+
+        events, commands, temp_root, error = self.run_writer(
+            extra_patches=(patch("worker.require_bios_grub", side_effect=no_grub),)
+        )
+        self.assertRegex(str(error), "pacman -S grub")
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertEqual(commands, [])
+        self.assertNotIn("unmount_disk", events)
+        self.assertNotIn("mkdtemp", events)
+
+    def test_disk_of_2_tib_is_refused_before_any_change(self):
+        events, commands, _temp_root, error = self.run_writer(total_sectors=2**32)
+        self.assertIsInstance(error, ValueError)
+        self.assertIn("2 TiB", str(error))
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertFalse(any(args[0] in ("wipefs", "sfdisk", "mkfs.ntfs") for args in commands))
+        self.assertNotIn("mkdtemp", events)
+
+    def test_too_small_disk_for_the_iso_is_refused_before_any_change(self):
+        # 4096 bytes of ISO data + 128 MiB reserve does not fit in 100 MiB.
+        events, commands, temp_root, error = self.run_writer(total_sectors=100 * 2048)
+        self.assertRegex(str(error), "Kevés a pendrive kapacitása")
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertNotIn("unmount_disk", events)
+        self.assertFalse(any(args[0] == "wipefs" for args in commands))
+        self.assertFalse(temp_root.exists())
+
+    def test_cancel_after_wipefs_stops_and_cleans_up(self):
+        def cancel_on_wipefs(args):
+            if args[0] == "wipefs":
+                worker.CANCEL_EVENT.set()
+
+        events, commands, temp_root, error = self.run_writer(on_command=cancel_on_wipefs)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertTrue(worker.TARGET_MODIFIED)
+        self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+        self.assertNotIn("install_bios_chainloader", events)
+        self.assertIn(["umount", "--", str(self.iso_mount)], commands)
+        self.assertEqual(events.count("unmount_disk"), 2)
+        self.assertFalse(temp_root.exists())
+
+    def test_broken_gui_pipe_stops_at_next_safe_point_and_cleans_up(self):
+        events, commands, temp_root, error = self.run_writer(
+            print_effect=GuiPipeBrokenTests.pipe_breaks_once_target_is_modified
+        )
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertIn("megszakadt a kapcsolat", str(error))
+        self.assertTrue(worker.OUTPUT_BROKEN)
+        self.assertIn(["wipefs", "--all", "--force", self.DEVICE], commands)
+        self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+        self.assertFalse(any(args[0] == "mount" for args in commands))
+        self.assertNotIn("install_bios_chainloader", events)
+        self.assertIn(["umount", "--", str(self.iso_mount)], commands)
+        self.assertGreaterEqual(events.count("unmount_disk"), 2)
+        self.assertFalse(temp_root.exists())
+
+    def test_final_log_describes_the_layout_and_legacy_only_boot(self):
+        emitted = []
+        _events, _commands, _temp_root, error = self.run_writer(
+            extra_patches=(patch("worker.emit", side_effect=lambda *a, **k: emitted.append((a, k)) or True),)
+        )
+        self.assertIsNone(error)
+        args, kwargs = emitted[-1]
+        self.assertEqual(args[1], 100)
+        for phrase in ("MBR", "aktív NTFS", "/grub", "csak Legacy BIOS", "UEFI módban nem"):
+            self.assertIn(phrase, kwargs["log"])
+
+
 class WindowsIsoScanTests(unittest.TestCase):
     def test_scan_accepts_case_insensitive_uefi_and_install_files(self):
         with tempfile.TemporaryDirectory() as temp:
