@@ -9,6 +9,7 @@ import stat
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1133,6 +1134,275 @@ class MbrLayoutTests(unittest.TestCase):
             )
             output = result.stdout + result.stderr
             self.assertIn("2199023255040", output, msg=output)
+
+class BiosChainloaderTests(unittest.TestCase):
+    """GRUB i386-pc chainloader installation (0.3.0 T3)."""
+
+    DEVICE = "/dev/disk/by-id/usb-Test_Stick_0123-0:0"
+    LAYOUT = {"start": 2048, "size": 129024, "bytes": 129024 * 512}
+    GOOD_MBR = b"\xeb\x63\x90" + b"\x01" * 437 + bytes(70) + b"\x55\xaa"
+
+    # -- grub_install_args -------------------------------------------------
+
+    def test_args_are_bios_target_explicit_boot_directory_and_device_last(self):
+        args = worker.grub_install_args(self.DEVICE, "/run/bootmediakit-abc/usb")
+        self.assertEqual(
+            args,
+            ["grub-install", "--target=i386-pc", "--boot-directory=/run/bootmediakit-abc/usb", self.DEVICE],
+        )
+        joined = " ".join(args).lower()
+        for forbidden in ("efi", "--force", "--removable", "efibootmgr", "--no-nvram"):
+            self.assertNotIn(forbidden, joined)
+
+    def test_args_reject_missing_or_invalid_device(self):
+        for device in ("", "sdb", "dev/sdb", "/tmp/disk.img", "/dev/../tmp/x", None):
+            with self.subTest(device=device), self.assertRaisesRegex(RuntimeError, "céleszköze"):
+                worker.grub_install_args(device, "/run/bootmediakit-abc/usb")
+
+    def test_args_reject_missing_or_relative_mountpoint(self):
+        for mount in ("", "usb", "run/bootmediakit/usb", None):
+            with self.subTest(mount=mount), self.assertRaisesRegex(RuntimeError, "abszolút"):
+                worker.grub_install_args(self.DEVICE, mount)
+
+    def test_args_reject_host_root_boot_and_efi_directories(self):
+        for mount in ("/", "/boot", "/boot/", "/boot/grub", "/boot/efi", "/efi", "/efi/EFI",
+                      "/run/../boot", "//boot"):
+            with self.subTest(mount=mount), self.assertRaisesRegex(RuntimeError, "gép saját"):
+                worker.grub_install_args(self.DEVICE, mount)
+
+    def test_args_accept_lookalike_names_outside_host_boot_directories(self):
+        for mount in ("/bootstrap/usb", "/run/boot", "/mnt/efi-copy", "/run/bootmediakit-x/usb"):
+            with self.subTest(mount=mount):
+                self.assertEqual(worker.grub_install_args(self.DEVICE, mount)[2], f"--boot-directory={mount}")
+
+    # -- require_bios_grub ---------------------------------------------------
+
+    def make_grub_dir(self, root: Path, skip: tuple[str, ...] = ()) -> Path:
+        directory = root / "i386-pc"
+        directory.mkdir()
+        for name in worker.GRUB_PC_REQUIRED_FILES:
+            if name not in skip:
+                (directory / name).write_bytes(b"x")
+        return directory
+
+    def test_missing_grub_install_names_the_package(self):
+        with patch("worker.shutil.which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, r"sudo pacman -S grub"):
+                worker.require_bios_grub()
+
+    def test_missing_or_incomplete_i386_pc_directory_names_the_package(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            incomplete = self.make_grub_dir(root, skip=("ntldr.mod",))
+            for directory, detail in ((root / "absent", "nincs"), (incomplete, "ntldr.mod")):
+                with self.subTest(detail=detail), patch.object(worker, "GRUB_PC_DIRECTORY", directory), patch(
+                    "worker.shutil.which", return_value="/usr/bin/grub-install"
+                ), self.assertRaisesRegex(RuntimeError, f"{detail}.*sudo pacman -S grub"):
+                    worker.require_bios_grub()
+
+    # -- install_bios_chainloader -------------------------------------------
+
+    def run_install(self, *, command_effect=None, mbr=None, verify_effect=None, grub_files=None,
+                    before=None):
+        """Run install_bios_chainloader against a temp mountpoint with mocks.
+
+        Returns (events, mountpoint, error). events records the order of
+        identity check, grub-install and table verification.
+        """
+        events: list[str] = []
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        mountpoint = root / "usb"
+        mountpoint.mkdir()
+        grub_pc = self.make_grub_dir(root)
+        files = ("ntfs.mod", "ntldr.mod", "normal.mod") if grub_files is None else grub_files
+
+        def command(args, **kwargs):
+            if args[0] == "grub-install":
+                events.append("grub-install")
+                self.assertEqual(kwargs.get("timeout"), worker.GRUB_INSTALL_TIMEOUT)
+                modules = mountpoint / "grub" / "i386-pc"
+                modules.mkdir(parents=True)
+                for name in files:
+                    (modules / name).write_bytes(b"mod")
+                if command_effect:
+                    command_effect()
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        def validate(device, identity):
+            events.append("validate_target")
+            return 1
+
+        def verify(device, layout):
+            events.append("verify_mbr_layout")
+            if verify_effect:
+                raise verify_effect
+
+        error = None
+        with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+            "worker.shutil.which", return_value="/usr/bin/grub-install"
+        ), patch("worker.assert_mount_is_partition", side_effect=lambda *a: events.append("mount_check")), patch(
+            "worker.validate_target", side_effect=validate
+        ), patch("worker.command", side_effect=command) as run, patch(
+            "worker.read_mbr", return_value=self.GOOD_MBR if mbr is None else mbr
+        ), patch("worker.verify_mbr_layout", side_effect=verify), patch("worker.emit"):
+            if before:
+                before()
+            try:
+                worker.install_bios_chainloader(self.DEVICE, mountpoint, {"serial": "x"}, self.LAYOUT)
+            except Exception as exc:  # noqa: BLE001 - returned for assertions
+                error = exc
+            finally:
+                worker.CANCEL_EVENT.clear()
+        self.grub_install_calls = [call.args[0] for call in run.call_args_list if call.args[0][0] == "grub-install"]
+        return events, mountpoint, error
+
+    def test_install_runs_checks_then_grub_install_then_writes_config_and_verifies(self):
+        events, mountpoint, error = self.run_install()
+        self.assertIsNone(error)
+        self.assertEqual(events, ["mount_check", "validate_target", "grub-install", "verify_mbr_layout"])
+        self.assertEqual(
+            self.grub_install_calls,
+            [["grub-install", "--target=i386-pc", f"--boot-directory={mountpoint}", self.DEVICE]],
+        )
+        self.assertEqual((mountpoint / "grub" / "grub.cfg").read_text(encoding="ascii"), worker.BIOS_GRUB_CFG)
+
+    def test_grub_cfg_loads_every_module_explicitly_and_chainloads_bootmgr(self):
+        self.assertEqual(
+            worker.BIOS_GRUB_CFG.splitlines(),
+            ["insmod part_msdos", "insmod ntfs", "insmod ntldr", "insmod boot", "ntldr /bootmgr", "boot"],
+        )
+
+    def test_grub_cfg_is_fsynced(self):
+        with patch("worker.os.fsync") as fsync:
+            _events, _mountpoint, error = self.run_install()
+        self.assertIsNone(error)
+        fsync.assert_called_once()
+
+    def test_missing_grub_stops_before_any_command(self):
+        with patch("worker.shutil.which", return_value=None), patch("worker.command") as run, patch(
+            "worker.validate_target"
+        ) as validate:
+            with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(RuntimeError, "pacman -S grub"):
+                worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+        validate.assert_not_called()
+
+    def test_host_boot_directory_is_refused_before_any_command(self):
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.command") as run, patch("worker.validate_target") as validate:
+                with self.assertRaisesRegex(RuntimeError, "gép saját"):
+                    worker.install_bios_chainloader(self.DEVICE, Path("/boot"), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+        validate.assert_not_called()
+
+    def test_identity_failure_stops_before_grub_install(self):
+        def failing_validate(*_args):
+            raise RuntimeError("A célmeghajtó fizikai azonossága megváltozott (serial)")
+
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.assert_mount_is_partition"), patch(
+                "worker.validate_target", side_effect=failing_validate
+            ), patch("worker.command") as run:
+                with self.assertRaisesRegex(RuntimeError, "azonossága"):
+                    worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+
+    def test_changed_partition_table_is_an_error(self):
+        _events, _mountpoint, error = self.run_install(
+            verify_effect=RuntimeError("Az MBR partíció mérete/kezdete eltér a tervezettől")
+        )
+        self.assertIsInstance(error, RuntimeError)
+        self.assertIn("eltér", str(error))
+
+    def test_empty_boot_code_or_missing_signature_is_an_error(self):
+        for name, mbr, pattern in (
+            ("zero boot code", bytes(510) + b"\x55\xaa", "üres"),
+            ("no signature", b"\x01" * 512, "0x55AA"),
+        ):
+            with self.subTest(name):
+                _events, _mountpoint, error = self.run_install(mbr=mbr)
+                self.assertRegex(str(error), pattern)
+
+    def test_missing_ntldr_module_after_install_is_an_error(self):
+        events, mountpoint, error = self.run_install(grub_files=("ntfs.mod",))
+        self.assertRegex(str(error), "ntldr.mod")
+        self.assertFalse((mountpoint / "grub" / "grub.cfg").exists())
+        self.assertNotIn("verify_mbr_layout", events)
+
+    def test_cancel_before_install_runs_no_grub_install(self):
+        events, _mountpoint, error = self.run_install(before=worker.CANCEL_EVENT.set)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertEqual(events, [])
+        self.assertEqual(self.grub_install_calls, [])
+
+    def test_cancel_during_grub_install_takes_effect_right_after_it(self):
+        events, mountpoint, error = self.run_install(command_effect=worker.CANCEL_EVENT.set)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertEqual(events, ["mount_check", "validate_target", "grub-install"])
+        self.assertFalse((mountpoint / "grub" / "grub.cfg").exists())
+
+    def test_install_logs_that_grub_install_is_not_interruptible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.assert_mount_is_partition"), patch("worker.validate_target"), patch(
+                "worker.command", side_effect=RuntimeError("stop after emit")
+            ), patch("worker.emit") as emit:
+                with self.assertRaisesRegex(RuntimeError, "stop after emit"):
+                    worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        logs = " ".join(str(call.kwargs.get("log", "")) for call in emit.call_args_list)
+        self.assertIn("grub-install futása közben a megszakítás", logs)
+
+    # -- assert_mount_is_partition -------------------------------------------
+
+    def test_mount_check_requires_the_target_partition_device(self):
+        devices = {"/dev/sdx1": 0x0811, "/dev/sda2": 0x0802}
+
+        def fake_stat(path, *args, **kwargs):
+            if str(path) not in devices:
+                raise FileNotFoundError(path)
+            return unittest.mock.Mock(st_mode=stat.S_IFBLK | 0o660, st_rdev=devices[str(path)])
+
+        cases = (
+            ("matching source", "/dev/sdx1\n", True),
+            ("other device", "/dev/sda2\n", False),
+            ("one of two sources differs", "/dev/sdx1\n/dev/sda2\n", False),
+            ("unknown source", "tmpfs\n", False),
+            ("nothing mounted", "", False),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            for name, stdout, ok in cases:
+                with self.subTest(name), patch(
+                    "worker.command", return_value=subprocess.CompletedProcess([], 0, stdout, "")
+                ) as run, patch("worker.os.stat", side_effect=fake_stat):
+                    if ok:
+                        worker.assert_mount_is_partition(Path(temp), "/dev/sdx1")
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "nem a pendrive NTFS partíciója"):
+                            worker.assert_mount_is_partition(Path(temp), "/dev/sdx1")
+                self.assertEqual(
+                    run.call_args.args[0], ["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", temp]
+                )
+
+    def test_mount_check_rejects_a_symlinked_mountpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            real = Path(temp) / "real"
+            real.mkdir()
+            link = Path(temp) / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with patch("worker.command") as run, self.assertRaisesRegex(RuntimeError, "szimbolikus"):
+                worker.assert_mount_is_partition(link, "/dev/sdx1")
+            run.assert_not_called()
+
 
 class WindowsIsoScanTests(unittest.TestCase):
     def test_scan_accepts_case_insensitive_uefi_and_install_files(self):

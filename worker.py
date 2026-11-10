@@ -957,6 +957,135 @@ def verify_mbr_layout(device: str, layout: dict[str, int]) -> None:
         raise RuntimeError("Az MBR partíció nincs aktívnak (indíthatónak) jelölve.")
 
 
+GRUB_PC_DIRECTORY = Path("/usr/lib/grub/i386-pc")
+GRUB_PC_REQUIRED_FILES = ("boot.img", "biosdisk.mod", "part_msdos.mod", "ntfs.mod", "ntldr.mod")
+GRUB_INSTALL_TIMEOUT = 300
+# Every module is loaded explicitly: some GRUB builds (2.14-2ubuntu2.1) do
+# not autoload commands, and "ntldr" then fails with "can't find command".
+BIOS_GRUB_CFG = (
+    "insmod part_msdos\n"
+    "insmod ntfs\n"
+    "insmod ntldr\n"
+    "insmod boot\n"
+    "ntldr /bootmgr\n"
+    "boot\n"
+)
+HOST_BOOT_DIRECTORIES = ("/boot", "/efi")
+GRUB_MISSING_MESSAGE = (
+    "A Legacy BIOS módhoz szükséges GRUB (i386-pc) nincs telepítve vagy hiányos ({detail}). "
+    "Telepítsd a grub csomagot (sudo pacman -S grub), majd próbáld újra. "
+    "A csomag telepítése nem módosítja a gép saját rendszerbetöltőjét."
+)
+
+
+def require_bios_grub() -> None:
+    """Fail before any disk change when grub-install or i386-pc files are missing."""
+    if shutil.which("grub-install") is None:
+        raise RuntimeError(GRUB_MISSING_MESSAGE.format(detail="nincs grub-install"))
+    if not GRUB_PC_DIRECTORY.is_dir():
+        raise RuntimeError(GRUB_MISSING_MESSAGE.format(detail=f"nincs {GRUB_PC_DIRECTORY}"))
+    missing = [name for name in GRUB_PC_REQUIRED_FILES if not (GRUB_PC_DIRECTORY / name).is_file()]
+    if missing:
+        raise RuntimeError(GRUB_MISSING_MESSAGE.format(detail="hiányzik: " + ", ".join(missing)))
+
+
+def grub_install_args(device: str, ntfs_mount: str) -> list[str]:
+    """The only grub-install command line BootMediaKit runs.
+
+    BIOS target only, explicit --boot-directory on the target's NTFS mount,
+    and the validated device as the last argument. Never the host's root,
+    /boot or ESP.
+    """
+    if not isinstance(device, str) or not device.startswith("/dev/") or device != os.path.normpath(device):
+        raise RuntimeError("A GRUB telepítésének céleszköze hiányzik vagy érvénytelen; a telepítést leállítottam.")
+    if not isinstance(ntfs_mount, str) or not ntfs_mount or not os.path.isabs(ntfs_mount):
+        raise RuntimeError("A GRUB könyvtárának helye hiányzik vagy nem abszolút útvonal; a telepítést leállítottam.")
+    # POSIX normpath keeps a leading "//"; collapse it so "//boot" is /boot.
+    boot_directory = "/" + os.path.normpath(ntfs_mount).lstrip("/")
+    if boot_directory == "/" or any(
+        boot_directory == root or boot_directory.startswith(root + "/") for root in HOST_BOOT_DIRECTORIES
+    ):
+        raise RuntimeError(
+            f"A GRUB könyvtára nem lehet a gép saját gyökér-, /boot vagy /efi könyvtára ({boot_directory}); "
+            "a telepítést biztonsági okból leállítottam."
+        )
+    return ["grub-install", "--target=i386-pc", f"--boot-directory={boot_directory}", device]
+
+
+def assert_mount_is_partition(mountpoint: Path, partition: str) -> None:
+    """The boot directory must be the target partition's own mountpoint."""
+    if mountpoint.is_symlink() or os.path.realpath(mountpoint) != os.path.normpath(str(mountpoint)):
+        raise RuntimeError("A pendrive csatolási pontja szimbolikus linken át vezet; a GRUB telepítését leállítottam.")
+    result = command(["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", str(mountpoint)], check=False, timeout=10)
+    sources = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    try:
+        wanted = os.stat(partition).st_rdev
+        matches = bool(sources) and all(
+            stat.S_ISBLK(os.stat(source).st_mode) and os.stat(source).st_rdev == wanted for source in sources
+        )
+    except OSError:
+        matches = False
+    if not matches:
+        raise RuntimeError(
+            f"A(z) {mountpoint} helyen nem a pendrive NTFS partíciója ({partition}) van csatolva; "
+            "a GRUB telepítését biztonsági okból leállítottam."
+        )
+
+
+def read_mbr(device: str) -> bytes:
+    with open(device, "rb", buffering=0) as source:
+        return source.read(512)
+
+
+def install_bios_chainloader(
+    device: str,
+    ntfs_mount: Path,
+    expected_identity: dict[str, object] | None,
+    layout: dict[str, int],
+) -> None:
+    """Install GRUB i386-pc to the target MBR gap and chainload /bootmgr."""
+    check_cancelled()
+    require_bios_grub()
+    args = grub_install_args(device, str(ntfs_mount))
+    assert_mount_is_partition(ntfs_mount, partition_path(device, 1))
+    # Rule: the identity check runs again immediately before grub-install.
+    validate_target(device, expected_identity)
+    check_cancelled()
+    emit(
+        "GRUB indító telepítése a pendrive-ra…",
+        99,
+        log="A grub-install futása közben a megszakítás csak a lépés végén érvényesül.",
+    )
+    command(args, timeout=GRUB_INSTALL_TIMEOUT)
+    check_cancelled()
+
+    grub_dir = ntfs_mount / "grub"
+    if grub_dir.is_symlink() or not grub_dir.is_dir():
+        raise RuntimeError("A grub-install nem hozta létre a /grub könyvtárat a pendrive-on.")
+    for module in ("ntfs.mod", "ntldr.mod"):
+        if not (grub_dir / "i386-pc" / module).is_file():
+            raise RuntimeError(f"A pendrive-ról hiányzik a GRUB modul: grub/i386-pc/{module}")
+    config = grub_dir / "grub.cfg"
+    fd = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    try:
+        data = BIOS_GRUB_CFG.encode("ascii")
+        if os.write(fd, data) != len(data):
+            raise RuntimeError("A grub.cfg nem íródott ki teljesen.")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if config.read_text(encoding="ascii") != BIOS_GRUB_CFG:
+        raise RuntimeError("A pendrive grub.cfg fájljának visszaolvasott tartalma eltér.")
+
+    mbr = read_mbr(device)
+    if len(mbr) != 512 or mbr[510:512] != b"\x55\xaa":
+        raise RuntimeError("Az MBR 0x55AA aláírása hiányzik a GRUB telepítése után.")
+    if mbr[:440] == bytes(440):
+        raise RuntimeError("Az MBR indítókód-területe üres maradt; a GRUB nem települt.")
+    verify_mbr_layout(device, layout)
+    emit("A GRUB indító települt; a partíciós tábla változatlan.", 99)
+
+
 def mount_iso(image: Path, mountpoint: Path) -> None:
     mountpoint.mkdir(parents=True, exist_ok=True)
     command(["mount", "-o", "loop,ro,nosuid,nodev", str(image), str(mountpoint)])
