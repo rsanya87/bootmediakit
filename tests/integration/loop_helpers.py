@@ -37,11 +37,16 @@ PARTITION_HELP = (
 )
 
 
-def skip_unless_integration_environment() -> None:
+def skip_unless_integration_environment(
+    extra_programs: tuple[str, ...] = (),
+    extra_directories: tuple[str, ...] = (),
+) -> None:
     """Skip when the opt-in integration environment is absent.
 
     With ``BMK_INTEGRATION_REQUIRED=1`` (set in CI) a missing precondition is
     an error instead, so the CI step cannot turn green by skipping everything.
+    ``extra_programs`` and ``extra_directories`` add test-specific
+    preconditions; the shared ones apply to every test unchanged.
     """
     reason = ""
     if os.environ.get("BMK_INTEGRATION") != "1":
@@ -49,9 +54,14 @@ def skip_unless_integration_environment() -> None:
     elif os.geteuid() != 0:
         reason = "root jogosultság szükséges (sudo)."
     else:
-        missing = [name for name in REQUIRED_PROGRAMS if shutil.which(name) is None]
+        missing = [
+            name for name in (*REQUIRED_PROGRAMS, *extra_programs) if shutil.which(name) is None
+        ]
+        missing_dirs = [path for path in extra_directories if not os.path.isdir(path)]
         if missing:
             reason = "hiányzó program: " + ", ".join(missing)
+        elif missing_dirs:
+            reason = "hiányzó könyvtár: " + ", ".join(missing_dirs)
     if not reason:
         return
     if os.environ.get("BMK_INTEGRATION_REQUIRED") == "1":
@@ -112,9 +122,14 @@ class LoopIntegrationCase(unittest.TestCase):
     """Base class: tmpfs work directory, loop attach/detach and worker patching."""
 
     WORKDIR_SIZE_MIB = 512
+    # Test-specific preconditions in addition to REQUIRED_PROGRAMS.
+    EXTRA_REQUIRED_PROGRAMS: tuple[str, ...] = ()
+    EXTRA_REQUIRED_DIRECTORIES: tuple[str, ...] = ()
 
     def setUp(self) -> None:
-        skip_unless_integration_environment()
+        skip_unless_integration_environment(
+            self.EXTRA_REQUIRED_PROGRAMS, self.EXTRA_REQUIRED_DIRECTORIES
+        )
         self.events: list[dict[str, object]] = []
         # A private tmpfs keeps the source files on a filesystem type the
         # worker's source/target collision check accepts on every host
