@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.2.1` (stabil kiadás, 2026-11-05)  
+**Verzió:** `0.2.2` (stabil kiadás, 2026-11-10)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.2.1 stabil kiadás automatizált GitHub Actions ellenőrzései és fizikai USB-tesztjei sikeresek. A Linux Mint 22.3 Cinnamon DD/RAW pendrive a tesztelt gépen UEFI és Legacy BIOS/MBR módban is elindult. A Windows 10 és Windows 11 IoT Enterprise LTSC x64 telepítése sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot kikapcsolt és bekapcsolt állapotában is eljutott a Windows Telepítő partícióválasztó képernyőjéig; a telepítés ezen túl nem lett végigtesztelve. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.2.2 karbantartó kiadás: új funkciót nem ad, és nem változtat sem az írási sorrenden, sem a Windows-mód GPT-elrendezésén. Az automatizált GitHub Actions ellenőrzései sikeresek, beleértve a valódi RAW és Windows írót futtató loop-eszközös integrációs teszteket. A 0.2.2-vel fizikailag újra ellenőrizve: a visszaolvasással kiírt Linux Mint 22.3 DD/RAW pendrive UEFI és Legacy BIOS/MBR módban is elindult, olyan pendrive-on is, amelyen előtte a Windows-mód kétpartíciós GPT-je volt; a Windows 10/11 IoT Enterprise LTSC pendrive a várt partíciónevekkel elkészült és elindult. A teljes Windows 10/11 IoT Enterprise LTSC telepítés, valamint a normál Windows 11 26H2 Telepítő indulása Secure Boot be- és kikapcsolt állapotában (csak a partícióválasztó képernyőig) a 0.2.1-gyel lett ellenőrizve, ezek teljes körűen nem lettek megismételve. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 

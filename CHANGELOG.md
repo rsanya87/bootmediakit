@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 — 2026-11-10
+
+Maintenance release: no new features, no change to the write sequence or to the Windows-mode GPT layout.
 
 - Source filesystem check: the rejection message now names the filesystem type and source and tells the user to copy the ISO to a local block-device-backed disk. `virtiofs`, `vboxsf`, `fuse.sshfs`, `fuse.rclone`, `fuse.gvfsd-fuse` and `fuse.portal` sources are accepted as network/virtual filesystems that cannot be on the target; `fuseblk` still resolves to its block device; `overlay`, `zfs` and unknown types stay rejected (T1).
 - Multi-device Btrfs sources: every member listed under `/sys/fs/btrfs/<UUID>/devices/` now takes part in the source/target collision check; an unreadable member list stops the operation (T2).

@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.2.1` (stable release, 2026-11-05)  
+**Version:** `0.2.2` (stable release, 2026-11-10)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> The 0.2.1 stable release has passed its automated GitHub Actions checks and physical USB validation. Linux Mint 22.3 Cinnamon DD/RAW media boots in UEFI and Legacy BIOS/MBR modes on the tested hardware. Windows 10 and Windows 11 IoT Enterprise LTSC x64 installation tests completed successfully. The standard Windows 11 26H2 x64 ISO reached the Setup disk-selection screen with Secure Boot both enabled and disabled; installation beyond that screen was not verified. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
+> 0.2.2 is a maintenance release: it adds no features and does not change the write sequence or the Windows-mode GPT layout. Its automated GitHub Actions checks passed, including loop-device integration tests of the real RAW and Windows writers. Physically re-validated for 0.2.2: Linux Mint 22.3 DD/RAW media written with read-back verification booted in UEFI and Legacy BIOS/MBR modes, including on a drive that previously carried the Windows-mode two-partition GPT; Windows 10/11 IoT Enterprise LTSC media was created with the expected partition names and booted. The complete Windows 10/11 IoT Enterprise LTSC installations and the standard Windows 11 26H2 Setup launch with Secure Boot enabled and disabled (to the disk-selection screen only) were verified on 0.2.1 and were not repeated in full. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
 
 ## Current capabilities
 

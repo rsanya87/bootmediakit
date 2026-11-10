@@ -2,11 +2,11 @@
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
-## 0.2.2 — Alaprendezés és automatizált tesztháló (hibajavító kiadás)
+## 0.2.2 — Stabil kiadás (2026-11-10): alaprendezés és automatizált tesztháló
 
 > **Ez a szakasz egyben végrehajtható munkaleírás.** Aki (ember vagy asszisztens) ezt kapja feladatként, a fizikai, éles USB-teszteken kívül mindent el tud végezni belőle. A fizikai teszteket kizárólag a projekt gazdája végzi, lásd a „Fizikai tesztek" szakaszt. Az asszisztens ezeket nem állíthatja késznek.
 
-### Állapot (`dev/0.2.2` ág)
+### Állapot
 
 - [x] T1. Forrás-fájlrendszer elutasítás: érthetőbb üzenet és pontosabb kör.
 - [x] T2. Többeszközös btrfs: minden tag részt vesz az ütközésvizsgálatban.
@@ -16,7 +16,7 @@ A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a h
 - [x] T6. CI: shellcheck.
 - [x] T7. CI: loop-eszközös integrációs tesztek.
 - [x] T8. Dokumentáció-tisztítás.
-- [ ] T9. Kiadási commit: csak zöld CI és a gazda fizikai tesztjei után.
+- [x] T9. Kiadási commit a zöld CI és a gazda visszajelzése után. A merge és a `v0.2.2` tag a gazda dolga.
 
 ### Cél
 
@@ -150,14 +150,14 @@ A 0.2.1 kódját nem bővítjük új funkcióval. A cél a megmaradt közepes é
 
 ### Fizikai tesztek (a projekt gazdája végzi)
 
-Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek.
+Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. A pipák a gazda 2026-11-10-i visszajelzését rögzítik; a kiadást a gazda a nyitva maradt pontok ismeretében hagyta jóvá.
 
-- [ ] Linux DD/RAW, UEFI és Legacy BIOS (Linux Mint ISO), RAW visszaolvasás **bekapcsolva** egyszer.
-- [ ] A RAW teszt **olyan pendrive-on is**, amelyen előtte Windows-mód (GPT, két partíció) volt.
-- [ ] Windows 10/11 IoT LTSC, UEFI: az USB elkészítése, `sfdisk -d` ellenőrzés (1. partíció az ISO címkéjével, 2. `BMK_EFI`, `GUID:63`), a telepítő első újraindításig.
+- [x] Linux DD/RAW, UEFI és Legacy BIOS (Linux Mint ISO), RAW visszaolvasás **bekapcsolva** egyszer.
+- [x] A RAW teszt **olyan pendrive-on is**, amelyen előtte Windows-mód (GPT, két partíció) volt.
+- [ ] Windows 10/11 IoT LTSC, UEFI: az USB elkészítése, `sfdisk -d` ellenőrzés (1. partíció az ISO címkéjével, 2. `BMK_EFI`, `GUID:63`), a telepítő első újraindításig. *(Visszajelzés a 0.2.2-höz: az USB elkészült, a partíciónevek jók, a pendrive bootol; az `sfdisk -d` szerinti `GUID:63` és a telepítés az első újraindításig nem lett külön visszajelezve.)*
 - [ ] Windows 11 26H2, Secure Boot ki és be, a partícióválasztóig.
 - [ ] A T1 hibaüzenet kipróbálása: ISO egy FUSE/hálózati/overlay helyről.
-- [ ] A program normál indítása, eszközfrissítés (kihúzás/visszadugás közben is), tiszta kilépés CachyOS-en.
+- [ ] A program normál indítása, eszközfrissítés (kihúzás/visszadugás közben is), tiszta kilépés CachyOS-en. *(Visszajelzés: az indítás és a tiszta kilépés rendben; a kihúzás/visszadugás közbeni frissítés nem lett visszajelezve.)*
 - [ ] Egy `fuseblk` (ntfs-3g) lemezen lévő ISO továbbra is használható.
 
 ---
