@@ -133,11 +133,15 @@ SENDKEY_NAMES = {
     "$": "shift-4", "(": "shift-9", ")": "shift-0", ",": "comma", "=": "equal",
     "\n": "ret",
 }
+# "set" prints prefix/root without needing the echo module; the insmod
+# errors tell a missing file from a read or format problem.
 GRUB_DIAGNOSTIC_COMMANDS = (
-    "echo $prefix $root",
-    "ls /",
+    "set",
     "ls /grub",
-    "cat /grub/grub.cfg",
+    "ls -l /grub/i386-pc/command.lst",
+    "ls -l /grub/i386-pc/ntldr.mod",
+    "insmod echo",
+    "insmod ntldr",
     "ntldr /bootmgr",
 )
 
@@ -273,13 +277,22 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
         self.build_media(("ntfs-3g",))
 
     def test_qemu_seabios_chainloads_bootmgr(self):
+        self.boot_media_in_qemu(("ntfs3", "ntfs-3g"))
+
+    def test_qemu_seabios_chainloads_bootmgr_from_ntfs_3g_media(self):
+        """Same boot check; GRUB and bootmgr written through ntfs-3g instead of ntfs3."""
+        if shutil.which("ntfs-3g") is None:
+            raise unittest.SkipTest("az ntfs-3g nincs telepítve")
+        self.boot_media_in_qemu(("ntfs-3g",))
+
+    def boot_media_in_qemu(self, drivers: tuple[str, ...]) -> None:
         if os.environ.get("BMK_QEMU") != "1":
             raise unittest.SkipTest("QEMU-próba kihagyva: BMK_QEMU=1 szükséges.")
         qemu = next((shutil.which(name) for name in QEMU_PROGRAMS if shutil.which(name)), None)
         if qemu is None:
             raise unittest.SkipTest("QEMU-próba kihagyva: nincs qemu-system-x86_64 / qemu-system-i386.")
 
-        disk, device, driver = self.build_media(("ntfs3", "ntfs-3g"))
+        disk, device, driver = self.build_media(drivers)
         self._detach_loop(device)
 
         output = self.workdir / "debugcon.txt"
