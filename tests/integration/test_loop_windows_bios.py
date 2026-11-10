@@ -32,7 +32,18 @@ BOOT_MARKER = b"BMK-BOOT-OK"
 QEMU_TIMEOUT = 60.0
 QEMU_PROGRAMS = ("qemu-system-x86_64", "qemu-system-i386")
 
-GRUB_CFG = "insmod part_msdos\ninsmod ntfs\nntldr /bootmgr\nboot\n"
+# Every module is loaded explicitly. GRUB 2.14-2ubuntu2.1 (CI) does not
+# autoload commands from command.lst: without "insmod ntldr" the ntldr line
+# fails with "can't find command", while a manual insmod works. GRUB 2.16
+# (Arch) autoloads, so the explicit lines are harmless there.
+GRUB_CFG = (
+    "insmod part_msdos\n"
+    "insmod ntfs\n"
+    "insmod ntldr\n"
+    "insmod boot\n"
+    "ntldr /bootmgr\n"
+    "boot\n"
+)
 
 # Same geometry as worker.write_windows_uefi's mkfs.ntfs call; HiddenSectors
 # (--partition-start) is the partition's first sector.
