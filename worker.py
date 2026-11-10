@@ -888,11 +888,51 @@ def mount_iso(image: Path, mountpoint: Path) -> None:
     command(["mount", "-o", "loop,ro,nosuid,nodev", str(image), str(mountpoint)])
 
 
-def scan_windows_iso(iso_root: Path) -> tuple[Path, Path, int]:
-    """Validate essential x64 Windows Setup files and return install image + size."""
-    efi_loader = find_case_insensitive(iso_root, "efi/boot/bootx64.efi")
-    if efi_loader is None or not efi_loader.is_file():
-        raise RuntimeError("Az ISO nem tartalmazza az EFI/BOOT/BOOTX64.EFI x64 UEFI indítófájlt.")
+WINDOWS_BOOT_MODES = ("uefi", "bios")
+
+
+def _check_bios_boot_files(iso_root: Path) -> None:
+    """Files the Legacy BIOS chainload needs; EFI files are not required."""
+    bootmgr = find_case_insensitive(iso_root, "bootmgr")
+    if bootmgr is None or not bootmgr.is_file():
+        i386 = find_case_insensitive(iso_root, "i386")
+        if i386 is not None and i386.is_dir():
+            raise RuntimeError(
+                "Ez Windows XP / Server 2003 jellegű telepítő ISO (i386 könyvtár, bootmgr nélkül). "
+                "Ezt a típust a BootMediaKit nem támogatja; válassz Windows Vista vagy újabb telepítő ISO-t."
+            )
+        raise RuntimeError(
+            "Az ISO gyökerében nem található a bootmgr Windows indítókezelő, ezért a Legacy BIOS "
+            "módhoz nem használható. Válaszd az UEFI módot, vagy egy bootmgr-t tartalmazó Windows ISO-t."
+        )
+    bcd = find_case_insensitive(iso_root, "boot/bcd")
+    if bcd is None or not bcd.is_file():
+        raise RuntimeError(
+            "Nem található a boot/BCD Windows indítási konfiguráció, ezért az ISO a Legacy BIOS "
+            "módhoz nem használható. Válaszd az UEFI módot, vagy egy teljes Windows telepítő ISO-t."
+        )
+    if find_case_insensitive(iso_root, "grub") is not None:
+        raise RuntimeError(
+            "Az ISO gyökerében már van „grub” nevű fájl vagy könyvtár. A Legacy BIOS mód ide "
+            "telepítené a GRUB indítóját, de az ISO tartalmát nem írom felül. Használd az UEFI módot."
+        )
+
+
+def scan_windows_iso(iso_root: Path, boot_mode: str = "uefi") -> tuple[Path, Path, int]:
+    """Validate essential Windows Setup files and return install image + size.
+
+    ``boot_mode="uefi"`` (default) requires the x64 UEFI loader. ``"bios"``
+    requires bootmgr and boot/BCD for the GRUB ntldr chainload instead, and
+    refuses an ISO that already has a root "grub" entry.
+    """
+    if boot_mode not in WINDOWS_BOOT_MODES:
+        raise ValueError(f"Ismeretlen indítási mód: {boot_mode!r}")
+    if boot_mode == "bios":
+        _check_bios_boot_files(iso_root)
+    else:
+        efi_loader = find_case_insensitive(iso_root, "efi/boot/bootx64.efi")
+        if efi_loader is None or not efi_loader.is_file():
+            raise RuntimeError("Az ISO nem tartalmazza az EFI/BOOT/BOOTX64.EFI x64 UEFI indítófájlt.")
     boot_wim = find_case_insensitive(iso_root, "sources/boot.wim")
     if boot_wim is None or not boot_wim.is_file():
         raise RuntimeError("Nem található a sources/boot.wim Windows PE indítókép.")

@@ -1027,6 +1027,141 @@ class WindowsIsoScanTests(unittest.TestCase):
                 worker.scan_windows_iso(root)
 
 
+class WindowsBiosIsoScanTests(unittest.TestCase):
+    """scan_windows_iso(boot_mode="bios") for the Legacy BIOS/MBR mode (0.3.0 T1)."""
+
+    @staticmethod
+    def make_tree(root: Path, files: dict[str, bytes]) -> None:
+        for relative, data in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+    BIOS_FILES = {
+        "BOOTMGR": b"bootmgr",
+        "Boot/BCD": b"bcd",
+        "Sources/Boot.WIM": b"boot-image",
+        "Sources/install.swm": b"install-image",
+    }
+
+    def test_bios_mode_accepts_case_insensitive_files_without_efi_loader(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            expected_total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+            install_image, boot_wim, total = worker.scan_windows_iso(root, boot_mode="bios")
+
+            self.assertEqual(install_image.name, "install.swm")
+            self.assertEqual(boot_wim.name, "Boot.WIM")
+            self.assertEqual(total, expected_total)
+
+    def test_bios_mode_accepts_wim_and_esd_install_images(self):
+        for name in ("install.wim", "INSTALL.ESD"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                files = {key: value for key, value in self.BIOS_FILES.items() if "install" not in key}
+                files[f"Sources/{name}"] = b"install-image"
+                self.make_tree(root, files)
+                install_image, _boot_wim, _total = worker.scan_windows_iso(root, boot_mode="bios")
+                self.assertEqual(install_image.name, name)
+
+    def test_default_and_explicit_uefi_mode_still_require_the_efi_loader(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            for kwargs in ({}, {"boot_mode": "uefi"}):
+                with self.subTest(kwargs=kwargs), self.assertRaisesRegex(RuntimeError, "BOOTX64.EFI"):
+                    worker.scan_windows_iso(root, **kwargs)
+
+    def test_bios_mode_rejects_missing_bootmgr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["BOOTMGR"]
+            files["bootmgr.efi"] = b"efi bootmgr is not the BIOS bootmgr"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "bootmgr Windows indítókezelő"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_bootmgr_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["BOOTMGR"]
+            files["bootmgr/readme.txt"] = b"not a loader"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "bootmgr Windows indítókezelő"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_names_windows_xp_style_iso_as_unsupported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, {"I386/NTLDR": b"ntldr", "I386/SETUPLDR.BIN": b"setupldr"})
+            with self.assertRaisesRegex(RuntimeError, "XP / Server 2003.*nem támogatja"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_missing_bcd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["Boot/BCD"]
+            files["boot/boot.sdi"] = b"sdi"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "boot/BCD"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_missing_boot_wim_and_install_image(self):
+        for missing, pattern in (("Sources/Boot.WIM", "boot.wim"), ("Sources/install.swm", "install.wim")):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                files = dict(self.BIOS_FILES)
+                del files[missing]
+                self.make_tree(root, files)
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_refuses_an_existing_grub_entry_in_the_iso_root(self):
+        for extra in ({"grub/grub.cfg": b"cfg"}, {"GRUB": b"file"}):
+            with self.subTest(extra=list(extra)), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.make_tree(root, {**self.BIOS_FILES, **extra})
+                with self.assertRaisesRegex(RuntimeError, "„grub” nevű.*nem írom felül"):
+                    worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_grub_entry_is_not_an_error_in_uefi_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, {**self.BIOS_FILES, "efi/boot/bootx64.efi": b"efi", "grub/x": b"x"})
+            worker.scan_windows_iso(root)
+
+    def test_bios_mode_still_rejects_symlinks_and_special_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            (root / "link.txt").symlink_to(root / "BOOTMGR")
+            with self.assertRaisesRegex(RuntimeError, "szimbolikus fájllinket"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            (root / "support").mkdir()
+            (root / "support" / "dirlink").symlink_to(root / "Sources", target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "szimbolikus könyvtárlinket"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            os.mkfifo(root / "pipe")
+            with self.assertRaisesRegex(RuntimeError, "Nem szabályos fájl"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_unknown_boot_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                worker.scan_windows_iso(Path(temp), boot_mode="legacy")
+
+
 class UefiNtfsLabelTests(unittest.TestCase):
     def test_prepare_renamed_helper_preserves_verified_upstream_image(self):
         with tempfile.TemporaryDirectory() as temp:
