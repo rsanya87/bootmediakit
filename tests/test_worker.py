@@ -1366,10 +1366,14 @@ class BiosChainloaderTests(unittest.TestCase):
 
     def test_mount_check_requires_the_target_partition_device(self):
         devices = {"/dev/sdx1": 0x0811, "/dev/sda2": 0x0802}
+        real_stat = os.stat
 
         def fake_stat(path, *args, **kwargs):
+            # Python 3.12's Path.is_symlink() also goes through os.stat.
             if str(path) not in devices:
-                raise FileNotFoundError(path)
+                if str(path).startswith("/dev/"):
+                    raise FileNotFoundError(path)
+                return real_stat(path, *args, **kwargs)
             return unittest.mock.Mock(st_mode=stat.S_IFBLK | 0o660, st_rdev=devices[str(path)])
 
         cases = (
