@@ -883,6 +883,80 @@ def verify_gpt_layout(
         )
 
 
+MBR_NTFS_PARTITION_TYPE = "7"
+# MBR stores LBA start and size in 32 bits. util-linux (sfdisk 2.42) warns
+# that a DOS label cannot be used on disks larger than 2199023255040 bytes
+# (2**32 - 1 sectors of 512 bytes) and does not place a partition beyond that
+# point; a larger disk would be silently cut. Such disks are refused instead.
+MBR_MAX_SECTORS = 2**32 - 1
+
+
+def calculate_mbr_layout(total_sectors: int) -> dict[str, int]:
+    """One active NTFS partition from 1 MiB to the 1 MiB-aligned disk end.
+
+    Units are 512-byte logical sectors; the caller rejects other sector
+    sizes, as the Windows UEFI writer does.
+    """
+    sector_size = 512
+    if total_sectors <= 0:
+        raise ValueError("A lemezméretnek pozitívnak kell lennie.")
+    if total_sectors > MBR_MAX_SECTORS:
+        raise ValueError(
+            "A célmeghajtó mérete eléri vagy meghaladja a 2 TiB-ot, az MBR partíciós tábla ennyit nem tud kezelni. "
+            "Használj legfeljebb 2 TiB-os pendrive-ot, vagy válaszd az UEFI (GPT) módot."
+        )
+    start = GPT_ALIGNMENT_SECTORS
+    size = ((total_sectors - start) // GPT_ALIGNMENT_SECTORS) * GPT_ALIGNMENT_SECTORS
+    if size <= 0:
+        raise ValueError("A meghajtó túl kicsi a Legacy BIOS (MBR) elrendezéshez.")
+    return {"start": start, "size": size, "bytes": size * sector_size}
+
+
+def make_mbr_sfdisk_script(layout: dict[str, int]) -> str:
+    return (
+        "label: dos\n"
+        "unit: sectors\n"
+        f"start={layout['start']}, size={layout['size']}, "
+        f"type={MBR_NTFS_PARTITION_TYPE}, bootable\n"
+    )
+
+
+def verify_mbr_layout(device: str, layout: dict[str, int]) -> None:
+    """Read back the MBR: one active type-7 partition exactly as planned."""
+    command(["sfdisk", "--verify", device])
+    result = command(["sfdisk", "--json", device])
+    try:
+        partition_table = json.loads(result.stdout)["partitiontable"]
+        partitions = list(partition_table["partitions"])
+        label = str(partition_table.get("label", "")).lower()
+    except (KeyError, TypeError, ValueError, AttributeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Nem sikerült visszaolvasni az elkészült MBR partíciós táblát.") from exc
+
+    if label != "dos" or len(partitions) != 1:
+        raise RuntimeError(
+            "A pendrive nem a várt MBR elrendezést tartalmazza (egyetlen partíció, dos címke); "
+            "a műveletet leállítottam."
+        )
+    partition = partitions[0]
+    try:
+        actual_start = int(partition.get("start", -1))
+        actual_size = int(partition.get("size", -1))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Az MBR partíció kezdete vagy mérete nem olvasható.") from exc
+    if actual_start != layout["start"] or actual_size != layout["size"]:
+        raise RuntimeError(
+            "Az MBR partíció mérete/kezdete eltér a tervezettől: "
+            f"{actual_start}+{actual_size}, várt: {layout['start']}+{layout['size']}."
+        )
+    partition_type = str(partition.get("type", "")).strip().lower()
+    if partition_type.removeprefix("0x") != MBR_NTFS_PARTITION_TYPE:
+        raise RuntimeError(
+            f"Az MBR partíció típusa hibás: {partition_type!r}; elvárt: 7 (NTFS)."
+        )
+    if partition.get("bootable") is not True:
+        raise RuntimeError("Az MBR partíció nincs aktívnak (indíthatónak) jelölve.")
+
+
 def mount_iso(image: Path, mountpoint: Path) -> None:
     mountpoint.mkdir(parents=True, exist_ok=True)
     command(["mount", "-o", "loop,ro,nosuid,nodev", str(image), str(mountpoint)])

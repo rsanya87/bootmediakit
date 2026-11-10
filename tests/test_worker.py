@@ -983,6 +983,157 @@ class NtfsMountTests(unittest.TestCase):
             self.assertEqual(run.call_args_list[1].args[0][:3], ["mount", "-t", "ntfs-3g"])
 
 
+class MbrLayoutTests(unittest.TestCase):
+    """MBR layout for the Legacy BIOS mode (0.3.0 T2)."""
+
+    MIB_SECTORS = 2048
+
+    def test_layout_is_one_partition_from_1_mib_aligned_to_1_mib(self):
+        total = 64 * self.MIB_SECTORS
+        layout = worker.calculate_mbr_layout(total)
+        self.assertEqual(layout, {"start": 2048, "size": total - 2048, "bytes": (total - 2048) * 512})
+
+    def test_unaligned_disk_end_is_rounded_down_to_1_mib(self):
+        layout = worker.calculate_mbr_layout(64 * self.MIB_SECTORS + 1000)
+        self.assertEqual(layout["size"], 63 * self.MIB_SECTORS)
+        self.assertEqual(layout["size"] % self.MIB_SECTORS, 0)
+
+    def test_largest_dos_label_disk_is_accepted_and_fits_32_bit_lba(self):
+        # util-linux limit: at most 2**32 - 1 sectors for a DOS label.
+        layout = worker.calculate_mbr_layout(2**32 - 1)
+        self.assertEqual(layout["size"], 2**32 - 4096)
+        self.assertLessEqual(layout["start"] + layout["size"], 2**32 - 1)
+
+    def test_2_tib_and_larger_is_rejected(self):
+        for total in (2**32, 2**32 + 1, 3 * 2**31 * 2):
+            with self.subTest(total=total), self.assertRaisesRegex(ValueError, "2 TiB"):
+                worker.calculate_mbr_layout(total)
+
+    def test_too_small_drive_is_rejected(self):
+        for total in (2048, 4095):
+            with self.subTest(total=total), self.assertRaisesRegex(ValueError, "túl kicsi"):
+                worker.calculate_mbr_layout(total)
+        with self.assertRaises(ValueError):
+            worker.calculate_mbr_layout(0)
+
+    def test_sfdisk_script_is_dos_with_one_active_type_7_partition(self):
+        script = worker.make_mbr_sfdisk_script({"start": 2048, "size": 129024, "bytes": 0})
+        self.assertEqual(
+            script,
+            "label: dos\nunit: sectors\nstart=2048, size=129024, type=7, bootable\n",
+        )
+
+    # -- verify_mbr_layout with mocked sfdisk --------------------------------
+
+    LAYOUT = {"start": 2048, "size": 129024, "bytes": 129024 * 512}
+
+    @staticmethod
+    def sfdisk_json(label="dos", partitions=None) -> str:
+        if partitions is None:
+            partitions = [{"node": "/dev/sdx1", "start": 2048, "size": 129024, "type": "7", "bootable": True}]
+        return json.dumps({"partitiontable": {"label": label, "unit": "sectors", "partitions": partitions}})
+
+    def run_verify(self, stdout: str):
+        responses = [
+            subprocess.CompletedProcess(["sfdisk"], 0, "No errors detected.\n", ""),
+            subprocess.CompletedProcess(["sfdisk"], 0, stdout, ""),
+        ]
+        with patch("worker.command", side_effect=responses) as run:
+            worker.verify_mbr_layout("/dev/sdx", self.LAYOUT)
+        return run
+
+    def test_verify_accepts_the_planned_layout_after_sfdisk_verify(self):
+        run = self.run_verify(self.sfdisk_json())
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["sfdisk", "--verify", "/dev/sdx"], ["sfdisk", "--json", "/dev/sdx"]],
+        )
+
+    def test_verify_rejects_every_deviation(self):
+        good = {"node": "/dev/sdx1", "start": 2048, "size": 129024, "type": "7", "bootable": True}
+        cases = {
+            "gpt label": (self.sfdisk_json(label="gpt"), "MBR elrendezést"),
+            "two partitions": (self.sfdisk_json(partitions=[good, dict(good, start=200000)]), "MBR elrendezést"),
+            "no partition": (self.sfdisk_json(partitions=[]), "MBR elrendezést"),
+            "wrong start": (self.sfdisk_json(partitions=[dict(good, start=63)]), "eltér"),
+            "wrong size": (self.sfdisk_json(partitions=[dict(good, size=2048)]), "eltér"),
+            "linux type": (self.sfdisk_json(partitions=[dict(good, type="83")]), "típusa hibás"),
+            "not active": (self.sfdisk_json(partitions=[dict(good, bootable=False)]), "aktívnak"),
+            "no bootable field": (
+                self.sfdisk_json(partitions=[{k: v for k, v in good.items() if k != "bootable"}]),
+                "aktívnak",
+            ),
+            "invalid json": ("{", "visszaolvasni"),
+        }
+        for name, (stdout, pattern) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(RuntimeError, pattern):
+                self.run_verify(stdout)
+
+    def test_verify_stops_when_sfdisk_verify_fails(self):
+        with patch("worker.command", side_effect=RuntimeError("sfdisk: bad table")) as run:
+            with self.assertRaisesRegex(RuntimeError, "bad table"):
+                worker.verify_mbr_layout("/dev/sdx", self.LAYOUT)
+        self.assertEqual(run.call_count, 1)
+
+    # -- real sfdisk on sparse image files -------------------------------------
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_writes_and_verify_reads_back_generated_mbr_on_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024 + 12345 * 512
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_mbr_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--wipe", "always", str(image)],
+                input=worker.make_mbr_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            worker.verify_mbr_layout(str(image), layout)
+            with image.open("rb") as stream:
+                mbr = stream.read(512)
+            self.assertEqual(mbr[510:512], b"\x55\xaa")
+            self.assertEqual(mbr[446], 0x80)
+            self.assertEqual(mbr[450], 0x07)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_accepts_generated_mbr_script_on_largest_dos_label_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            with image.open("wb") as stream:
+                stream.truncate((2**32 - 1) * 512)
+            layout = worker.calculate_mbr_layout(2**32 - 1)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input=worker.make_mbr_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_warns_that_a_2_tib_image_exceeds_the_dos_label_limit(self):
+        """Documents why calculate_mbr_layout rejects 2**32 sectors and more."""
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            with image.open("wb") as stream:
+                stream.truncate(2**32 * 512)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input="label: dos\nunit: sectors\nstart=2048, type=7, bootable\n",
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+            output = result.stdout + result.stderr
+            self.assertIn("2199023255040", output, msg=output)
+
 class WindowsIsoScanTests(unittest.TestCase):
     def test_scan_accepts_case_insensitive_uefi_and_install_files(self):
         with tempfile.TemporaryDirectory() as temp:
