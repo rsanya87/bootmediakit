@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Tests: T0 feasibility gate for the Legacy BIOS/MBR Windows mode. A loop-device integration test builds an MBR disk with one active NTFS partition, runs `grub-install --target=i386-pc` (no `--force`) and chainloads a test `bootmgr` with `ntldr /bootmgr`; with `BMK_QEMU=1` it boots the image in QEMU/SeaBIOS and waits for `BMK-BOOT-OK` on the debug port (T0).
+- CI: installs `grub-pc-bin`, `grub2-common` and `qemu-system-x86`, and runs the integration tests with `BMK_QEMU=1` (T0).
 
 ## 0.2.2 — 2026-11-10
 
