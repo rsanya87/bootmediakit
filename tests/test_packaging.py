@@ -1,9 +1,14 @@
 from pathlib import Path
+import re
+import sys
 import unittest
 import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import version
 
 
 class PrivilegedPackagingTests(unittest.TestCase):
@@ -74,9 +79,9 @@ class PrivilegedPackagingTests(unittest.TestCase):
 
     def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn('APP_VERSION = "0.2.1"', app)
-        fetcher = (ROOT / "fetch_uefi_ntfs.py").read_text(encoding="utf-8")
-        self.assertIn('"User-Agent": "BootMediaKit/0.2.1"', fetcher)
+        self.assertIn("from version import __version__", app)
+        self.assertIn("APP_VERSION = __version__", app)
+        self.assertIn("version = QLabel(APP_VERSION)", app)
         self.assertIn('meta_row.addWidget(version', app)
         self.assertIn('QLabel#version { color: #83bde2;', app)
         self.assertIn('QLabel#muted { color: #b7c1cb; }', app)
@@ -94,6 +99,130 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("QTimer.singleShot(0, window.fit_window_to_screen)", app)
         self.assertIn("self.log.setMaximumHeight(56 if self._compact_ui else 76)", app)
         self.assertIn("self.file_info.setWordWrap(False)", app)
+
+
+class SingleVersionSourceTests(unittest.TestCase):
+    def read(self, relative: str) -> str:
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    def first_heading(self, relative: str, *, skip: tuple[str, ...] = ()) -> str:
+        for line in self.read(relative).splitlines():
+            if line.startswith("## ") and line[3:].strip() not in skip:
+                return line
+        self.fail(f"{relative}: nincs '## ' szakaszcím")
+
+    def test_version_module_is_a_single_assignment_of_a_semantic_version(self):
+        text = self.read("version.py")
+        self.assertRegex(text, r'\A__version__ = "\d+\.\d+\.\d+"\n\Z')
+        self.assertEqual(text, f'__version__ = "{version.__version__}"\n')
+
+    def test_gui_and_fetcher_read_the_version_module(self):
+        self.assertIn("APP_VERSION = __version__", self.read("app.py"))
+        fetcher = self.read("fetch_uefi_ntfs.py")
+        self.assertIn("from version import __version__", fetcher)
+        self.assertIn('"User-Agent": f"BootMediaKit/{__version__}"', fetcher)
+
+    def test_installer_installs_the_version_module_next_to_the_app(self):
+        self.assertIn(
+            'install -m 0644 "$SCRIPT_DIR/version.py" "$APP_DIR/version.py"',
+            self.read("install.sh"),
+        )
+
+    def test_installer_installs_every_module_the_gui_imports(self):
+        installer = self.read("install.sh")
+        local_modules = {path.stem for path in ROOT.glob("*.py")}
+        imported = set(
+            re.findall(r"^(?:from|import) (\w+)", self.read("app.py"), flags=re.MULTILINE)
+        )
+        for module in sorted(imported & local_modules):
+            self.assertIn(
+                f'"$SCRIPT_DIR/{module}.py" "$APP_DIR/{module}.py"', installer,
+                msg=f"az install.sh nem telepíti: {module}.py",
+            )
+
+    def test_privileged_worker_does_not_import_the_version_module(self):
+        worker = self.read("worker.py")
+        self.assertNotRegex(worker, r"(?m)^\s*(from|import)\s+version\b")
+
+    def test_documents_state_the_current_version(self):
+        current = version.__version__
+        self.assertRegex(
+            self.read("README.md"), rf"(?m)^\*\*Version:\*\* `{re.escape(current)}`"
+        )
+        self.assertRegex(
+            self.read("README.hu.md"), rf"(?m)^\*\*Verzió:\*\* `{re.escape(current)}`"
+        )
+        # During development CHANGELOG.md starts with "## Unreleased"; the
+        # topmost released section must then match the current version.
+        self.assertIn(current, self.first_heading("CHANGELOG.md", skip=("Unreleased",)))
+        self.assertIn(current, self.first_heading("docs/TESTING.md"))
+
+    def test_no_other_python_file_hardcodes_the_version(self):
+        current = version.__version__
+        offenders = [
+            str(path.relative_to(ROOT))
+            for path in sorted(ROOT.rglob("*.py"))
+            if path.name != "version.py"
+            and re.search(rf"(?<![\d.]){re.escape(current)}(?![\d.])", path.read_text(encoding="utf-8"))
+        ]
+        self.assertEqual(offenders, [], msg="kódolt verziószöveg a version.py-n kívül")
+
+
+class TestCommandDocumentationTests(unittest.TestCase):
+    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py"
+    SHELL_SYNTAX = "bash -n install.sh uninstall.sh bootmediakit-worker"
+    UNIT = "QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v"
+    SHELLCHECK = "shellcheck -S warning install.sh uninstall.sh bootmediakit-worker"
+    INTEGRATION = (
+        "sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen "
+        "python3 -m unittest discover -s tests/integration -v"
+    )
+    DOCUMENTS = ("README.md", "README.hu.md", "CONTRIBUTING.md", "docs/TESTING.md")
+
+    def test_documented_test_commands_match_ci(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        for command in (self.COMPILE, self.SHELL_SYNTAX, self.SHELLCHECK, self.INTEGRATION):
+            self.assertIn(command, workflow)
+        self.assertIn("unittest discover -s tests -v", workflow)
+        self.assertIn("QT_QPA_PLATFORM: offscreen", workflow)
+        for document in self.DOCUMENTS:
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for command in (
+                "python3 " + self.COMPILE, self.SHELL_SYNTAX, self.UNIT,
+                self.SHELLCHECK, self.INTEGRATION,
+            ):
+                self.assertIn(command, text, msg=f"{document}: hiányzik: {command}")
+            self.assertIn("PySide6", text)
+
+    def test_compile_command_lists_every_application_module(self):
+        listed = set(self.COMPILE.split()[2:])
+        self.assertEqual(listed, {path.name for path in ROOT.glob("*.py")})
+
+    def test_ci_cannot_pass_the_integration_step_by_skipping(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn('BMK_INTEGRATION_REQUIRED: "1"', workflow)
+
+    def test_integration_tests_are_opt_in_and_never_run_for_non_root(self):
+        helper = (ROOT / "tests/integration/loop_helpers.py").read_text(encoding="utf-8")
+        self.assertIn('os.environ.get("BMK_INTEGRATION") != "1"', helper)
+        self.assertIn("os.geteuid() != 0", helper)
+        self.assertIn("unittest.SkipTest", helper)
+        for program in ("losetup", "sfdisk", "wipefs", "mkfs.ext4", "mkfs.ntfs", "fatlabel"):
+            self.assertIn(f'"{program}"', helper)
+
+    def test_loop_stand_in_exists_only_in_the_test_helper(self):
+        for name in ("worker.py", "app.py"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            self.assertNotIn("BMK_INTEGRATION", text)
+            self.assertNotIn('"loop"', text)
+
+
+class SafetyDocumentationTests(unittest.TestCase):
+    def test_both_readmes_document_the_partially_written_state(self):
+        english = (ROOT / "README.md").read_text(encoding="utf-8")
+        hungarian = (ROOT / "README.hu.md").read_text(encoding="utf-8")
+        self.assertIn("may be left partially written", english)
+        self.assertIn("részlegesen írt állapotban maradhat", hungarian)
 
 
 if __name__ == "__main__":

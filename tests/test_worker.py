@@ -17,6 +17,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import worker
 from iso_utils import is_windows_install_iso
 
+_REAL_OS_STAT = os.stat
+
+
+def fake_dev_stat(block_stat):
+    """Return block_stat for /dev paths only; real files keep the real stat."""
+    def stat_side_effect(path, *args, **kwargs):
+        if isinstance(path, str) and path.startswith("/dev/"):
+            return block_stat
+        return _REAL_OS_STAT(path, *args, **kwargs)
+    return stat_side_effect
+
 
 class WorkerSafetyTests(unittest.TestCase):
     def test_relative_target_is_rejected(self):
@@ -187,6 +198,8 @@ class StabilityRegressionTests(unittest.TestCase):
         ), patch(
             "worker.os.stat", return_value=block_stat
         ), patch(
+            "worker._btrfs_member_devices", return_value=["/dev/nvme0n1p2"]
+        ), patch(
             "worker._block_ancestor_majmins", return_value={"259:2", "259:0"}
         ) as resolve:
             self.assertEqual(
@@ -210,6 +223,87 @@ class StabilityRegressionTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "háttértára nem igazolható"):
                 worker.source_backing_majmins(Path("/mnt/data/image.iso"))
+
+    def test_rejected_filesystem_message_names_type_source_and_remedy(self):
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("0:42", "/mnt/pool", "zfs", "tank/data")],
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                worker.source_backing_majmins(Path("/mnt/pool/image.iso"))
+        message = str(caught.exception)
+        self.assertIn("típus: zfs", message)
+        self.assertIn("forrás: tank/data", message)
+        self.assertIn(
+            "Másold az ISO-t helyi, blokkeszközön lévő lemezre (például a saját mappádba), "
+            "majd válaszd ki újra.",
+            message,
+        )
+
+    def test_unknown_and_generic_fuse_filesystems_stay_rejected(self):
+        for filesystem_type, source in (
+            ("overlay", "overlay"),
+            ("zfs", "tank/data"),
+            ("fuse", "some-fuse-daemon"),
+            ("fuse.mergerfs", "a:b"),
+            ("ecryptfs", "/home/.ecryptfs/user/.Private"),
+            ("brandnewfs", "none"),
+        ):
+            with self.subTest(filesystem_type=filesystem_type), patch(
+                "worker._source_mounts_for_path",
+                return_value=[("0:42", "/mnt/data", filesystem_type, source)],
+            ):
+                with self.assertRaisesRegex(RuntimeError, "háttértára nem igazolható"):
+                    worker.source_backing_majmins(Path("/mnt/data/image.iso"))
+
+    def test_network_and_virtual_filesystems_are_allowed_without_block_backing(self):
+        for filesystem_type, source in (
+            ("virtiofs", "hostshare"),
+            ("vboxsf", "Downloads"),
+            ("fuse.sshfs", "user@host:/srv/iso"),
+            ("fuse.rclone", "remote:iso"),
+            ("fuse.gvfsd-fuse", "gvfsd-fuse"),
+            ("fuse.portal", "portal"),
+        ):
+            with self.subTest(filesystem_type=filesystem_type), patch(
+                "worker._source_mounts_for_path",
+                return_value=[("0:42", "/mnt/data", filesystem_type, source)],
+            ), patch("worker._block_ancestor_majmins") as resolve:
+                self.assertEqual(
+                    worker.source_backing_majmins(Path("/mnt/data/image.iso")),
+                    set(),
+                )
+                resolve.assert_not_called()
+
+    def test_fuseblk_source_is_resolved_to_its_block_device(self):
+        block_stat = type("BlockStat", (), {"st_mode": stat.S_IFBLK})()
+        with patch(
+            "worker._source_mounts_for_path",
+            return_value=[("8:17", "/mnt/win", "fuseblk", "/dev/sdb1")],
+        ), patch("worker.os.stat", return_value=block_stat), patch(
+            "worker._block_ancestor_majmins", return_value={"8:17", "8:16"}
+        ) as resolve:
+            self.assertEqual(
+                worker.source_backing_majmins(Path("/mnt/win/image.iso")),
+                {"8:17", "8:16"},
+            )
+        resolve.assert_called_once_with("/dev/sdb1")
+
+    def test_fuseblk_source_on_target_disk_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"iso")
+            block_stat = type("BlockStat", (), {"st_mode": stat.S_IFBLK})()
+            with patch(
+                "worker._source_mounts_for_path",
+                return_value=[("8:17", temp, "fuseblk", "/dev/sdb1")],
+            ), patch("worker.os.stat", side_effect=fake_dev_stat(block_stat)), patch(
+                "worker._block_ancestor_majmins", return_value={"8:17", "8:16"}
+            ), patch(
+                "worker.device_identity", return_value={"maj_min": "8:16"}
+            ):
+                with self.assertRaisesRegex(RuntimeError, "célmeghajtó egyik kötetén"):
+                    worker.ensure_source_not_on_target(image, "/dev/sdb")
 
     def test_known_tmpfs_source_is_allowed_without_block_device_backing(self):
         with patch(
@@ -372,6 +466,108 @@ class StabilityRegressionTests(unittest.TestCase):
                     worker.write_uefi_ntfs_image(image, str(partition))
             fsync.assert_not_called()
 
+
+
+class BtrfsMultiDeviceTests(unittest.TestCase):
+    UUID = "0f2e4a8c-1111-2222-3333-444455556666"
+
+    def make_sysfs(self, root: Path, members: dict[str, str], uuid: str | None = None) -> None:
+        devices = root / (uuid or self.UUID) / "devices"
+        devices.mkdir(parents=True)
+        for name, maj_min in members.items():
+            (devices / name).mkdir()
+            (devices / name / "dev").write_text(maj_min + "\n", encoding="ascii")
+
+    def block_stat(self, major: int, minor: int):
+        return type(
+            "BlockStat", (), {"st_mode": stat.S_IFBLK, "st_rdev": os.makedev(major, minor)}
+        )()
+
+    def run_backing(self, sysfs: Path, ancestors: dict[str, set[str]]):
+        with patch.object(worker, "BTRFS_SYSFS_ROOT", sysfs), patch(
+            "worker._source_mounts_for_path",
+            return_value=[("0:30", "/mnt/pool", "btrfs", "/dev/sda1[/@data]")],
+        ), patch("worker.os.stat", return_value=self.block_stat(8, 1)), patch(
+            "worker.os.path.exists", return_value=True
+        ), patch(
+            "worker._block_ancestor_majmins",
+            side_effect=lambda path: ancestors.get(path, set()),
+        ):
+            return worker.source_backing_majmins(Path("/mnt/pool/image.iso"))
+
+    def test_every_member_of_a_two_device_btrfs_is_added_to_the_backing_set(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp)
+            # An unrelated filesystem must not be confused with the source.
+            self.make_sysfs(sysfs, {"nvme0n1p2": "259:2"}, "aaaaaaaa-0000-0000-0000-000000000000")
+            self.make_sysfs(sysfs, {"sda1": "8:1", "sdb1": "8:17"})
+            (sysfs / "features").mkdir()
+            backing = self.run_backing(
+                sysfs,
+                {"/dev/sda1": {"8:1", "8:0"}, "/dev/sdb1": {"8:17", "8:16"}},
+            )
+        self.assertEqual(backing, {"8:1", "8:0", "8:17", "8:16"})
+
+    def test_two_device_btrfs_with_a_member_on_the_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp) / "sysfs"
+            self.make_sysfs(sysfs, {"sda1": "8:1", "sdb1": "8:17"})
+            image = Path(temp) / "image.iso"
+            image.write_bytes(b"iso")
+            with patch.object(worker, "BTRFS_SYSFS_ROOT", sysfs), patch(
+                "worker._source_mounts_for_path",
+                # mountinfo names only the member that is NOT on the target.
+                return_value=[("0:30", temp, "btrfs", "/dev/sda1[/@data]")],
+            ), patch(
+                "worker.os.stat", side_effect=fake_dev_stat(self.block_stat(8, 1))
+            ), patch(
+                "worker.os.path.exists", return_value=True
+            ), patch(
+                "worker._block_ancestor_majmins",
+                side_effect=lambda path: {
+                    "/dev/sda1": {"8:1", "8:0"},
+                    "/dev/sdb1": {"8:17", "8:16"},
+                    "/dev/sdb": {"8:16"},
+                }[path],
+            ), patch(
+                "worker.device_identity", return_value={"maj_min": "8:16"}
+            ):
+                with self.assertRaisesRegex(RuntimeError, "célmeghajtó egyik kötetén"):
+                    worker.ensure_source_not_on_target(image, "/dev/sdb")
+
+    def test_single_device_btrfs_still_resolves(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp)
+            self.make_sysfs(sysfs, {"sda1": "8:1"})
+            backing = self.run_backing(sysfs, {"/dev/sda1": {"8:1", "8:0"}})
+        self.assertEqual(backing, {"8:1", "8:0"})
+
+    def test_unreadable_member_list_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            missing = Path(temp) / "no-sysfs"
+            with self.assertRaisesRegex(RuntimeError, "tagjainak listája nem olvasható"):
+                self.run_backing(missing, {"/dev/sda1": {"8:1", "8:0"}})
+
+    def test_filesystem_not_listed_in_sysfs_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp)
+            self.make_sysfs(sysfs, {"nvme0n1p2": "259:2"})
+            with self.assertRaisesRegex(RuntimeError, "tagjainak listája nem olvasható"):
+                self.run_backing(sysfs, {"/dev/sda1": {"8:1", "8:0"}})
+
+    def test_member_without_readable_device_number_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp)
+            self.make_sysfs(sysfs, {"sda1": "8:1", "sdb1": "garbage"})
+            with self.assertRaisesRegex(RuntimeError, "tagjainak listája nem olvasható"):
+                self.run_backing(sysfs, {"/dev/sda1": {"8:1", "8:0"}})
+
+    def test_member_whose_physical_disk_cannot_be_resolved_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sysfs = Path(temp)
+            self.make_sysfs(sysfs, {"sda1": "8:1", "sdb1": "8:17"})
+            with self.assertRaisesRegex(RuntimeError, "fizikai meghajtója nem oldható fel"):
+                self.run_backing(sysfs, {"/dev/sda1": {"8:1", "8:0"}})
 
 
 class IsoVolumeLabelTests(unittest.TestCase):
@@ -556,6 +752,154 @@ class RawWriteRegressionTests(unittest.TestCase):
                 commands.index(["wipefs", "--all", "--force", str(device)]),
                 commands.index(["sync"]),
             )
+
+
+class GuiPipeBrokenTests(unittest.TestCase):
+    """The GUI closes or crashes mid-write: stdout becomes a broken pipe."""
+
+    def setUp(self):
+        for name in ("TARGET_MODIFIED", "OUTPUT_BROKEN"):
+            patcher = patch.object(worker, name, False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        worker.CANCEL_EVENT.clear()
+
+    @staticmethod
+    def pipe_breaks_once_target_is_modified(*args, **kwargs):
+        if worker.TARGET_MODIFIED:
+            raise BrokenPipeError()
+
+    def test_windows_writer_stops_at_next_safe_point_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "windows.iso"
+            image.write_bytes(b"ISO")
+            temp_root = root / "bootmediakit-run"
+            commands = []
+
+            def fake_mkdtemp(**kwargs):
+                temp_root.mkdir()
+                return str(temp_root)
+
+            def fake_command(args, **kwargs):
+                commands.append(list(args))
+                stdout = ""
+                if args[:2] == ["blockdev", "--getss"]:
+                    stdout = "512\n"
+                elif args[:2] == ["blockdev", "--getsz"]:
+                    stdout = f"{16 * 1024**3 // 512}\n"
+                return subprocess.CompletedProcess(args, 0, stdout, "")
+
+            def fake_mount_iso(_image, mountpoint):
+                mountpoint.mkdir(parents=True)
+
+            iso_mount = temp_root / "iso"
+            with patch("worker.require_programs"), patch(
+                "worker.ensure_source_not_on_target"
+            ), patch("worker.validate_target", return_value=16 * 1024**3), patch(
+                "worker.verify_uefi_ntfs_image"
+            ), patch("worker.tempfile.mkdtemp", side_effect=fake_mkdtemp), patch(
+                "worker.mount_iso", side_effect=fake_mount_iso
+            ), patch(
+                "worker.scan_windows_iso",
+                return_value=(iso_mount / "sources/install.wim", iso_mount / "sources/boot.wim", 4096),
+            ), patch("worker.read_iso_volume_label", return_value="WIN_TEST"), patch(
+                "worker.prepare_bmk_uefi_ntfs_image", return_value=temp_root / "helper.img"
+            ), patch("worker.unmount_disk") as unmount_disk, patch(
+                "worker.assert_disk_unmounted"
+            ), patch("worker.verify_gpt_layout"), patch(
+                "worker.command", side_effect=fake_command
+            ), patch(
+                "builtins.print", side_effect=self.pipe_breaks_once_target_is_modified
+            ):
+                with self.assertRaisesRegex(
+                    worker.OperationCancelled, "megszakadt a kapcsolat"
+                ):
+                    worker.write_windows_uefi(image, "/dev/sdz", False, expected_identity={})
+                self.assertTrue(worker.TARGET_MODIFIED)
+                self.assertTrue(worker.OUTPUT_BROKEN)
+
+            # The destructive boundary was crossed, with the mandatory --force.
+            self.assertIn(["wipefs", "--all", "--force", "/dev/sdz"], commands)
+            # ...but the writer stopped before formatting anything.
+            self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+            self.assertFalse(any(args[0] == "mount" for args in commands))
+            # Cleanup: ISO unmounted, target unmounted again, temp dir removed.
+            self.assertIn(["umount", "--", str(iso_mount)], commands)
+            self.assertGreaterEqual(unmount_disk.call_count, 2)
+            self.assertEqual(unmount_disk.call_args.args, ("/dev/sdz",))
+            self.assertFalse(temp_root.exists())
+
+    def test_raw_writer_stops_at_next_safe_point_without_fsync(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / "linux.iso"
+            device = root / "usb-device"
+            chunk = 4096
+            payload = bytes(range(256)) * (8 * chunk // 256)
+            image.write_bytes(payload)
+            device.write_bytes(bytes([0x5A]) * len(payload))
+            commands = []
+
+            def fake_command(args, **kwargs):
+                commands.append(list(args))
+                return subprocess.CompletedProcess(args, 0, "", "")
+
+            def pipe_breaks_on_first_progress_event(text, *args, **kwargs):
+                if "Lemezkép kiírása… " in json.loads(text)["message"]:
+                    raise BrokenPipeError()
+
+            with patch.object(worker, "CHUNK", chunk), patch(
+                "worker.ensure_source_not_on_target"
+            ), patch(
+                "worker.validate_target", return_value=device.stat().st_size
+            ), patch("worker.require_programs"), patch("worker.unmount_disk"), patch(
+                "worker.assert_disk_unmounted"
+            ), patch("worker.command", side_effect=fake_command), patch(
+                "worker.os.fsync"
+            ) as fsync, patch(
+                "builtins.print", side_effect=pipe_breaks_on_first_progress_event
+            ):
+                with self.assertRaisesRegex(
+                    worker.OperationCancelled, "megszakadt a kapcsolat"
+                ):
+                    worker.write_raw(image, str(device), True, expected_identity={})
+                self.assertTrue(worker.TARGET_MODIFIED)
+                self.assertTrue(worker.OUTPUT_BROKEN)
+
+            fsync.assert_not_called()
+            written = device.read_bytes()
+            self.assertEqual(written[:chunk], payload[:chunk])
+            self.assertEqual(written[chunk:], bytes([0x5A]) * (len(payload) - chunk))
+            self.assertIn(["wipefs", "--all", "--force", str(device)], commands)
+            # Nothing after the write loop ran: no final sync, no read-back, no rereadpt.
+            self.assertEqual(commands.count(["sync"]), 1)
+            self.assertFalse(any(args[0] == "blockdev" for args in commands))
+
+    def test_main_reports_partial_target_on_stderr_and_exits_130(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "linux.iso"
+            image.write_bytes(b"ISO test")
+
+            def writer_loses_the_gui(*args, **kwargs):
+                worker.TARGET_MODIFIED = True
+                worker.emit("progress")
+                worker.check_cancelled()
+
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch(
+                "worker.write_raw", side_effect=writer_loses_the_gui
+            ), patch(
+                "builtins.print", side_effect=self.pipe_breaks_once_target_is_modified
+            ), patch("worker._write_stderr_safely") as stderr:
+                result = worker.main(
+                    ["bootmediakit-worker", "raw", str(image), "/dev/sdz", "0", "{}"]
+                )
+        self.assertEqual(result, 130)
+        stderr.assert_called_once()
+        self.assertIn("megszakadt a kapcsolat", stderr.call_args.args[0])
+        self.assertIn("részleges állapotban maradhat", stderr.call_args.args[0])
 
 
 class ProgressCalculationTests(unittest.TestCase):

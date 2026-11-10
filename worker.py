@@ -361,6 +361,60 @@ def validate_target(
     return int(identity["size"])
 
 
+BTRFS_SYSFS_ROOT = Path("/sys/fs/btrfs")
+_BTRFS_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+
+
+def _btrfs_member_devices(source: str, source_stat: os.stat_result) -> list[str]:
+    """Return the /dev path of every member device of a mounted btrfs.
+
+    The filesystem is located under /sys/fs/btrfs/<UUID>/devices/ by the
+    MAJ:MIN of the member reported in mountinfo. Fail closed when the member
+    list cannot be read completely.
+    """
+    unreadable = RuntimeError(
+        f"A Btrfs fájlrendszer tagjainak listája nem olvasható ki ({source}), ezért nem igazolható, "
+        "hogy a forrásfájl nem a célmeghajtón van; az írást biztonsági okból leállítottam. "
+        "Másold az ISO-t egy másik helyi lemezre (például a saját mappádba), majd válaszd ki újra."
+    )
+    try:
+        wanted = f"{os.major(source_stat.st_rdev)}:{os.minor(source_stat.st_rdev)}"
+        candidates = sorted(
+            entry for entry in BTRFS_SYSFS_ROOT.iterdir()
+            if _BTRFS_UUID_RE.match(entry.name)
+        )
+    except (OSError, AttributeError, TypeError) as exc:
+        raise unreadable from exc
+
+    for candidate in candidates:
+        members: dict[str, str] = {}
+        try:
+            for entry in sorted((candidate / "devices").iterdir()):
+                members[entry.name] = (entry / "dev").read_text(encoding="ascii").strip()
+        except OSError:
+            # A filesystem unmounted meanwhile; if it was ours, no match is
+            # found below and the operation is rejected.
+            continue
+        if wanted not in members.values():
+            continue
+        if not all(re.fullmatch(r"\d+:\d+", value) for value in members.values()):
+            raise unreadable
+        paths: list[str] = []
+        for name, maj_min in sorted(members.items()):
+            path = next(
+                (
+                    item for item in (f"/dev/{name}", f"/dev/block/{maj_min}")
+                    if os.path.exists(item)
+                ),
+                "",
+            )
+            if not path:
+                raise unreadable
+            paths.append(path)
+        return paths
+    raise unreadable
+
+
 def source_backing_majmins(image: Path) -> set[str]:
     """Resolve every backing block device for the mount containing an image.
 
@@ -375,6 +429,11 @@ def source_backing_majmins(image: Path) -> set[str]:
         "devtmpfs", "devpts", "mqueue", "securityfs", "tracefs",
         "debugfs", "pstore", "configfs", "rpc_pipefs",
         "nfs", "nfs4", "cifs", "smb3", "ceph", "9p",
+        # Network/virtual filesystems that can never live on the target USB
+        # disk. "fuseblk" (ntfs-3g) is deliberately absent: it has a /dev
+        # source and must go through the block-device collision check.
+        "virtiofs", "vboxsf",
+        "fuse.sshfs", "fuse.rclone", "fuse.gvfsd-fuse", "fuse.portal",
     }
     backing: set[str] = set()
     has_autofs = False
@@ -409,17 +468,27 @@ def source_backing_majmins(image: Path) -> set[str]:
                     f"A mountinfo által megadott forrás nem blokkeszköz ({source}); "
                     "az írást biztonsági okból leállítottam."
                 )
-            resolved_backing = _block_ancestor_majmins(source)
-            if not resolved_backing:
-                raise RuntimeError(
-                    f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({source}); "
-                    "az írást biztonsági okból leállítottam."
-                )
-            backing.update(resolved_backing)
+            # A multi-device btrfs shows only one member in mountinfo. Every
+            # member must take part in the source/target collision check.
+            if filesystem_type == "btrfs":
+                members = _btrfs_member_devices(source, source_stat)
+            else:
+                members = [source]
+            for member in members:
+                resolved_backing = _block_ancestor_majmins(member)
+                if not resolved_backing:
+                    raise RuntimeError(
+                        f"A forrás blokkeszközének fizikai meghajtója nem oldható fel ({member}); "
+                        "az írást biztonsági okból leállítottam."
+                    )
+                backing.update(resolved_backing)
         elif filesystem_type not in non_block_backed_types:
             raise RuntimeError(
-                "A forrás fájlrendszerének fizikai háttértára nem igazolható "
-                f"({filesystem_type}: {source_value}); biztonsági okból az írást leállítottam."
+                "A forrásfájl olyan fájlrendszeren van, amelynek fizikai háttértára nem igazolható "
+                f"(típus: {filesystem_type or 'ismeretlen'}, forrás: {source_value or 'ismeretlen'}), "
+                "ezért biztonsági okból az írást leállítottam. "
+                "Másold az ISO-t helyi, blokkeszközön lévő lemezre (például a saját mappádba), "
+                "majd válaszd ki újra."
             )
 
     # An autofs record is only an automounter layer, not the mounted data

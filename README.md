@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.2.1` (stable release, 2026-11-05)  
+**Version:** `0.2.2` (stable release, 2026-11-10)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> The 0.2.1 stable release has passed its automated GitHub Actions checks and physical USB validation. Linux Mint 22.3 Cinnamon DD/RAW media boots in UEFI and Legacy BIOS/MBR modes on the tested hardware. Windows 10 and Windows 11 IoT Enterprise LTSC x64 installation tests completed successfully. The standard Windows 11 26H2 x64 ISO reached the Setup disk-selection screen with Secure Boot both enabled and disabled; installation beyond that screen was not verified. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
+> 0.2.2 is a maintenance release: it adds no features and does not change the write sequence or the Windows-mode GPT layout. Its automated GitHub Actions checks passed, including loop-device integration tests of the real RAW and Windows writers. Physically re-validated for 0.2.2: Linux Mint 22.3 DD/RAW media written with read-back verification booted in UEFI and Legacy BIOS/MBR modes, including on a drive that previously carried the Windows-mode two-partition GPT; Windows 10/11 IoT Enterprise LTSC media was created with the expected partition names and booted. The complete Windows 10/11 IoT Enterprise LTSC installations and the standard Windows 11 26H2 Setup launch with Secure Boot enabled and disabled (to the disk-selection screen only) were verified on 0.2.1 and were not repeated in full. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
 
 ## Current capabilities
 
@@ -93,12 +93,20 @@ KDE users need an active polkit authentication agent.
 ## Run the automated tests
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py fetch_uefi_ntfs.py
-bash -n install.sh uninstall.sh
-python3 -m unittest discover -s tests -v
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+bash -n install.sh uninstall.sh bootmediakit-worker
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-The unit tests cover target safety, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests and SHA-256 verification. They do not replace real USB, firmware or Windows Setup tests.
+The GUI tests (`tests/test_app.py`) need `PySide6`; CI additionally runs `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker`.
+
+The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW and Windows writers against a disk image as root:
+
+```bash
+sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+```
+
+They are skipped without `BMK_INTEGRATION=1`, root and the required tools; see [docs/TESTING.md](docs/TESTING.md). Neither level replaces real USB, firmware or Windows Setup tests.
 
 ## Development direction
 
@@ -111,6 +119,8 @@ A Windows Setup log containing `GetMachineInfo: Couldn't find info for boot disk
 ## Safety
 
 Writing to a USB device erases its contents. Always check the selected device path, model and capacity before confirming a write. Use a drive with no data you need. The application validates the target again immediately before writing and refuses the system disk, but software cannot eliminate the risk of selecting the wrong device.
+
+If the graphical interface is closed or its connection to the worker is lost while writing, the worker stops safely at the next write boundary, but the USB drive may be left partially written. In that case the device must be written again before use.
 
 ## Third-party components
 

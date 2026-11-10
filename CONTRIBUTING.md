@@ -17,8 +17,18 @@ The current baseline targets Arch-based Linux and uses Python 3, PySide6, `parte
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+bash -n install.sh uninstall.sh bootmediakit-worker
+QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
+
+The GUI tests need `PySide6`. CI also runs `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker` and, as root, the loop-device integration tests:
+
+```bash
+sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+```
+
+See `docs/TESTING.md` for their requirements and skip conditions. The application version lives only in `version.py`; only a release commit may change it.
 
 Do not claim that a physical-device or Windows Setup issue is fixed based only on unit tests. Real USB-writing tests must use disposable media.
 

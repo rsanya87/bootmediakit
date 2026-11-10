@@ -41,8 +41,9 @@ from PySide6.QtWidgets import (
 
 from iso_utils import is_windows_install_iso
 from ui_helpers import calculate_window_profile, format_elapsed_time
+from version import __version__
 
-APP_VERSION = "0.2.1"
+APP_VERSION = __version__
 APP_NAME = "BootMediaKit"
 PRIVILEGED_WRAPPER = Path("/usr/libexec/bootmediakit/bootmediakit-worker")
 APP_ICON = Path(__file__).with_name("bootmediakit.svg")
@@ -194,6 +195,9 @@ class MainWindow(QMainWindow):
         self._lsblk_preserve_selection = False
         self._lsblk_quiet = False
         self._lsblk_current_selection: dict[str, Any] | None = None
+        # Last error logged by a silent (automatic) refresh; used to avoid
+        # repeating the same log line every refresh interval.
+        self._lsblk_last_quiet_error: str | None = None
         self.lsblk_timeout_timer = QTimer(self)
         self.lsblk_timeout_timer.setSingleShot(True)
         self.lsblk_timeout_timer.setInterval(5000)
@@ -588,7 +592,10 @@ class MainWindow(QMainWindow):
         if self.process is None:
             self.refresh_button.setEnabled(True)
         if self._lsblk_quiet:
-            self.append_log(message)
+            # Log an unchanged error only once until a refresh succeeds.
+            if message != self._lsblk_last_quiet_error:
+                self._lsblk_last_quiet_error = message
+                self.append_log(message)
         else:
             QMessageBox.warning(self, "Meghajtók listázása", message)
 
@@ -633,6 +640,8 @@ class MainWindow(QMainWindow):
             return
 
         self._lsblk_request_active = False
+        # State change: after a successful refresh the same error may be logged again.
+        self._lsblk_last_quiet_error = None
         if self.process is None:
             self.refresh_button.setEnabled(True)
         self._populate_devices(

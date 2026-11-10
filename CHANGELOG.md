@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 — 2026-11-10
+
+Maintenance release: no new features, no change to the write sequence or to the Windows-mode GPT layout.
+
+- Source filesystem check: the rejection message now names the filesystem type and source and tells the user to copy the ISO to a local block-device-backed disk. `virtiofs`, `vboxsf`, `fuse.sshfs`, `fuse.rclone`, `fuse.gvfsd-fuse` and `fuse.portal` sources are accepted as network/virtual filesystems that cannot be on the target; `fuseblk` still resolves to its block device; `overlay`, `zfs` and unknown types stay rejected (T1).
+- Multi-device Btrfs sources: every member listed under `/sys/fs/btrfs/<UUID>/devices/` now takes part in the source/target collision check; an unreadable member list stops the operation (T2).
+- GUI: an unchanged `lsblk` error during automatic device refresh is logged once instead of every 5 seconds; it may be logged again after a successful refresh. Manual refresh still shows the dialog (T3).
+- Tests and README: a GUI pipe that breaks during a Windows-mode or RAW write is now covered by regression tests (safe stop at the next cancellation point, cleanup, exit code 130), and the Safety section documents that the USB drive may be left partially written (T4).
+- Single version source: new `version.py`, read by the GUI and by the UEFI:NTFS fetcher and installed by `install.sh`; packaging tests keep the READMEs, `CHANGELOG.md` and `docs/TESTING.md` in step with it. The privileged worker does not import it (T5).
+- CI: `shellcheck -S warning` on the installer, uninstaller and worker wrapper (T6).
+- CI and tests: loop-device integration tests in `tests/integration/` run the real RAW and Windows writers as root against a disk image (stale GPT cleanup, byte-exact RAW write, GPT layout, NTFS/FAT labels, copied-file SHA-256). They are opt-in with `BMK_INTEGRATION=1` and are skipped otherwise (T7).
+- Documentation: test commands in the READMEs, `CONTRIBUTING.md` and `docs/TESTING.md` match CI; integration test usage and skip conditions are documented; the 0.2.2 work description is part of `ROADMAP.md` (T8).
+
 ## 0.2.1 — 2026-11-05
 
 BootMediaKit 0.2.1 is the first stable release of the 0.2.x line. This release concentrates on disk-write safety, reliability under failure and cancellation, GUI lifecycle stability, and regression coverage. It retains the Arch Linux family as its initial supported platform.

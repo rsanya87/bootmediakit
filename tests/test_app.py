@@ -81,6 +81,58 @@ class GuiStabilitySmokeTests(unittest.TestCase):
         self.assertEqual(data["model_display"], "/dev/sdb")
         self.assertTrue(window.device_combo.currentText().startswith("/dev/sdb"))
 
+    def _silent_timeout(self, window):
+        window._lsblk_request_active = False
+        window.refresh_devices(preserve_selection=True, quiet=True)
+        self.assertTrue(window._lsblk_request_active)
+        window._lsblk_timed_out()
+
+    def _successful_silent_refresh(self, window):
+        window._lsblk_request_active = False
+        window.refresh_devices(preserve_selection=True, quiet=True)
+        with patch.object(
+            window.lsblk_process, "readAllStandardOutput",
+            return_value=b'{"blockdevices": []}',
+        ), patch.object(
+            window.lsblk_process, "readAllStandardError", return_value=b""
+        ):
+            window._lsblk_finished(0, QProcess.ExitStatus.NormalExit)
+
+    def test_repeated_silent_lsblk_timeout_is_logged_once_until_a_refresh_succeeds(self):
+        window, _ = self.make_window()
+        window.log.clear()
+        needle = "időtúllépéssel leállt"
+
+        for _ in range(3):
+            self._silent_timeout(window)
+        self.assertEqual(window.log.toPlainText().count(needle), 1)
+
+        self._successful_silent_refresh(window)
+        self._silent_timeout(window)
+        self.assertEqual(window.log.toPlainText().count(needle), 2)
+
+    def test_a_different_silent_lsblk_error_is_still_logged(self):
+        window, _ = self.make_window()
+        window.log.clear()
+        self._silent_timeout(window)
+        window._lsblk_request_active = False
+        window.refresh_devices(preserve_selection=True, quiet=True)
+        window._finish_lsblk_error("Az lsblk parancs váratlanul leállt.")
+        text = window.log.toPlainText()
+        self.assertEqual(text.count("időtúllépéssel leállt"), 1)
+        self.assertEqual(text.count("váratlanul leállt"), 1)
+
+    def test_manual_refresh_timeout_always_shows_the_dialog(self):
+        window, _ = self.make_window()
+        window.log.clear()
+        with patch.object(gui.QMessageBox, "warning") as warning:
+            for _ in range(2):
+                window._lsblk_request_active = False
+                window.refresh_devices()
+                window._lsblk_timed_out()
+        self.assertEqual(warning.call_count, 2)
+        self.assertEqual(window.log.toPlainText(), "")
+
     def test_shutdown_window_explicitly_deletes_the_qobject_tree(self):
         window, _ = self.make_window()
         refresh_timer = window.refresh_timer

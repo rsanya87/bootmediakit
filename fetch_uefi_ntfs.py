@@ -15,6 +15,8 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
+from version import __version__
+
 UPSTREAM_COMMIT = "acf7de640848ab249bedeb6feb59b33001f656b6"
 UPSTREAM_URL = (
     "https://raw.githubusercontent.com/pbatard/rufus/"
@@ -74,7 +76,7 @@ def main() -> int:
     try:
         request = urllib.request.Request(
             UPSTREAM_URL,
-            headers={"User-Agent": "BootMediaKit/0.2.1"},
+            headers={"User-Agent": f"BootMediaKit/{__version__}"},
         )
         with urllib.request.urlopen(request, timeout=60) as response:
             with temporary.open("wb") as output:
