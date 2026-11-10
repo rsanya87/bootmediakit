@@ -10,7 +10,9 @@ QEMU debug port. The QEMU boot is opt-in with ``BMK_QEMU=1``.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -83,6 +85,59 @@ def host_grub_snapshot() -> dict[str, int]:
         except OSError:
             pass
     return snapshot
+
+
+def tool_version(args: list[str]) -> str:
+    """First line of a tool's --version output, for the test log."""
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"{args[0]}: {exc}"
+    lines = (result.stdout or result.stderr).strip().splitlines()
+    return lines[0] if lines else f"{args[0]}: no output"
+
+
+def monitor_command(sock_path: Path, command: str, timeout: float = 10.0) -> str:
+    """Run one human-monitor command over QEMU's unix monitor socket."""
+    prompt = b"(qemu) "
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(timeout)
+        conn.connect(str(sock_path))
+        buffer = b""
+        while not buffer.endswith(prompt):
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buffer += chunk
+        conn.sendall(command.encode("ascii") + b"\n")
+        buffer = b""
+        while not buffer.rstrip(b" ").endswith(b"(qemu)"):
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            buffer += chunk
+    text = buffer.decode("utf-8", errors="replace")
+    # Drop terminal escape sequences and the echoed command / trailing prompt.
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text).replace("\r", "")
+    lines = [line for line in text.split("\n") if line.strip() and not line.startswith("(qemu)")]
+    # The monitor echoes the command as it is typed (readline redraws).
+    if lines and lines[0].rstrip().endswith(command):
+        lines = lines[1:]
+    return "\n".join(lines)
+
+
+def vga_text_screen(xp_output: str) -> str:
+    """Decode 'xp /2000hx 0xb8000' output (80x25 text cells) into lines."""
+    values: list[str] = []
+    for line in xp_output.splitlines():
+        if ":" in line:
+            values += re.findall(r"0x([0-9a-fA-F]{4})\b", line.split(":", 1)[1])
+    cells = [int(value, 16) & 0xFF for value in values]
+    chars = "".join(chr(cell) if 32 <= cell < 127 else " " for cell in cells)
+    rows = [chars[index:index + 80].rstrip() for index in range(0, len(chars), 80)]
+    while rows and not rows[-1]:
+        rows.pop()
+    return "\n".join(rows)
 
 
 class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
@@ -199,16 +254,27 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
         self._detach_loop(device)
 
         output = self.workdir / "debugcon.txt"
+        seabios_log = self.workdir / "seabios.log"
+        monitor_socket = self.workdir / "qemu-monitor.sock"
         args = [
             qemu, "-machine", "pc", "-accel", "tcg", "-m", "128",
-            "-display", "none", "-no-reboot", "-serial", "none", "-monitor", "none",
+            "-display", "none", "-no-reboot", "-serial", "none",
+            "-monitor", f"unix:{monitor_socket},server=on,wait=off",
             "-parallel", "none",
             "-drive", f"file={disk},format=raw,if=ide,snapshot=on",
             "-boot", "c", "-debugcon", f"file:{output}",
+            # Diagnostics only: SeaBIOS writes its own log to port 0x402.
+            "-chardev", f"file,id=seabioslog,path={seabios_log}",
+            "-device", "isa-debugcon,iobase=0x402,chardev=seabioslog",
         ]
+        sys.stderr.write(
+            f"\n[T0 versions] {tool_version(['grub-install', '--version'])}; "
+            f"{tool_version([qemu, '--version'])}\n"
+        )
         started = time.monotonic()
         process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         found = False
+        diagnostics = ""
         try:
             while time.monotonic() - started < QEMU_TIMEOUT:
                 if output.is_file() and BOOT_MARKER in output.read_bytes():
@@ -217,6 +283,8 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
                 if process.poll() is not None:
                     break
                 time.sleep(0.25)
+            if not found and process.poll() is None:
+                diagnostics = self.collect_qemu_diagnostics(monitor_socket)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -226,6 +294,13 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
             f"\n[T0 QEMU {driver}] {time.monotonic() - started:.1f} s, exit={process.returncode}, "
             f"debugcon={debug[:200]!r}\nqemu stderr: {stderr.decode(errors='replace').strip()}\n"
         )
+        if not found:
+            bios = seabios_log.read_text(encoding="utf-8", errors="replace") if seabios_log.is_file() else ""
+            sys.stderr.write(
+                "[T0 QEMU diag] SeaBIOS log (last 40 lines):\n"
+                + ("\n".join(bios.splitlines()[-40:]) or "(empty)")
+                + "\n" + diagnostics + "\n"
+            )
         self.assertTrue(
             found,
             msg=(
@@ -234,6 +309,21 @@ class LoopWindowsBiosFeasibilityTests(LoopIntegrationCase):
             ),
         )
 
+    @staticmethod
+    def collect_qemu_diagnostics(monitor_socket: Path) -> str:
+        """Screen text and CPU state of a running guest; never raises."""
+        parts: list[str] = []
+        try:
+            screen = vga_text_screen(monitor_command(monitor_socket, "xp /2000hx 0xb8000"))
+            parts.append("[T0 QEMU diag] VGA text screen:\n" + (screen or "(empty)"))
+        except OSError as exc:
+            parts.append(f"[T0 QEMU diag] VGA text screen not readable: {exc}")
+        try:
+            registers = monitor_command(monitor_socket, "info registers")
+            parts.append("[T0 QEMU diag] info registers (first 12 lines):\n" + "\n".join(registers.splitlines()[:12]))
+        except OSError as exc:
+            parts.append(f"[T0 QEMU diag] registers not readable: {exc}")
+        return "\n".join(parts)
 
 if __name__ == "__main__":
     unittest.main()
