@@ -435,12 +435,14 @@ class LoopWindowsBiosFeasibilityTests(QemuBootMixin, LoopIntegrationCase):
 WRITER_ISO_LABEL = "BMK_BIOS_TEST"
 # What scan_windows_iso(boot_mode="bios") needs, without the EFI loader; the
 # bootmgr is the test program that prints BOOT_MARKER. Mixed-case names check
-# that the writer copies the ISO's own spelling.
+# that the writer finds and copies the ISO's own spelling; every path uses the
+# same spelling of a directory, because on a case-sensitive source two
+# spellings ("Boot", "boot") would be two directories, which an ISO cannot have.
 WRITER_ISO_FILES: dict[str, bytes | int] = {
     "bootmgr": make_test_bootmgr(),
     "setup.exe": 100_000,
     "Boot/BCD": 16 * 1024,
-    "boot/boot.sdi": 3 * MIB,
+    "Boot/boot.sdi": 3 * MIB,
     "sources/boot.wim": 6 * MIB,
     "sources/install.wim": 20 * MIB + 12_345,
     "sources/lang.ini": 0,
