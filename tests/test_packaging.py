@@ -1,5 +1,7 @@
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 import xml.etree.ElementTree as ET
@@ -276,6 +278,15 @@ class LegacyBiosPackagingTests(unittest.TestCase):
             if line.lstrip().startswith(("printf", "echo", "#")):
                 continue
             self.assertNotRegex(line, r"\b(grub-install|grub-mkconfig|efibootmgr)\b", msg=line)
+
+    def test_installer_is_stored_as_executable(self):
+        if not (ROOT / ".git").exists() or shutil.which("git") is None:
+            self.skipTest("nem git munkapéldány")
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "--stage", "install.sh"],
+            capture_output=True, text=True, check=True,
+        )
+        self.assertTrue(result.stdout.startswith("100755 "), msg=result.stdout)
 
     def test_readmes_list_grub_with_the_host_boot_loader_note(self):
         english = self.read("README.md")
