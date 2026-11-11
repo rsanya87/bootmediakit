@@ -2,6 +2,264 @@
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
+## 0.3.0 — Fejlesztés alatt: Windows Legacy BIOS/MBR telepítő-pendrive
+
+> **Ez a szakasz egyben végrehajtható munkaleírás.** Aki (ember vagy asszisztens) ezt kapja feladatként, a fizikai, éles USB-teszteken és a root jogot igénylő futtatásokon kívül mindent el tud végezni belőle. A fizikai teszteket kizárólag a projekt gazdája végzi, lásd a „Fizikai tesztek" szakaszt. Az asszisztens ezeket nem állíthatja késznek.
+
+### Állapot
+
+- [x] T0. Megvalósíthatósági kapu: GRUB i386-pc láncbetöltés loop-eszközön, QEMU/SeaBIOS-ban `BMK-BOOT-OK` (CI és a gazda gépe).
+- [x] T1. Windows ISO vizsgálata Legacy módhoz (`scan_windows_iso(boot_mode="bios")`).
+- [x] T2. MBR-elrendezés és `verify_mbr_layout`.
+- [x] T3. GRUB láncbetöltő telepítése (`install_bios_chainloader`, `grub_install_args`).
+- [x] T4. Az új író: `write_windows_bios`.
+- [x] T5. Worker belépési pont: `windows-bios` mód.
+- [x] T6. Grafikus felület: „Indítási mód” választó.
+- [x] T7. Integrációs teszt a termelési íróval, QEMU-s indítási próbával (CI és a gazda gépe: 10/10).
+- [x] T8. Telepítő és függőségek (`grub`), README-k.
+- [x] T9. Dokumentáció.
+- [ ] T10. Kiadási commit (a gazda visszajelzése után).
+
+### Jóváhagyott és dokumentált eltérések a munkaleírástól
+
+- **T0/T3 `grub.cfg`:** a négy soros minta helyett `insmod ntldr` és `insmod boot` is szerepel. A CI GRUB 2.14-2ubuntu2.1 nem tölti be automatikusan a parancsmodulokat (`can't find command`); a GRUB 2.16-on (Arch) a két sor ártalmatlan. A gazda jóváhagyta.
+- **CI környezeti változók:** a `sudo -E` helyett `sudo env BMK_…`, mert az ubuntu-26.04 runner `sudo`-ja elhagyta a lépés `env:` változóit. Egy külön CI-lépés ellenőrzi, hogy a root folyamat megkapja őket.
+- **T2 határ:** a pontosan 2 TiB-os (2**32 szektoros) meghajtót is elutasítjuk, mert az `sfdisk` ott csak figyelmeztet, és csendben levágná a partíciót.
+- **T3 tiltott könyvtárak:** a „`/`, `/boot` vagy `/efi` alatt” szabály így valósult meg: maga a `/`, valamint a `/boot`, az `/efi` és minden alattuk lévő könyvtár tiltott; ezen felül `findmnt` ellenőrzi, hogy az indítókönyvtár a cél NTFS partíciójának saját csatolási pontja.
+- **T6:** a Windows mód gombjának felirata „Windows telepítő (NTFS)” lett, mert mindkét indítási módot lefedi. A Windows-módleírások két sorra rövidültek és felülre igazodnak, mert 560 px szélességben (a 0.2.2-ben is) túlcsordultak.
+- **T7:** a T0 teszteket nem alakítottuk át, hanem megtartottuk írótól független referenciaként (meglévő tesztet nem törlünk); a termelési írót az új `LoopWindowsBiosWriterTests` hívja, a QEMU-kód közös. `BMK_INTEGRATION_REQUIRED=1` és `BMK_QEMU=1` mellett a hiányzó QEMU hiba, nem kihagyás (a T0 QEMU-tesztekre is). A CI munkafolyamata nem változott, mert a csomagok és a `BMK_QEMU=1` a T0 óta benne vannak.
+- **CI-stabilitás (külön `ci:` commit):** a csomagtelepítés háromszor próbálkozik, utána hibával áll le; a job 30, a telepítési lépés 20 perces időkorlátot kapott. Ok: a runner átmenetileg nem érte el a `security.ubuntu.com`-ot.
+- **`install.sh`:** a repóban futtathatóként (100755) tárolva; a README `chmod +x` lépése ártalmatlan maradt.
+
+### Cél
+
+A BootMediaKit Windows-módja ma csak UEFI-ről indítható pendrive-ot készít (GPT, NTFS + `BMK_EFI`). A 0.3.0 új, választható módot ad: **Windows telepítő Legacy BIOS/MBR indításhoz**, hogy a pendrive UEFI nélküli vagy CSM-módban használt gépen is elinduljon.
+
+**Nem cél:** kombinált BIOS+UEFI pendrive egyetlen MBR-rel, Windows XP/2003 ISO, 32 bites UEFI, Linux persistence, ISO-letöltés, több pendrive egyidejű írása, új disztribúció támogatása. A meglévő RAW és Windows UEFI mód viselkedése nem változik.
+
+### Választott megoldás és az oka
+
+**MBR + egyetlen aktív NTFS partíció + GNU GRUB (i386-pc) láncbetöltő, amely a Windows `bootmgr`-t indítja.**
+
+- A BIOS az MBR-ből a GRUB `boot.img`-et indítja, az a partíció előtti résbe ágyazott `core.img`-et, ez beolvassa az NTFS-ről a `/grub` könyvtárat és a `grub.cfg`-t, amely az `ntldr /bootmgr` paranccsal átadja a vezérlést a Windows indítókezelőjének. Ugyanezt az utat használja a WoeUSB.
+- **Licenc:** a boot-kódot a felhasználó gépére telepített GRUB csomag `grub-install` programja írja ki. A BootMediaKit nem tartalmaz és nem terjeszt Microsoft boot-kódot (MBR, NTFS PBR), és nem másol ilyet más projektből (ms-sys, Rufus). Ezzel a korábbi „boot-kód licencének tisztázása" kérdés lezárható.
+- **Ár:** új futási függőség (`grub` csomag az i386-pc modulokkal), és a pendrive-ra a Windows fájljai mellé egy `/grub` könyvtár kerül.
+
+Ha a T0 kísérlet szerint ez az út nem működik, **a munka megáll, és a gazda dönt**. Az asszisztens önállóan nem válthat más megoldásra (ms-sys, syslinux, beágyazott bináris boot-szektor).
+
+### Szabályok (invariánsok): ezeket nem szabad megsérteni
+
+A 0.2.2 szabályai változatlanul érvényesek:
+
+1. **A RAW-írás sorrendje és a `wipefs --all --force` kötelező volta nem változik.**
+2. **Megszakításkor nincs `fsync`**, a megszakítás kooperatív (`cancel` sor a worker `stdin`-jén), 130-as kilépési kóddal.
+3. **A Windows UEFI mód elrendezése nem változik:** GPT, 1. partíció NTFS az ISO kötetcímkéjével, 2. partíció 1 MiB-os FAT `BMK_EFI`, Microsoft Basic Data típus, `GUID:63`. A `write_windows_uefi` viselkedése bájtra ugyanaz marad; a meglévő egység- és integrációs tesztjei változtatás nélkül zöldek.
+4. **A GUI sosem fut rootként.** A polkit-akciót és a `bootmediakit-worker` wrappert nem módosítjuk.
+5. **Minden felhasználónak szánt szöveg magyar**, konkrét hibaüzenettel: mi történt és mit tegyen a felhasználó.
+6. **Fail-closed:** ha egy biztonsági ellenőrzés nem tud dönteni, a művelet megáll.
+7. **Verziószámot csak a kiadási commit emelhet** (T10). Fejlesztés közben a `version.py` `0.2.2` marad.
+
+Új szabályok a 0.3.0-hoz:
+
+8. **A `grub-install` csak a validált céleszközre futhat.** Közvetlenül előtte újra le kell futnia a céleszköz azonosság-ellenőrzésének. A hívás mindig tartalmazza: `--target=i386-pc`, explicit `--boot-directory=<a cél NTFS csatolási pontja>`, és utolsó argumentumként pontosan a validált eszközútvonalat. Ha bármelyik hiányzik vagy üres, a hívás nem történhet meg. EFI-célú `grub-install` hívás, `efibootmgr`, és a gazdagép saját `/boot` vagy ESP könyvtárára mutató `--boot-directory` tilos.
+9. **A BootMediaKit nem tartalmaz bináris boot-kódot** a Legacy módhoz, és futás közben sem tölt le ilyet.
+10. **A `worker.py` marad `-I` módú**, új Python-függőség nélkül (csak a szabványos könyvtár).
+11. **A loop-eszközt USB-nek mutató helyettesítés csak a `tests/integration/loop_helpers.py`-ban élhet**, a termelési kódban nem.
+
+### Munkamenet
+
+- Ág: `dev/0.3.0` a `main`-ből. A `main` védett: közvetlenül nem írható, csak pull requesten át, zöld CI-vel. A merge és a tag a gazda dolga.
+- Feladatonként egy kis commit, `feat:`, `fix:`, `test:`, `ci:`, `docs:` előtaggal. Az új viselkedéshez regressziós teszt tartozik ugyanabban a commitban.
+- Minden commit előtt:
+  ```bash
+  python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+  bash -n install.sh uninstall.sh bootmediakit-worker
+  shellcheck -S warning install.sh uninstall.sh bootmediakit-worker
+  QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
+  ```
+  Induláskor 129 egységteszt van. Egyetlen meglévő tesztet sem lehet törölni vagy gyengíteni; ha egy teszt a változtatás miatt elavul, az indoklás a commit üzenetbe kerül.
+- **Root jogot igénylő futtatás** (integrációs tesztek, `./install.sh`): az asszisztens nem futtat `sudo`-t. Ezeket a gazda futtatja külön terminálban, vagy a CI futtatja a feltöltött ágon. Az asszisztens kiírja a pontos parancsot, és megvárja az eredményt.
+- A `CHANGELOG.md` tetején fejlesztés közben `## Unreleased` szakasz áll, minden feladat hozzáad egy sort.
+- Az asszisztens fizikai lemezre (`/dev/sd*`, `/dev/nvme*`, `/dev/mmcblk*`) semmilyen parancsot nem ad ki.
+
+---
+
+### T0. Megvalósíthatósági kapu: GRUB láncbetöltés loop-eszközön és QEMU-ban
+
+Ez a feladat dönti el, hogy a választott megoldás működik-e. **Amíg ez nem zöld, a T2–T6 nem kezdhető el.**
+
+**Hol:** új `tests/integration/test_loop_windows_bios.py`, a `tests/integration/loop_helpers.py` bővítése.
+
+**Elvárás:** egy önálló integrációs teszt (még a termelési író nélkül, a lépéseket a teszt maga hajtja végre), ugyanazokkal a skip-feltételekkel, mint a meglévők (`BMK_INTEGRATION=1`, root, szükséges programok; ezekhez jön a `grub-install` és az i386-pc modulkönyvtár megléte):
+
+1. 256 MiB-os lemezkép, `losetup --partscan`.
+2. `sfdisk`: `label: dos`, egy partíció 1 MiB-tól a lemez végéig, típus `7`, aktív.
+3. `mkfs.ntfs` ugyanazokkal a geometria-argumentumokkal, amelyeket a meglévő Windows-író használ (nézd meg a kódban; a rejtett szektorok száma a partíció kezdete legyen).
+4. Csatolás (kernel `ntfs3`, tartalék `ntfs-3g`), a gyökérbe egy **teszt `bootmgr`** fájl kerül: néhány bájtnyi valós módú gépi kód, amely a QEMU hibakereső portjára (`0xE9`) kiírja a `BMK-BOOT-OK` szöveget, majd megáll (`hlt` ciklus). A bájtsort a teszt állítja elő, kommentben az assembly megfelelőjével.
+5. `grub-install --target=i386-pc --boot-directory=<csatolási pont> <loop eszköz>`, majd a `<csatolási pont>/grub/grub.cfg` megírása:
+   ```
+   insmod part_msdos
+   insmod ntfs
+   ntldr /bootmgr
+   boot
+   ```
+6. Leválasztás, `sync`.
+7. **Indítási próba QEMU-ban**, ha `BMK_QEMU=1` és van `qemu-system-x86_64` vagy `qemu-system-i386`: a lemezképfájl indítása SeaBIOS-szal, `-display none -no-reboot -debugcon file:<kimenet>`, KVM nélkül is (`-accel tcg`), legfeljebb 60 másodperc időkorláttal. A teszt akkor sikeres, ha a kimeneti fájlban megjelenik a `BMK-BOOT-OK`. QEMU nélkül ez a rész `SkipTest`, a többi ellenőrzés lefut.
+8. Statikus ellenőrzések QEMU nélkül is: az MBR végén `55 AA`; a partíciós tábla a `grub-install` előtt és után azonos (`sfdisk --dump` összehasonlítás); az MBR első 440 bájtja nem csupa nulla; az 1. szektortól a partíció kezdetéig tartó résben van nem nulla adat (`core.img`); létezik a `grub/grub.cfg` és a `grub/i386-pc/` könyvtár az `ntfs.mod` és `ntldr.mod` fájlokkal.
+
+**Ellenőrizendő feltevések (a kódírás előtt nézz utána a telepített GRUB dokumentációjában, ne emlékezetből dolgozz):** a `--boot-directory=<X>` Archon `<X>/grub` könyvtárat hoz létre; az `ntldr` parancs a fájlt valós módban indítja; a `grub-install` loop-eszközön `--force` nélkül is beágyazza a `core.img`-et az 1 MiB-os résbe; `ntfs-3g` (fuseblk) csatolásnál is felismeri a fájlrendszert.
+
+**Elfogadás:** a teszt a gazda gépén (`sudo`-val) és a CI-ben zöld, a QEMU-s rész legalább az egyik helyen ténylegesen lefut és zöld. **Ha a `BMK-BOOT-OK` nem jelenik meg, vagy a `grub-install` csak `--force`-szal vagy blocklistával működik: állj meg, írd le pontosan a tapasztalatot, és kérd a gazda döntését.**
+
+### T1. Windows ISO vizsgálata Legacy módhoz
+
+**Hol:** `worker.py` (`scan_windows_iso` és környéke), `iso_utils.py`, `tests/test_worker.py`.
+
+**Most:** a vizsgálat az UEFI-módhoz szükséges fájlokat várja el.
+
+**Elvárás:**
+1. A vizsgálat kapjon indítási módot (például `boot_mode="uefi" | "bios"`); az alapérték `uefi`, így a meglévő hívások és tesztek változatlanok.
+2. `bios` módban kötelező: `bootmgr` a gyökérben, `boot/bcd`, `sources/boot.wim`, és `sources/install.wim` vagy `.esd` vagy `.swm`. Az EFI-fájlok hiánya ebben a módban nem hiba (32 bites és régebbi ISO-k).
+3. A kis- és nagybetű-érzéketlen keresés ugyanúgy működjön, mint most.
+4. Ha van `i386/` könyvtár, de nincs `bootmgr` (Windows XP/2003 jellegű ISO), külön, érthető üzenet: ez a típus nem támogatott.
+5. A szimbolikus linkek és nem szabályos fájlok elutasítása változatlan.
+6. Ha az ISO gyökerében már létezik `grub` nevű fájl vagy könyvtár, a Legacy mód álljon meg érthető üzenettel (nem írunk felül ISO-tartalmat).
+
+**Elfogadás:** új tesztek mindegyik esetre; a meglévő `WindowsIsoScanTests` változtatás nélkül zöld.
+
+### T2. MBR-elrendezés
+
+**Hol:** `worker.py`, `tests/test_worker.py`.
+
+**Elvárás:**
+1. Új függvény az MBR-elrendezés kiszámítására és az `sfdisk` szkript előállítására: `label: dos`, egy partíció, kezdete 2048. szektor (1 MiB, 512 bájtos logikai szektornál), típus `7` (NTFS/HPFS), `bootable`, mérete a lemez végéig, 1 MiB-ra igazítva.
+2. **2 TiB-nál nagyobb céleszköz elutasítása** érthető üzenettel (az MBR korlátja). Nem 512 bájtos logikai szektorméretű eszköz elutasítása, ha a meglévő kód ezt a Windows-módban is így kezeli; kövesd a meglévő viselkedést.
+3. A minimális méret ellenőrzése ugyanazzal a tartalékkal, mint az UEFI-módban.
+4. Új `verify_mbr_layout()`: `sfdisk --json` alapján ellenőrzi a címkét (`dos`), az egyetlen partíciót, a típust, az aktív jelzőt, a kezdetet és a méretet. Eltérésnél a művelet megáll.
+
+**Elfogadás:** egységtesztek a számításra, a 2 TiB-os határra, a túl kicsi lemezre; teszt valódi `sfdisk`-kel ritka (sparse) képfájlon, a meglévő `test_sfdisk_accepts_generated_gpt_script_on_sparse_image` mintájára.
+
+### T3. GRUB láncbetöltő telepítése
+
+**Hol:** `worker.py`, `tests/test_worker.py`.
+
+**Elvárás:**
+1. Új függvény (például `install_bios_chainloader(device, ntfs_mount, expected_identity)`), amely:
+   - újra ellenőrzi a céleszköz azonosságát (8. szabály);
+   - ellenőrzi, hogy létezik a `grub-install` és az i386-pc modulkönyvtár (`/usr/lib/grub/i386-pc`), különben érthető hiba a telepítendő csomag nevével;
+   - lefuttatja a `grub-install`-t a T0-ban igazolt argumentumokkal, időkorláttal, a meglévő `command()` segédfüggvényen át;
+   - megírja a `grub/grub.cfg`-t a T0 szerinti tartalommal, `fsync`-kel;
+   - ellenőrzi az eredményt: a partíciós tábla változatlan (`verify_mbr_layout`), az MBR aláírása megvan, az első 440 bájt nem nulla, a `grub/i386-pc/ntfs.mod` és `ntldr.mod` létezik.
+2. A `grub-install` hívás előtt és után `check_cancelled()`. A hívás közben nem szakítható meg; ezt a naplóüzenet jelezze.
+3. A `grub-install` argumentumlistáját egy külön, tisztán tesztelhető függvény állítsa össze, amely hibát dob, ha a céleszköz vagy a csatolási pont üres, nem abszolút, vagy a csatolási pont `/`, `/boot` vagy `/efi` alatt van.
+
+**Elfogadás:** egységtesztek mockolt `command`-dal: a pontos argumentumlista; elutasítás üres/hibás bemenetre és a gazdagép könyvtáraira; hiányzó GRUB esetén érthető üzenet és **nincs** romboló lépés; megváltozott partíciós tábla esetén hiba.
+
+### T4. Az új író: `write_windows_bios`
+
+**Hol:** `worker.py`, `tests/test_worker.py`.
+
+**Sorrend (a `write_windows_uefi` mintájára; a közös lépéseket szervezd közös segédfüggvénybe úgy, hogy az UEFI-út viselkedése ne változzon):**
+
+`require_programs` (a Legacy módhoz kellő programokkal) → `ensure_source_not_on_target` → `validate_target` → GRUB elérhetőségének ellenőrzése (**még a romboló lépés előtt**) → ISO csatolása → `scan_windows_iso(boot_mode="bios")` → kötetcímke kiolvasása → méretellenőrzés → `unmount_disk` → újabb `ensure_source_not_on_target` és `validate_target` → `assert_disk_unmounted` → `wipefs --all --force` → `sfdisk` (MBR) → `blockdev --rereadpt` / `partprobe`, várakozás a partíció-eszközre → `verify_mbr_layout` → `mkfs.ntfs` az ISO címkéjével és a meglévő geometria-argumentumokkal → NTFS boot-szektor ellenőrzése (`validate_ntfs_boot_sector`) → NTFS csatolása → fájlmásolás a meglévő másolóval → opcionális SHA-256 visszaellenőrzés → `install_bios_chainloader` → `sync` → leválasztás → záró `verify_mbr_layout` → kész.
+
+**Elvárás:**
+1. A `TARGET_MODIFIED` jelző, a megszakítási pontok, a takarítás (`finally`: ISO és NTFS leválasztása, ideiglenes könyvtár törlése) ugyanúgy működjön, mint az UEFI-írónál.
+2. A záró naplóösszefoglaló írja le az elrendezést: MBR, egy aktív NTFS partíció, GRUB láncbetöltő a `/grub` könyvtárban, és hogy a pendrive **csak Legacy BIOS/CSM módban** indul.
+3. A SHA-256 manifest csak az ISO fájljaira vonatkozik; a `/grub` könyvtár nem része.
+
+**Elfogadás:** egységtesztek mockolt parancsokkal: a lépések sorrendje (a `wipefs --all --force` megléte, a `grub-install` a másolás után és a leválasztás előtt); megszakítás a `wipefs` után → takarítás lefut; megszakadt GUI-cső (a 0.2.2 `GuiPipeBrokenTests` mintájára); hiányzó GRUB → a céleszköz érintetlen.
+
+### T5. Worker belépési pont
+
+**Hol:** `worker.py` (`main()`), `tests/test_worker.py`.
+
+**Elvárás:** új mód a meglévő `raw` és `windows` mellé (javasolt név: `windows-bios`), ugyanazzal az argumentumsorrenddel. Ismeretlen módnév továbbra is hiba. A wrapper és a polkit-szabály nem változik (az argumentumokat változatlanul adják tovább; ezt ellenőrizd).
+
+**Elfogadás:** tesztek a `WindowsVerifyArgumentTests` mintájára: az új mód a `write_windows_bios`-t hívja a helyes ellenőrzési kapcsolóval és azonossággal; a régi módok változatlanok.
+
+### T6. Grafikus felület
+
+**Hol:** `app.py`, `ui_helpers.py` (ha kell), `tests/test_app.py`, `tests/test_packaging.py`.
+
+**Elvárás:**
+1. Windows ISO kiválasztásakor új választó: **„Indítási mód"**, két értékkel: „UEFI (GPT)" (alapértelmezett) és „Legacy BIOS (MBR)". Nem Windows ISO-nál a választó rejtett vagy tiltott.
+2. Ha a GRUB i386-pc nem érhető el a gépen, a Legacy érték tiltott, és súgószöveg mondja meg a teendőt (`sudo pacman -S grub`).
+3. A megerősítő párbeszédablak nevezze meg a választott módot, és Legacy módnál figyelmeztessen: a pendrive UEFI módban nem indul.
+4. Rövid, állandó megjegyzés a választó mellett: a Legacy módot régebbi gépekhez szánjuk; az újabb Windows telepítők hardverkövetelményei miatt a telepítő a régi gépen megtagadhatja a telepítést. (Ne állíts konkrét verziókövetelményt, amit nem ellenőriztél.)
+5. A GUI a workernek az új módnevet adja át; a kompakt ablakméret és a meglévő elrendezési tesztek nem sérülhetnek.
+
+**Elfogadás:** offscreen GUI-tesztek: a választó csak Windows ISO-nál aktív; hiányzó GRUB → Legacy tiltva; a worker-argumentumok helyesek mindkét módban; a meglévő `tests/test_app.py` tesztek zöldek.
+
+### T7. Integrációs teszt a termelési íróval
+
+**Hol:** `tests/integration/test_loop_windows_bios.py` (a T0 teszt átalakítása), `.github/workflows/tests.yml`.
+
+**Elvárás:**
+1. A T0 kézi lépései helyett a teszt a `worker.write_windows_bios`-t hívja a loop-eszközre, a meglévő `loop_as_usb_disk()` helyettesítéssel, bind mountolt mappával az ISO helyett (a `test_loop_windows.py` mintájára), a teszt `bootmgr` fájllal.
+2. Ellenőrzések: `sfdisk --json` (dos, egy aktív 7-es típusú partíció), NTFS-címke, minden másolt fájl SHA-256-ja, a `/grub/grub.cfg` tartalma, a T0 statikus ellenőrzései, nem maradt csatolás és ideiglenes könyvtár.
+3. QEMU-s indítási próba `BMK_QEMU=1` mellett, a `BMK-BOOT-OK` megjelenésével.
+4. Külön teszt: a régi, kétpartíciós GPT-s (Windows UEFI módú) lemezre írt Legacy mód után nem marad GPT-aláírás (sem elöl, sem hátul).
+5. CI: a csomaglistába `grub-pc-bin`, `grub2-common`, `qemu-system-x86`; az integrációs lépésben `BMK_QEMU=1`. A `BMK_INTEGRATION_REQUIRED=1` mellett a QEMU hiánya is hiba legyen, ne skip.
+
+**Elfogadás:** zöld a CI-ben és a gazda gépén. A meglévő három integrációs teszt változatlanul zöld.
+
+### T8. Telepítő és függőségek
+
+**Hol:** `install.sh`, `README.md`, `README.hu.md`, `tests/test_packaging.py`.
+
+**Elvárás:**
+1. Az `install.sh` csomaglistájába bekerül a `grub`. A README mindkét nyelven mondja ki: a csomag csak a `grub-install` eszközt és az i386-pc modulokat adja; a telepítése **nem** módosítja a gép saját rendszerbetöltőjét, és a BootMediaKit a `grub-install`-t kizárólag a kiválasztott pendrive-ra futtatja.
+2. A README „Mit tud" és korlátok része frissül: a Legacy mód mit készít, mivel indul, mivel nem.
+3. Csomagolási teszt: az `install.sh` tartalmazza a `grub` csomagot; a README-k említik a Legacy módot és a fenti megjegyzést.
+
+**Elfogadás:** a tesztek zöldek; a `shellcheck` tiszta.
+
+### T9. Dokumentáció
+
+**Hol:** `README.md`, `README.hu.md`, `docs/TESTING.md`, `CONTRIBUTING.md`, `ROADMAP.md`, `CHANGELOG.md`.
+
+**Elvárás:**
+1. A `ROADMAP.md`-be ez a szakasz kerül a 0.2.2 fölé, állapotlistával; a régi „0.2.2+" lista megfelelő pontja lezárva.
+2. `docs/TESTING.md`: az új integrációs teszt, a `BMK_QEMU` kapcsoló, és egy **kézi QEMU-próba** leírása kész pendrive-ra, írásvédetten (`-snapshot` vagy `readonly=on`), hogy a fizikai újraindítás előtt ellenőrizhető legyen az indulás.
+3. A dokumentált parancsok egyezzenek a CI-vel; a `TestCommandDocumentationTests` ezt őrzi, szükség szerint bővítsd.
+
+**Elfogadás:** a dokumentumokban szereplő parancsok szó szerint lefuttathatók tiszta klónon.
+
+### T10. Kiadási commit (csak akkor, ha T0–T9 kész, a CI zöld, és a gazda visszajelzett)
+
+1. `version.py`: `0.3.0`; README-k verziósora és állapotbekezdése; `CHANGELOG.md` (`Unreleased` → `0.3.0 — <dátum>`); `docs/TESTING.md` új legfelső szakasz a tesztjegyzőkönyvvel; `ROADMAP.md` ez a szakasz „Stabil kiadás".
+2. A fizikai tesztek pipái **csak a gazda visszajelzése alapján** kerülnek be; ami nincs visszajelezve, az a jegyzőkönyvben „nem tesztelt"-ként szerepel.
+3. `grep -rnIw "Unreleased\|TODO" . --exclude-dir=.git` találatai csak a munkaleírás szövegében és az azt őrző tesztben maradhatnak.
+4. Pull request a `main`-re. A merge, a `v0.3.0` tag és a release a gazda dolga.
+
+---
+
+### Fizikai tesztek (a projekt gazdája végzi)
+
+Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. Csak eldobható pendrive-on.
+
+- [ ] Kézi QEMU-próba a kész Legacy pendrive-ról (írásvédetten): megjelenik a Windows Telepítő.
+- [ ] Windows 10 x64 ISO, Legacy mód: indulás valódi gépen Legacy BIOS/CSM módban, a telepítő a partícióválasztóig. *(Visszajelzés 2026-11-11: Windows 10/11 IoT Enterprise LTSC ISO, nagyon régi Core 2 Duo laptop, Legacy mód: a pendrive elindult, a Windows Telepítő a particionálásig jutott, tovább nem lett próbálva. Pontosítandó, hogy ez egy vagy két ISO volt.)*
+- [ ] Windows 7 SP1 ISO (ha van kéznél), Legacy mód: indulás és a telepítő első képernyője. (USB 3.0 portról a Windows 7 telepítő illesztőprogram hiányában elakadhat; ez nem a pendrive hibája, USB 2.0 porton próbáld.)
+- [ ] `sudo sfdisk -d /dev/sdX` a Legacy pendrive-on: `label: dos`, egy partíció, `type=7`, `bootable`.
+- [ ] Legacy mód olyan pendrive-on, amelyen előtte Windows UEFI mód (GPT) volt: `sudo wipefs /dev/sdX` nem mutat `gpt` sort.
+- [ ] Ugyanaz a pendrive UEFI-only módban **nem** indul (elvárt viselkedés, a GUI figyelmeztetésével egyezik).
+- [ ] Regresszió: Windows UEFI mód és Linux RAW mód továbbra is működik (egy-egy kiírás és indítás).
+- [ ] A saját gép rendszerbetöltője érintetlen a `grub` csomag telepítése és egy Legacy kiírás után (a gép újraindul a megszokott módon).
+- [ ] GRUB nélküli állapot: a `grub` csomag eltávolítása után a Legacy érték tiltott a felületen, a súgószöveg helyes.
+
+---
+
+### Későbbre halasztva (0.3.x és később)
+
+- Kombinált „MBR, BIOS vagy UEFI" pendrive (NTFS + UEFI:NTFS segédpartíció egy MBR-en).
+- Több pendrive egyidejű írása különböző ISO-kkal (feladatkezelő a GUI-ban, feladatok közötti forrás/cél ellenőrzés).
+- A 0.2.2-ből nyitva maradt fizikai pontok: Windows 11 26H2 Secure Boot ki/be, a forrás-fájlrendszer hibaüzenete FUSE/overlay helyről, `fuseblk` forrás, eszközfrissítés kihúzás/visszadugás közben.
+- A GitHub Actions lépések frissítése (Node.js 20 kivezetés) és az `ubuntu-latest` váltás hatásának ellenőrzése.
+- Arch PKGBUILD, Debian/Ubuntu és Fedora támogatás (ott a `grub-install` neve és a modulkönyvtár eltérhet).
+- Ismert ISO SHA-256 ellenőrzés kiírás előtt, Linux persistence.
+
 ## 0.2.2 — Stabil kiadás (2026-11-10): alaprendezés és automatizált tesztháló
 
 > **Ez a szakasz egyben végrehajtható munkaleírás.** Aki (ember vagy asszisztens) ezt kapja feladatként, a fizikai, éles USB-teszteken kívül mindent el tud végezni belőle. A fizikai teszteket kizárólag a projekt gazdája végzi, lásd a „Fizikai tesztek" szakaszt. Az asszisztens ezeket nem állíthatja késznek.
@@ -164,7 +422,7 @@ Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. A pipák a
 
 ### Későbbre halasztva (0.3.0 és később)
 
-- Windows Legacy BIOS/MBR mód (MBR + aktív NTFS + UEFI:NTFS), előbb a boot-kód licencének tisztázásával.
+- Windows Legacy BIOS/MBR mód. *(A 0.3.0-ban megvalósítva: MBR + aktív NTFS + a gépre telepített GNU GRUB i386-pc láncbetöltő; a BootMediaKit nem tartalmaz Microsoft boot-kódot, így a licenckérdés lezárult. A kombinált BIOS+UEFI változat későbbre maradt.)*
 - Arch PKGBUILD és reprodukálható csomagellenőrzések.
 - Debian/Ubuntu, majd Fedora támogatás, a Polkit-beállítás és a csomagtelepítés szétválasztásával az író logikától.
 - Ismert ISO SHA-256 ellenőrzés kiírás előtt, Linux persistence.
@@ -232,7 +490,7 @@ A grafikus felület és a lemezírási logika maradjon disztribúciófüggetlen.
 
 ## Hosszabb távú ötletek
 
-- Windows Legacy BIOS/CSM telepítő.
+- ~~Windows Legacy BIOS/CSM telepítő~~ (0.3.0). Kombinált BIOS+UEFI Windows pendrive egyetlen MBR-rel.
 - Windows To Go és FreeDOS.
 - Linux persistence.
 - USB-meghajtó állapot- és kapacitástesztek.

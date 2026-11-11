@@ -12,7 +12,7 @@ BootMediaKit is an early-stage project. Reliability and data safety take priorit
 
 ## Development environment
 
-The current baseline targets Arch-based Linux and uses Python 3, PySide6, `parted`, `dosfstools`, `wimlib`, `7zip`, and polkit.
+The current baseline targets Arch-based Linux and uses Python 3, PySide6, `parted`, `dosfstools`, `wimlib`, `7zip`, `grub` (only `grub-install` and the i386-pc modules, for the Windows Legacy BIOS mode) and polkit. The QEMU boot checks of the integration tests also need `qemu-system-x86_64` (Arch: `qemu-system-x86`).
 
 ## Tests
 
@@ -28,7 +28,13 @@ The GUI tests need `PySide6`. CI also runs `shellcheck -S warning install.sh uni
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
 ```
 
-See `docs/TESTING.md` for their requirements and skip conditions. The application version lives only in `version.py`; only a release commit may change it.
+To include the QEMU/SeaBIOS boot check of the Windows Legacy BIOS media, as CI does:
+
+```bash
+sudo -E env BMK_INTEGRATION=1 BMK_QEMU=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
+```
+
+See `docs/TESTING.md` for their requirements and skip conditions, and for a read-only manual QEMU check of a finished USB drive. The application version lives only in `version.py`; only a release commit may change it.
 
 Do not claim that a physical-device or Windows Setup issue is fixed based only on unit tests. Real USB-writing tests must use disposable media.
 

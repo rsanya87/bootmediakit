@@ -216,6 +216,30 @@ class TestCommandDocumentationTests(unittest.TestCase):
                 self.assertIn(command, text, msg=f"{document}: hiányzik: {command}")
             self.assertIn("PySide6", text)
 
+    def test_qemu_integration_command_is_documented_and_matches_ci(self):
+        qemu_command = self.INTEGRATION.replace("BMK_INTEGRATION=1 ", "BMK_INTEGRATION=1 BMK_QEMU=1 ", 1)
+        self.assertIn("BMK_QEMU=1", self.CI_ROOT_ENV)
+        for document in ("CONTRIBUTING.md", "docs/TESTING.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            self.assertIn(qemu_command, text, msg=f"{document}: hiányzik: {qemu_command}")
+
+    def test_manual_qemu_check_never_writes_to_the_usb_drive(self):
+        testing = (ROOT / "docs/TESTING.md").read_text(encoding="utf-8")
+        self.assertIn("### Manual QEMU boot check of a finished USB drive", testing)
+        device_lines = [line for line in testing.splitlines() if "/dev/sdX" in line]
+        qemu_lines = [line for line in device_lines if "qemu-system" in line]
+        self.assertTrue(qemu_lines)
+        for line in qemu_lines:
+            self.assertIn("snapshot=on", line)
+            self.assertNotIn("sudo", line, msg="a kézi QEMU-próba ne fusson rootként")
+        acl_lines = [line for line in device_lines if "setfacl -m" in line]
+        self.assertEqual(len(acl_lines), 1)
+        self.assertIn(':r /dev/sdX', acl_lines[0])
+        self.assertIn('setfacl -x u:"$USER" /dev/sdX', testing)
+        self.assertIn("`disk` group", testing)
+        for line in device_lines:
+            self.assertNotRegex(line, r"\b(dd|wipefs|mkfs|sfdisk|parted|grub-install)\b", msg=line)
+
     def test_compile_command_lists_every_application_module(self):
         listed = set(self.COMPILE.split()[2:])
         self.assertEqual(listed, {path.name for path in ROOT.glob("*.py")})

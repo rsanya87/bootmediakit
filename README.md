@@ -115,7 +115,7 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 
 The GUI tests (`tests/test_app.py`) need `PySide6`; CI additionally runs `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker`.
 
-The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW and Windows writers against a disk image as root:
+The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW, Windows UEFI and Windows Legacy BIOS writers against a disk image as root; with `BMK_QEMU=1` the Legacy BIOS media is also booted in QEMU/SeaBIOS:
 
 ```bash
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v

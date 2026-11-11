@@ -118,7 +118,7 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 
 A GUI-tesztekhez (`tests/test_app.py`) `PySide6` kell; a CI ezen felül a `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker` parancsot is futtatja.
 
-Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütközésvizsgálatot, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet, az SHA-256 visszaellenőrzést, a megszakítást és a csomagolást. Az opcionális loop-eszközös integrációs tesztek a valódi RAW és Windows írót futtatják rootként egy lemezképfájlon:
+Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütközésvizsgálatot, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet, az SHA-256 visszaellenőrzést, a megszakítást és a csomagolást. Az opcionális loop-eszközös integrációs tesztek a valódi RAW, Windows UEFI és Windows Legacy BIOS írót futtatják rootként egy lemezképfájlon; `BMK_QEMU=1` mellett a Legacy BIOS pendrive-képet QEMU/SeaBIOS alatt el is indítják:
 
 ```bash
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
