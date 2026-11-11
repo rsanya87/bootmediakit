@@ -145,6 +145,30 @@ class LoopIntegrationCase(unittest.TestCase):
             self.addCleanup(patcher.stop)
         worker.CANCEL_EVENT.clear()
 
+    # -- UEFI:NTFS helper image ---------------------------------------------
+
+    def locate_uefi_ntfs_image(self) -> Path:
+        """Use a verified helper image: env override, installed copy or download."""
+        override = os.environ.get("BMK_UEFI_NTFS_IMAGE", "")
+        candidates = [Path(override)] if override else []
+        candidates.append(worker.UEFI_NTFS_IMAGE)
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        destination = self.workdir / "uefi-ntfs.img"
+        import fetch_uefi_ntfs
+
+        try:
+            with patch.object(sys, "argv", ["fetch_uefi_ntfs.py", str(destination)]):
+                status = fetch_uefi_ntfs.main()
+        except Exception as exc:  # network failure: report, do not pass silently
+            self.fail(
+                "Az UEFI:NTFS segédkép nem érhető el és nem tölthető le "
+                f"({exc}). Add meg a BMK_UEFI_NTFS_IMAGE változóban egy letöltött példány útvonalát."
+            )
+        self.assertEqual(status, 0)
+        return destination
+
     # -- loop device ------------------------------------------------------
 
     def attach_loop(self, image: Path) -> str:

@@ -7,7 +7,6 @@ is bind-mounted in place of the ISO (``worker.mount_iso`` is replaced).
 from __future__ import annotations
 
 import json
-import os
 import random
 import sys
 import unittest
@@ -16,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from loop_helpers import MIB, ROOT, LoopIntegrationCase, run, sha256_file, worker  # noqa: E402
+from loop_helpers import MIB, LoopIntegrationCase, run, sha256_file, worker  # noqa: E402
 
 DISK_SIZE = 384 * MIB
 ISO_LABEL = "BMK_WIN_TEST"
@@ -36,29 +35,6 @@ ISO_FILES = {
 
 class LoopWindowsWriteTests(LoopIntegrationCase):
     WORKDIR_SIZE_MIB = 640
-
-    def locate_uefi_ntfs_image(self) -> Path:
-        """Use a verified helper image: env override, installed copy or download."""
-        override = os.environ.get("BMK_UEFI_NTFS_IMAGE", "")
-        candidates = [Path(override)] if override else []
-        candidates.append(worker.UEFI_NTFS_IMAGE)
-        for candidate in candidates:
-            if candidate.is_file():
-                return candidate
-        destination = self.workdir / "uefi-ntfs.img"
-        sys.path.insert(0, str(ROOT))
-        import fetch_uefi_ntfs
-
-        try:
-            with patch.object(sys, "argv", ["fetch_uefi_ntfs.py", str(destination)]):
-                status = fetch_uefi_ntfs.main()
-        except Exception as exc:  # network failure: report, do not pass silently
-            self.fail(
-                "Az UEFI:NTFS segédkép nem érhető el és nem tölthető le "
-                f"({exc}). Add meg a BMK_UEFI_NTFS_IMAGE változóban egy letöltött példány útvonalát."
-            )
-        self.assertEqual(status, 0)
-        return destination
 
     def make_iso_tree(self) -> Path:
         root = self.workdir / "iso-root"
