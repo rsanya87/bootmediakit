@@ -234,6 +234,20 @@ class TestCommandDocumentationTests(unittest.TestCase):
         self.assertIn("sys.exit(", check_step)
         self.assertLess(after.index("python3 -I -c"), after.index(self.CI_INTEGRATION))
 
+    def test_ci_retries_package_installs_but_still_fails_closed(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertRegex(workflow, r"\n    timeout-minutes: \d+\n    steps:")
+        install = workflow.split("- name: Install system and Python test dependencies", 1)[1].split("- name:", 1)[0]
+        self.assertIn("timeout-minutes:", install)
+        self.assertIn("for attempt in 1 2 3; do", install)
+        self.assertIn("sudo apt-get update && sudo apt-get install -y $packages", install)
+        self.assertIn("exit 1", install)
+        # A missing package must fail the step, never be skipped silently.
+        self.assertNotIn("--fix-missing", workflow)
+        self.assertNotIn("|| true", install)
+        for package in ("grub-pc-bin", "grub2-common", "qemu-system-x86", "ntfs-3g", "p7zip-full"):
+            self.assertIn(package, install)
+
     def test_integration_tests_are_opt_in_and_never_run_for_non_root(self):
         helper = (ROOT / "tests/integration/loop_helpers.py").read_text(encoding="utf-8")
         self.assertIn('os.environ.get("BMK_INTEGRATION") != "1"', helper)
