@@ -48,6 +48,17 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn('self.process.setProgram("/usr/bin/pkexec")', app)
         self.assertNotIn('args = ["/usr/bin/python3", str(WORKER)', app)
 
+    def test_gui_only_looks_up_grub_and_leaves_grub_install_to_the_worker(self):
+        # Rule 8: grub-install runs only in the worker, on the validated target.
+        for name in ("app.py", "ui_helpers.py"):
+            source = (ROOT / name).read_text(encoding="utf-8")
+            for line in source.splitlines():
+                if '"grub-install"' in line:
+                    self.assertRegex(line, r'which\("grub-install"\)', msg=f"{name}: {line.strip()}")
+        app = (ROOT / "app.py").read_text(encoding="utf-8")
+        self.assertIn('self.boot_mode_combo.addItem("Legacy BIOS (MBR)", "bios")', app)
+        self.assertIn('return "windows-bios" if self.selected_boot_mode() == "bios" else "windows"', app)
+
     def test_worker_refuses_direct_checkout_or_missing_polkit_context(self):
         worker = (ROOT / "worker.py").read_text(encoding="utf-8")
         self.assertIn('expected_worker = Path("/usr/lib/bootmediakit/worker.py")', worker)

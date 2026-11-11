@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import QApplication
 from shiboken6 import isValid
 
 import app as gui
+import ui_helpers
+import worker
 
 
 class GuiStabilitySmokeTests(unittest.TestCase):
@@ -176,6 +179,219 @@ class GuiStabilitySmokeTests(unittest.TestCase):
             0,
             msg=f"GUI subprocess failed. stdout:\\n{result.stdout}\\nstderr:\\n{result.stderr}",
         )
+
+
+class BiosGrubAvailabilityTests(unittest.TestCase):
+    def make_grub_dir(self, files):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        directory = Path(tmp.name)
+        for name in files:
+            (directory / name).write_bytes(b"x")
+        return directory
+
+    def test_gui_check_uses_the_same_grub_files_as_the_worker(self):
+        self.assertEqual(ui_helpers.GRUB_PC_DIRECTORY, worker.GRUB_PC_DIRECTORY)
+        self.assertEqual(ui_helpers.GRUB_PC_REQUIRED_FILES, worker.GRUB_PC_REQUIRED_FILES)
+
+    def test_available_when_grub_install_and_all_i386_pc_files_exist(self):
+        directory = self.make_grub_dir(ui_helpers.GRUB_PC_REQUIRED_FILES)
+        self.assertTrue(
+            ui_helpers.bios_grub_available(lambda _name: "/usr/bin/grub-install", directory)
+        )
+
+    def test_unavailable_without_grub_install(self):
+        directory = self.make_grub_dir(ui_helpers.GRUB_PC_REQUIRED_FILES)
+        self.assertFalse(ui_helpers.bios_grub_available(lambda _name: None, directory))
+
+    def test_unavailable_without_i386_pc_directory_or_with_a_missing_module(self):
+        which = lambda _name: "/usr/bin/grub-install"
+        directory = self.make_grub_dir(ui_helpers.GRUB_PC_REQUIRED_FILES[:-1])
+        self.assertFalse(ui_helpers.bios_grub_available(which, directory))
+        self.assertFalse(ui_helpers.bios_grub_available(which, directory / "missing"))
+
+
+class BootModeSelectorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def make_window(self, grub_available=True):
+        start_patcher = patch.object(QProcess, "start")
+        self.start_mock = start_patcher.start()
+        self.addCleanup(start_patcher.stop)
+        with patch.object(gui, "bios_grub_available", return_value=grub_available):
+            window = gui.MainWindow()
+
+        def dispose_window():
+            if isValid(window):
+                window.process = None
+                window.close()
+                window.refresh_timer.stop()
+                window.lsblk_timeout_timer.stop()
+                window.deleteLater()
+                QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                QApplication.processEvents()
+
+        self.addCleanup(dispose_window)
+        return window
+
+    def make_image(self, name):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        image = Path(tmp.name) / name
+        image.write_bytes(b"\0" * 4096)
+        return image
+
+    def select_image(self, window, image, windows_iso):
+        with patch.object(gui, "is_windows_install_iso", return_value=windows_iso) as probe:
+            window.iso_edit.setText(str(image))
+            window.inspect_image(str(image))
+        return probe
+
+    def test_selector_defaults_to_uefi_and_is_inactive_in_raw_mode(self):
+        window = self.make_window()
+        self.select_image(window, self.make_image("win.iso"), True)
+        self.assertEqual(window.boot_mode_combo.currentData(), "uefi")
+        self.assertEqual(window.boot_mode_combo.itemText(0), "UEFI (GPT)")
+        self.assertEqual(window.boot_mode_combo.itemText(1), "Legacy BIOS (MBR)")
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        self.assertEqual(window.selected_worker_mode(), "raw")
+
+    def test_selector_is_active_only_for_a_recognised_windows_iso(self):
+        window = self.make_window()
+        window.select_mode("windows")
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        self.select_image(window, self.make_image("linux.iso"), False)
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        self.select_image(window, self.make_image("win.iso"), True)
+        self.assertTrue(window.boot_mode_combo.isEnabled())
+
+    def test_leaving_the_windows_iso_resets_the_selector_to_uefi(self):
+        window = self.make_window()
+        window.select_mode("windows")
+        self.select_image(window, self.make_image("win.iso"), True)
+        window.boot_mode_combo.setCurrentIndex(1)
+        self.assertEqual(window.selected_worker_mode(), "windows-bios")
+        window.iso_edit.setText(str(self.make_image("other.iso")))
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        self.assertEqual(window.boot_mode_combo.currentData(), "uefi")
+        self.assertEqual(window.selected_worker_mode(), "windows")
+
+    def test_switching_to_raw_mode_resets_the_selector_to_uefi(self):
+        window = self.make_window()
+        window.select_mode("windows")
+        self.select_image(window, self.make_image("win.iso"), True)
+        window.boot_mode_combo.setCurrentIndex(1)
+        window.select_mode("raw")
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        self.assertEqual(window.boot_mode_combo.currentData(), "uefi")
+        window.select_mode("windows")
+        self.assertEqual(window.selected_worker_mode(), "windows")
+
+    def test_typed_path_is_inspected_once(self):
+        window = self.make_window()
+        window.select_mode("windows")
+        image = self.make_image("win.iso")
+        window.iso_edit.setText(str(image))
+        with patch.object(gui, "is_windows_install_iso", return_value=True) as probe:
+            window.inspect_typed_image()
+            window.inspect_typed_image()
+        self.assertEqual(probe.call_count, 1)
+        self.assertTrue(window.boot_mode_combo.isEnabled())
+
+    def test_legacy_item_is_disabled_with_install_hint_when_grub_is_missing(self):
+        window = self.make_window(grub_available=False)
+        window.select_mode("windows")
+        self.select_image(window, self.make_image("win.iso"), True)
+        self.assertTrue(window.boot_mode_combo.isEnabled())
+        legacy = window.boot_mode_combo.model().item(1)
+        self.assertFalse(legacy.isEnabled())
+        self.assertTrue(window.boot_mode_combo.model().item(0).isEnabled())
+        self.assertIn("sudo pacman -S grub", window.grub_hint.text())
+        self.assertIn("sudo pacman -S grub", legacy.toolTip())
+        self.assertEqual(window.selected_worker_mode(), "windows")
+
+    def test_legacy_item_is_enabled_without_hint_when_grub_is_present(self):
+        window = self.make_window(grub_available=True)
+        self.assertTrue(window.boot_mode_combo.model().item(1).isEnabled())
+        self.assertEqual(window.grub_hint.text(), "")
+
+    def test_permanent_note_about_older_machines_is_shown(self):
+        window = self.make_window()
+        note = window.boot_mode_note.text()
+        self.assertIn("régebbi gépekhez", note)
+        self.assertIn("megtagadhatják a telepítést", note)
+        self.assertFalse(window.boot_mode_note.isHidden())
+
+    def start_and_capture(self, window, image, grub_available=True):
+        wrapper = self.make_image("bootmediakit-worker")
+        window.current_device = {
+            "path": "/dev/sdz", "size": 16 * 1024**3, "model": "Test", "serial": "S1",
+            "wwn": "", "tran": "usb", "rm": True, "maj_min": "8:240", "diskseq": "9",
+            "by_id": "/dev/disk/by-id/usb-Test_S1-0:0", "partitions": [], "mounts": [],
+        }
+        yes = gui.QMessageBox.StandardButton.Yes
+        with patch.object(gui, "PRIVILEGED_WRAPPER", wrapper), patch.object(
+            gui.shutil, "which", return_value="/usr/bin/pkexec"
+        ), patch.object(gui, "bios_grub_available", return_value=grub_available), patch.object(
+            gui, "is_windows_install_iso", return_value=True
+        ), patch.object(gui.QMessageBox, "warning", return_value=yes) as warning:
+            window.start_operation()
+        return warning
+
+    def windows_iso_window(self):
+        window = self.make_window()
+        window.select_mode("windows")
+        image = self.make_image("win.iso")
+        self.select_image(window, image, True)
+        return window, image
+
+    def test_uefi_boot_mode_passes_the_windows_worker_mode(self):
+        window, image = self.windows_iso_window()
+        warning = self.start_and_capture(window, image)
+        args = window.process.arguments()
+        self.assertEqual(args[1:4], ["windows", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0"])
+        self.assertEqual(args[4], "0")
+        details = warning.call_args_list[0].args[2]
+        self.assertIn("indítási mód: UEFI (GPT)", details)
+        self.assertNotIn("Legacy", details)
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+
+    def test_legacy_boot_mode_passes_windows_bios_and_warns_about_uefi(self):
+        window, image = self.windows_iso_window()
+        window.boot_mode_combo.setCurrentIndex(1)
+        window.verify_checkbox.setChecked(True)
+        warning = self.start_and_capture(window, image)
+        args = window.process.arguments()
+        self.assertEqual(args[1:5], ["windows-bios", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0", "1"])
+        details = warning.call_args_list[0].args[2]
+        self.assertIn("indítási mód: Legacy BIOS (MBR)", details)
+        self.assertIn("UEFI módban NEM", details)
+
+    def test_legacy_start_is_refused_when_grub_disappeared(self):
+        window, image = self.windows_iso_window()
+        window.boot_mode_combo.setCurrentIndex(1)
+        warning = self.start_and_capture(window, image, grub_available=False)
+        self.assertIsNone(window.process)
+        self.assertEqual(warning.call_args.args[1], "Hiányzó GRUB")
+        self.assertIn("sudo pacman -S grub", warning.call_args.args[2])
+
+    def test_raw_mode_still_passes_the_raw_worker_mode(self):
+        window = self.make_window()
+        image = self.make_image("linux.img")
+        self.select_image(window, image, False)
+        self.start_and_capture(window, image)
+        self.assertEqual(window.process.arguments()[1], "raw")
+
+    def test_finished_operation_restores_the_selector_state(self):
+        window, image = self.windows_iso_window()
+        window.boot_mode_combo.setCurrentIndex(1)
+        self.start_and_capture(window, image)
+        self.assertFalse(window.boot_mode_combo.isEnabled())
+        window.set_busy(False)
+        self.assertTrue(window.boot_mode_combo.isEnabled())
+        self.assertEqual(window.selected_worker_mode(), "windows-bios")
 
 
 if __name__ == "__main__":

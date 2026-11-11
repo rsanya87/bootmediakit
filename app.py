@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from iso_utils import is_windows_install_iso
-from ui_helpers import calculate_window_profile, format_elapsed_time
+from ui_helpers import bios_grub_available, calculate_window_profile, format_elapsed_time
 from version import __version__
 
 APP_VERSION = __version__
@@ -177,6 +177,10 @@ class MainWindow(QMainWindow):
         self._close_after_operation = False
         self.current_device: dict[str, Any] | None = None
         self._selected_mode = "raw"
+        # Resolved path of the last image recognised as a Windows installer
+        # ISO; the boot mode selector is only active for that image.
+        self._windows_iso_path: str | None = None
+        self._bios_grub_available = bios_grub_available()
 
         # Start timing on the first worker progress event, not while pkexec
         # is waiting for the user's authentication.
@@ -272,6 +276,9 @@ class MainWindow(QMainWindow):
         self.iso_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.browse_button = QPushButton("Tallózás…")
         self.browse_button.clicked.connect(self.choose_image)
+        self._inspected_image: str | None = None
+        self.iso_edit.textChanged.connect(lambda _text: self.update_boot_mode_controls())
+        self.iso_edit.editingFinished.connect(self.inspect_typed_image)
         image_row.addWidget(self.iso_edit, 1)
         image_row.addWidget(self.browse_button)
         image_layout.addLayout(image_row)
@@ -357,7 +364,7 @@ class MainWindow(QMainWindow):
         self.raw_button.setCheckable(True)
         self.raw_button.setChecked(True)
         self.raw_button.setObjectName("modeButton")
-        self.windows_button = QPushButton("Windows telepítő (UEFI / GPT / NTFS)")
+        self.windows_button = QPushButton("Windows telepítő (NTFS)")
         self.windows_button.setCheckable(True)
         self.windows_button.setObjectName("modeButton")
         self.raw_button.clicked.connect(lambda: self.select_mode("raw"))
@@ -371,11 +378,41 @@ class MainWindow(QMainWindow):
         mode_buttons.addWidget(self.raw_button, 1)
         mode_buttons.addWidget(self.windows_button, 1)
         mode_layout.addLayout(mode_buttons)
+        boot_mode_row = QHBoxLayout()
+        boot_mode_row.setSpacing(8)
+        self.boot_mode_label = QLabel("Indítási mód:")
+        self.boot_mode_combo = QComboBox()
+        self.boot_mode_combo.addItem("UEFI (GPT)", "uefi")
+        self.boot_mode_combo.addItem("Legacy BIOS (MBR)", "bios")
+        self.boot_mode_combo.setMinimumHeight(28 if self._compact_ui else 30)
+        self.boot_mode_combo.currentIndexChanged.connect(self.boot_mode_changed)
+        self.boot_mode_label.setBuddy(self.boot_mode_combo)
+        self.grub_hint = QLabel()
+        self.grub_hint.setObjectName("muted")
+        self.grub_hint.setMinimumWidth(0)
+        self.grub_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        boot_mode_row.addWidget(self.boot_mode_label)
+        boot_mode_row.addWidget(self.boot_mode_combo)
+        boot_mode_row.addWidget(self.grub_hint, 1)
+        mode_layout.addLayout(boot_mode_row)
+        self.boot_mode_note = QLabel(
+            "A Legacy BIOS mód régebbi gépekhez készült. Az újabb Windows telepítők "
+            "a hardverkövetelményeik miatt régi gépen megtagadhatják a telepítést."
+        )
+        self.boot_mode_note.setObjectName("muted")
+        self.boot_mode_note.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.boot_mode_note.setWordWrap(True)
+        self.boot_mode_note.setMinimumWidth(0)
+        self.boot_mode_note.setMaximumHeight(34 if self._compact_ui else 42)
+        self.boot_mode_note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        mode_layout.addWidget(self.boot_mode_note)
+        self.apply_grub_availability()
         self.mode_description = QLabel(
             "ISOHybrid Linux- és egyéb lemezképekhez. A teljes lemezkép közvetlenül "
             "az USB-re kerül; minden meglévő adat felülíródik."
         )
         self.mode_description.setObjectName("muted")
+        self.mode_description.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.mode_description.setWordWrap(True)
         self.mode_description.setMinimumWidth(0)
         self.mode_description.setMaximumHeight(34 if self._compact_ui else 42)
@@ -385,6 +422,7 @@ class MainWindow(QMainWindow):
         self.verify_checkbox.setChecked(True)
         mode_layout.addWidget(self.verify_checkbox)
         root_layout.addWidget(mode_card)
+        self.update_boot_mode_controls()
 
         # Progress / log
         progress_card = QFrame()
@@ -533,25 +571,45 @@ class MainWindow(QMainWindow):
         )
         if filename:
             self.iso_edit.setText(filename)
-            try:
-                selected = Path(filename)
-                size = selected.stat().st_size
-                is_windows = (
-                    selected.suffix.lower() == ".iso"
-                    and is_windows_install_iso(selected)
-                )
-                description = f"{selected.name} • {human_size(size)}"
-                if is_windows:
-                    description += " • Windows telepítő ISO felismerve"
-                short_description = (
-                    f"{human_size(size)} • "
-                    + ("Windows telepítő ISO" if is_windows else "Lemezkép")
-                )
-                self.file_info.setText(short_description)
-                self.file_info.setToolTip(description)
-            except OSError:
-                self.file_info.setText("A fájl nem olvasható.")
-                self.file_info.setToolTip("A kiválasztott fájl nem olvasható.")
+            self.inspect_image(filename)
+
+    def inspect_typed_image(self) -> None:
+        """Recognise a path typed into the field once, like a browsed file."""
+        text = self.iso_edit.text().strip()
+        if not text:
+            return
+        try:
+            resolved = str(Path(text).expanduser().resolve())
+        except (OSError, RuntimeError):
+            return
+        if resolved != self._inspected_image and Path(resolved).is_file():
+            self.inspect_image(resolved)
+
+    def inspect_image(self, filename: str) -> None:
+        try:
+            selected = Path(filename).expanduser()
+            self._inspected_image = str(selected.resolve())
+            size = selected.stat().st_size
+            is_windows = (
+                selected.suffix.lower() == ".iso"
+                and is_windows_install_iso(selected)
+            )
+            self._windows_iso_path = str(selected.resolve()) if is_windows else None
+            self.update_boot_mode_controls()
+            description = f"{selected.name} • {human_size(size)}"
+            if is_windows:
+                description += " • Windows telepítő ISO felismerve"
+            short_description = (
+                f"{human_size(size)} • "
+                + ("Windows telepítő ISO" if is_windows else "Lemezkép")
+            )
+            self.file_info.setText(short_description)
+            self.file_info.setToolTip(description)
+        except OSError:
+            self._windows_iso_path = None
+            self.update_boot_mode_controls()
+            self.file_info.setText("A fájl nem olvasható.")
+            self.file_info.setToolTip("A kiválasztott fájl nem olvasható.")
 
     def refresh_devices_silently(self) -> None:
         # Don't replace the list while a privileged operation is running.
@@ -781,11 +839,76 @@ class MainWindow(QMainWindow):
             )
         else:
             self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
+        self.update_boot_mode_controls()
+
+    def apply_grub_availability(self) -> None:
+        """Enable or disable the Legacy BIOS item from the GRUB i386-pc check."""
+        item = self.boot_mode_combo.model().item(1)
+        item.setEnabled(self._bios_grub_available)
+        if self._bios_grub_available:
+            self.grub_hint.setText("")
+            self.grub_hint.setToolTip("")
+            self.boot_mode_combo.setToolTip(
+                "UEFI (GPT): újabb gépekhez. Legacy BIOS (MBR): UEFI nélküli vagy CSM módú gépekhez."
+            )
+            return
+        if self.boot_mode_combo.currentData() == "bios":
+            self.boot_mode_combo.setCurrentIndex(0)
+        hint = (
+            "A Legacy BIOS módhoz a GRUB (i386-pc) szükséges. "
+            "Telepítsd: sudo pacman -S grub, majd indítsd újra a programot."
+        )
+        self.grub_hint.setText("Legacy nem elérhető: sudo pacman -S grub")
+        self.grub_hint.setToolTip(hint)
+        item.setToolTip(hint)
+        self.boot_mode_combo.setToolTip(hint)
+
+    def windows_iso_selected(self) -> bool:
+        if not self._windows_iso_path:
+            return False
+        try:
+            current = str(Path(self.iso_edit.text().strip()).expanduser().resolve())
+        except (OSError, RuntimeError):
+            return False
+        return current == self._windows_iso_path
+
+    def update_boot_mode_controls(self) -> None:
+        """The boot mode selector is active only for a recognised Windows ISO."""
+        active = self._selected_mode == "windows" and self.windows_iso_selected()
+        if not active and self.boot_mode_combo.currentIndex() != 0:
+            # Without a Windows ISO the Windows mode always means UEFI.
+            self.boot_mode_combo.setCurrentIndex(0)
+        self.boot_mode_combo.setEnabled(active)
+        self.boot_mode_label.setEnabled(active)
+        if self._selected_mode == "windows":
+            self.update_windows_description()
+
+    def boot_mode_changed(self, _index: int) -> None:
+        if self._selected_mode == "windows":
+            self.update_windows_description()
+
+    def update_windows_description(self) -> None:
+        if self.selected_boot_mode() == "bios":
+            self.mode_description.setText(
+                "Windows Legacy BIOS: MBR, egy aktív NTFS partíció, GRUB láncbetöltő a /grub "
+                "könyvtárban. Csak Legacy BIOS / CSM módban indul, UEFI módban nem."
+            )
+        else:
             self.mode_description.setText(
                 "Windows x64 UEFI: nagy NTFS adatpartíció és BMK_EFI UEFI:NTFS segédpartíció. "
-                "A nagy install.esd / install.wim fájlok változatlanul másolódnak. "
-                "A teljes SHA-256 visszaellenőrzés opcionális."
+                "A nagy install.esd / install.wim fájlok változatlanul másolódnak."
             )
+
+    def selected_boot_mode(self) -> str:
+        if self.boot_mode_combo.isEnabled() and self.boot_mode_combo.currentData() == "bios":
+            return "bios"
+        return "uefi"
+
+    def selected_worker_mode(self) -> str:
+        """Worker mode name: raw, windows (UEFI) or windows-bios."""
+        if self.raw_button.isChecked():
+            return "raw"
+        return "windows-bios" if self.selected_boot_mode() == "bios" else "windows"
 
     def start_operation_clock(self) -> None:
         if self._operation_timer_started:
@@ -820,7 +943,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Nincs USB-meghajtó", "Csatlakoztass és válassz ki egy USB-meghajtót.")
             return
 
-        mode = "raw" if self.raw_button.isChecked() else "windows"
+        worker_mode = self.selected_worker_mode()
+        mode = "raw" if worker_mode == "raw" else "windows"
         device = self.current_device
         if device.get("unsafe_reason"):
             QMessageBox.critical(self, "Védett meghajtó", str(device["unsafe_reason"]))
@@ -830,7 +954,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Windows ISO észlelve",
                 "Ez Windows telepítő ISO-nak tűnik. Ne nyers lemezképként írd ki, mert így általában nem lesz bootolható. "
-                "Válaszd a „Windows telepítő (UEFI / GPT / NTFS)” módot.",
+                "Válaszd a „Windows telepítő (NTFS)” módot.",
             )
             return
         try:
@@ -843,6 +967,14 @@ class MainWindow(QMainWindow):
             return
         if mode == "windows" and image.suffix.lower() != ".iso":
             QMessageBox.warning(self, "Windows ISO szükséges", "A Windows telepítő módhoz ISO fájlt válassz.")
+            return
+        if worker_mode == "windows-bios" and not bios_grub_available():
+            QMessageBox.warning(
+                self,
+                "Hiányzó GRUB",
+                "A Legacy BIOS módhoz szükséges GRUB (i386-pc) nem található a gépen.\n\n"
+                "Telepítsd a grub csomagot (sudo pacman -S grub), vagy válaszd az UEFI (GPT) indítási módot.",
+            )
             return
 
         partition_lines = []
@@ -881,10 +1013,18 @@ class MainWindow(QMainWindow):
         )
         if mounts:
             details += "\n\nCsatolt útvonalak, amelyeket leválasztunk:\n" + "\n".join(mounts)
-        if mode == "windows":
+        if worker_mode == "windows":
             details += (
-                "\n\nA Windows mód GPT-t hoz létre: nagy NTFS telepítőpartíció és "
+                "\n\nÍrási mód: Windows telepítő, indítási mód: UEFI (GPT).\n"
+                "A Windows mód GPT-t hoz létre: nagy NTFS telepítőpartíció és "
                 "1 MiB BMK_EFI FAT UEFI:NTFS segédpartíció. A Windows ISO eredeti fájljai másolódnak."
+            )
+        elif worker_mode == "windows-bios":
+            details += (
+                "\n\nÍrási mód: Windows telepítő, indítási mód: Legacy BIOS (MBR).\n"
+                "MBR-t hoz létre egy aktív NTFS partícióval, és a GRUB láncbetöltőt a pendrive "
+                "/grub könyvtárába telepíti. A Windows ISO eredeti fájljai másolódnak.\n\n"
+                "FIGYELEM: ez a pendrive csak Legacy BIOS / CSM módban indul, UEFI módban NEM."
             )
         reply = QMessageBox.warning(
             self,
@@ -937,7 +1077,7 @@ class MainWindow(QMainWindow):
         target_path = str(device.get("by_id") or device["path"])
         args = [
             str(PRIVILEGED_WRAPPER),
-            mode,
+            worker_mode,
             str(image.resolve()),
             target_path,
             "1" if self.verify_checkbox.isChecked() else "0",
@@ -954,6 +1094,7 @@ class MainWindow(QMainWindow):
         self.device_combo.setEnabled(False)
         self.raw_button.setEnabled(False)
         self.windows_button.setEnabled(False)
+        self.boot_mode_combo.setEnabled(False)
         self.iso_edit.setEnabled(False)
 
         self.output_buffer = ""
@@ -1136,6 +1277,10 @@ class MainWindow(QMainWindow):
         self.device_combo.setEnabled(not busy)
         self.raw_button.setEnabled(not busy)
         self.windows_button.setEnabled(not busy)
+        if busy:
+            self.boot_mode_combo.setEnabled(False)
+        else:
+            self.update_boot_mode_controls()
         self.iso_edit.setEnabled(not busy)
         self.refresh_button.setEnabled(not busy and not self._lsblk_request_active)
         if not busy:
