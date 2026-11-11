@@ -263,6 +263,46 @@ class TestCommandDocumentationTests(unittest.TestCase):
             self.assertNotIn('"loop"', text)
 
 
+class LegacyBiosPackagingTests(unittest.TestCase):
+    def read(self, name):
+        return (ROOT / name).read_text(encoding="utf-8")
+
+    def test_installer_installs_the_grub_package(self):
+        pacman_lines = [line.split() for line in self.read("install.sh").splitlines() if line.startswith("pacman -S ")]
+        self.assertEqual(len(pacman_lines), 1)
+        self.assertIn("grub", pacman_lines[0])
+        # The installer must never run GRUB against the host itself.
+        for line in self.read("install.sh").splitlines():
+            if line.lstrip().startswith(("printf", "echo", "#")):
+                continue
+            self.assertNotRegex(line, r"\b(grub-install|grub-mkconfig|efibootmgr)\b", msg=line)
+
+    def test_readmes_list_grub_with_the_host_boot_loader_note(self):
+        english = self.read("README.md")
+        hungarian = self.read("README.hu.md")
+        self.assertIn("- `grub` — `grub-install` and the i386-pc modules", english)
+        self.assertIn("does **not** change your computer's own boot loader", english)
+        self.assertIn("runs `grub-install` exclusively on the selected USB drive", english)
+        self.assertIn("- `grub` — a `grub-install` és az i386-pc modulok", hungarian)
+        self.assertIn("**nem** módosítja a gép saját rendszerbetöltőjét", hungarian)
+        self.assertIn("kizárólag a kiválasztott pendrive-ra futtatja", hungarian)
+
+    def test_readmes_document_the_legacy_mode_and_its_limits(self):
+        english = self.read("README.md")
+        hungarian = self.read("README.hu.md")
+        self.assertIn("## Windows Legacy BIOS/MBR workflow", english)
+        self.assertIn("## Windows Legacy BIOS/MBR – hogyan működik?", hungarian)
+        for text in (english, hungarian):
+            self.assertIn("Legacy BIOS (MBR)", text)
+            self.assertIn("ntldr /bootmgr", text)
+            self.assertIn("--target=i386-pc", text)
+        self.assertIn("it does **not** boot in UEFI mode", english)
+        self.assertIn("UEFI módban **nem**", hungarian)
+        self.assertNotIn("Windows target: **UEFI x64 only**", english)
+        self.assertNotIn("Windows Legacy BIOS/CSM, Windows To Go", english)
+        self.assertNotIn("Windows Legacy BIOS/CSM, Windows To Go", hungarian)
+
+
 class SafetyDocumentationTests(unittest.TestCase):
     def test_both_readmes_document_the_partially_written_state(self):
         english = (ROOT / "README.md").read_text(encoding="utf-8")

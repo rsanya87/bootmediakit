@@ -28,6 +28,7 @@
 - Windows x64 UEFI telepítő készítése GPT lemezen, két partícióval:
   - egy nagy NTFS Microsoft Basic Data partíció az eredeti Windows ISO fájljainak;
   - egy 1 MiB-os FAT `BMK_EFI` UEFI:NTFS segédpartíció a pendrive végén. A GPT-típusa Microsoft Basic Data (nem EFI System), be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, és a GPT partíciónév, valamint a FAT kötetcímke is `BMK_EFI`.
+- Windows telepítő pendrive **Legacy BIOS/CSM** indításhoz, az „Indítási mód” választóval: MBR lemez egyetlen aktív NTFS partícióval az eredeti Windows ISO fájljainak, és GNU GRUB i386-pc indító, amely az ISO saját Windows `bootmgr`-ét indítja. Lásd: [Windows Legacy BIOS/MBR – hogyan működik?](#windows-legacy-biosmbr--hogyan-működik).
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A Windows telepítő nagy NTFS partíciója megőrzi az ISO eredeti kötetcímkéjét; a `BMK_EFI` név kizárólag a kis segédpartícióhoz tartozik.
@@ -56,10 +57,23 @@ A Rufus által közzétett UEFI:NTFS segédkép tartalmaz Secure Boot aláírás
 
 A kiadás fizikai tesztje során a normál Windows 11 26H2 x64 telepítő Secure Boot kikapcsolt és bekapcsolt állapotában is eljutott a Windows Telepítő partícióválasztó képernyőjéig. A telepítés ezen túl nem folytatódott. Ez kizárólag a tesztelt firmware-en megfigyelt eredmény; más alaplapok és UEFI firmware-ek eltérően viselkedhetnek.
 
+## Windows Legacy BIOS/MBR – hogyan működik?
+
+UEFI nélküli, vagy CSM (legacy) módban használt UEFI-s géphez válaszd a Windows módot, és az **Indítási mód** legyen **Legacy BIOS (MBR)**. A választó csak felismert Windows telepítő ISO-nál aktív; az alapérték továbbra is az UEFI (GPT).
+
+A BootMediaKit ekkor MBR partíciós táblát készít egyetlen aktív NTFS partícióval (típus: `7`), amely 1 MiB-tól a pendrive végéig tart. Erre másolja az eredeti Windows ISO fájljait, majd lefuttatja a gépre telepített `grub` csomag `grub-install` programját. A BIOS az MBR-ből a GRUB indítókódját tölti be, a partíció előtti résből a GRUB magját, az NTFS partíció `/grub` könyvtárából pedig a modulokat és a `grub.cfg`-t. A `grub.cfg` az `ntldr /bootmgr` paranccsal elindítja a Windows rendszerindító-kezelőjét, onnan a Windows Telepítő a megszokott módon folytatódik. Az SHA-256 ellenőrzés csak az ISO fájljaira vonatkozik; a `/grub` könyvtár utána kerül fel.
+
+- **Nincs beépített indítókód.** A BootMediaKit ehhez a módhoz nem tartalmaz és nem tölt le indítókódot, és más projektből sem másol Microsoft MBR- vagy boot-szektor-kódot. Az indítókódot a gép saját `grub-install` programja írja ki.
+- **A gép rendszere érintetlen marad.** A `grub-install` csak `--target=i386-pc` kapcsolóval fut, a `--boot-directory` a pendrive saját NTFS csatolási pontjára mutat, utolsó argumentuma pedig az újraellenőrzött USB-eszköz. A BootMediaKit soha nem futtat EFI-s `grub-install`-t, `grub-mkconfig`-ot vagy `efibootmgr`-t, és indítókönyvtárként elutasítja a gép gyökérkönyvtárát, valamint a `/boot`, az `/efi` és az alattuk lévő könyvtárakat; indítókönyvtár csak a pendrive NTFS partíciójának csatolási pontja lehet.
+- **Csak Legacy módban indul.** A pendrive csak Legacy BIOS/CSM módban indul, UEFI módban **nem**. UEFI-s géphez az UEFI (GPT) indítási módot használd. A megerősítő ablak is figyelmeztet erre.
+- **Régebbi gépekhez.** A mód régebbi gépekhez készült. Az újabb Windows telepítők ellenőrzik a hardverkövetelményeket, és régi gépen megtagadhatják a telepítést; ez a Windows Telepítő döntése, nem a pendrive hibája.
+- Feltételek és elutasítások: 2 TiB-os vagy nagyobb meghajtót nem fogad el (az MBR korlátja); 512 bájtos logikai szektor kell, mint az UEFI módban; Windows XP / Server 2003 jellegű ISO (`i386` könyvtár `bootmgr` nélkül) nem támogatott; ha az ISO gyökerében már van `grub` nevű elem, a program megáll, nem írja felül. `grub-install` és `/usr/lib/grub/i386-pc` nélkül a Legacy érték a felületen tiltott.
+- Tesztelés: az automatikus tesztek a termelési íróval loop-eszközre írják a pendrive-ot, és QEMU/SeaBIOS alatt egy teszt-`bootmgr`-ig indítják. A valódi Windows ISO-kkal és gépeken végzett fizikai teszteket a [ROADMAP.md](ROADMAP.md) követi.
+
 ### Jelenlegi korlátozások
 
-- Windows telepítő: **UEFI x64**. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
-- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
+- Windows telepítő: **UEFI x64 (GPT)** vagy **Legacy BIOS/CSM (MBR)**, pendrive-onként egy mód; kombinált BIOS+UEFI Windows pendrive még nincs. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
+- Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
 - A jelenlegi elrendezés 512 bájtos logikai szektorú USB-meghajtót igényel.
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
 - A Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítése a tesztelt rendszeren sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot be- és kikapcsolt állapotában is eljutott a partícióválasztó képernyőig; a telepítés további része nem lett igazolva.
@@ -90,6 +104,7 @@ Szükséges Arch csomagok:
 - `dosfstools` — `fatlabel` a BMK_EFI FAT kötetcímkéjének beállításához és ellenőrzéséhez
 - `polkit` — jogosultságemelés
 - `7zip` — Windows ISO felismerése
+- `grub` — a `grub-install` és az i386-pc modulok a Windows Legacy BIOS módhoz. A BootMediaKit csak ezeket használja, és a `grub-install`-t kizárólag a kiválasztott pendrive-ra futtatja. A csomag telepítése **nem** módosítja a gép saját rendszerbetöltőjét. A csomag telepítés utáni üzenete a `grub-install` és a `grub-mkconfig` futtatását javasolja; ez a gép saját rendszerbetöltőjére vonatkozik, a BootMediaKit-hez nem kell.
 
 KDE alatt aktív polkit hitelesítő ügynök szükséges.
 

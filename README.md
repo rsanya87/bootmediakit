@@ -28,6 +28,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Prepare x64 UEFI Windows installation media using a GPT disk with:
   - a large NTFS Basic Data partition containing the original Windows ISO files;
   - a 1 MiB FAT `BMK_EFI` UEFI:NTFS helper partition at the end of the drive. Its GPT type is Microsoft Basic Data (not EFI System), with NoDriveLetter (GUID-specific bit 63); its GPT partition name and FAT volume label are both `BMK_EFI`.
+- Prepare Windows installation media for **Legacy BIOS/CSM** boot, selected with the "Indítási mód" (boot mode) control: an MBR disk with one active NTFS partition holding the original Windows ISO files, and the GNU GRUB i386-pc boot loader, which starts the ISO's own Windows `bootmgr`. See [Windows Legacy BIOS/MBR workflow](#windows-legacy-biosmbr-workflow).
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
 - Preserve the source Windows ISO volume label on the large NTFS partition; reserve `BMK_EFI` for the small helper partition.
@@ -53,10 +54,23 @@ The upstream UEFI:NTFS helper image contains Secure Boot-signed x64 UEFI:NTFS co
 
 On the hardware used for release validation, the standard Windows 11 26H2 x64 installer reached the Windows Setup disk-selection screen with Secure Boot both enabled and disabled. The installation was not continued beyond that point. This confirms the observed boot path on that test firmware only; other systems may differ.
 
+## Windows Legacy BIOS/MBR workflow
+
+For computers without UEFI, or with UEFI in CSM (legacy) mode, choose the Windows mode and set **Indítási mód** to **Legacy BIOS (MBR)**. The selector is active only for a recognised Windows installation ISO; UEFI (GPT) stays the default.
+
+BootMediaKit then creates an MBR partition table with a single active NTFS partition (type `7`) from 1 MiB to the end of the drive, copies the original Windows ISO files to it, and runs `grub-install` from the `grub` package installed on your computer. The BIOS loads GRUB's boot code from the MBR, GRUB's core image from the gap before the partition, and its modules and `grub.cfg` from the `/grub` directory on the NTFS partition. `grub.cfg` starts the Windows Boot Manager with `ntldr /bootmgr`, and Windows Setup continues from there. The SHA-256 verification covers the ISO files only; `/grub` is added afterwards.
+
+- **No bundled boot code.** BootMediaKit neither contains nor downloads boot code for this mode, and it does not copy Microsoft MBR/boot-sector code from any project. The boot code is written by your system's own `grub-install`.
+- **The host stays untouched.** `grub-install` runs only with `--target=i386-pc`, with `--boot-directory` pointing at the USB drive's own NTFS mountpoint, and with the re-validated USB device as its last argument. BootMediaKit never runs an EFI `grub-install`, `grub-mkconfig` or `efibootmgr`, and it refuses the computer's root directory, `/boot`, `/efi` and anything below them as the boot directory; the boot directory must be the USB partition's own mountpoint.
+- **Legacy only.** The drive boots only in Legacy BIOS/CSM mode; it does **not** boot in UEFI mode. For UEFI computers use the UEFI (GPT) boot mode. The confirmation dialog repeats this.
+- **Older computers.** The mode is meant for older machines. Newer Windows installers check hardware requirements and may refuse to install on an old computer; that is Windows Setup's decision, not a problem of the USB drive.
+- Requirements and refusals: drives of 2 TiB or more are refused (MBR limit); 512-byte logical sectors are required, as in the UEFI mode; Windows XP/Server 2003-style ISOs (an `i386` directory without `bootmgr`) are not supported; an ISO that already has a `grub` entry in its root is refused rather than overwritten. Without `grub-install` and `/usr/lib/grub/i386-pc` the Legacy option is disabled in the GUI.
+- Testing: automated tests write the media to a loop device with the production writer and boot it in QEMU/SeaBIOS up to a test `bootmgr`. Physical tests with real Windows ISOs and computers are tracked in [ROADMAP.md](ROADMAP.md).
+
 ### Current scope and limitations
 
-- Windows target: **UEFI x64 only**. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
-- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
+- Windows target: **UEFI x64 (GPT)** or **Legacy BIOS/CSM (MBR)**, one mode per drive; a combined BIOS+UEFI Windows drive is not implemented. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
+- Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
 - The current layout requires a 512-byte logical-sector USB device.
 - The current installer targets Arch-based distributions only. Debian/Ubuntu and Fedora support are future work.
 - Physical UEFI installation tests for Windows 10 and Windows 11 IoT Enterprise LTSC x64 completed successfully on the tested system(s). The standard Windows 11 26H2 x64 ISO was also tested with Secure Boot enabled and disabled and reached the Setup disk-selection screen; installation beyond that point was not verified.
@@ -87,6 +101,7 @@ Arch dependencies:
 - `dosfstools` — `fatlabel` to set and verify the `BMK_EFI` FAT volume label
 - `polkit` — narrowly scoped privilege elevation
 - `7zip` — Windows ISO detection
+- `grub` — `grub-install` and the i386-pc modules for the Windows Legacy BIOS mode. BootMediaKit uses only these, and runs `grub-install` exclusively on the selected USB drive. Installing the package does **not** change your computer's own boot loader. Its post-install message suggests running `grub-install` and `grub-mkconfig`; that refers to your computer's own boot loader and is not needed for BootMediaKit.
 
 KDE users need an active polkit authentication agent.
 
