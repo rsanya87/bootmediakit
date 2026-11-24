@@ -9,6 +9,7 @@ import stat
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest.mock import patch
 
@@ -983,6 +984,656 @@ class NtfsMountTests(unittest.TestCase):
             self.assertEqual(run.call_args_list[1].args[0][:3], ["mount", "-t", "ntfs-3g"])
 
 
+class MbrLayoutTests(unittest.TestCase):
+    """MBR layout for the Legacy BIOS mode (Legacy BIOS work, T2)."""
+
+    MIB_SECTORS = 2048
+
+    def test_layout_is_one_partition_from_1_mib_aligned_to_1_mib(self):
+        total = 64 * self.MIB_SECTORS
+        layout = worker.calculate_mbr_layout(total)
+        self.assertEqual(layout, {"start": 2048, "size": total - 2048, "bytes": (total - 2048) * 512})
+
+    def test_unaligned_disk_end_is_rounded_down_to_1_mib(self):
+        layout = worker.calculate_mbr_layout(64 * self.MIB_SECTORS + 1000)
+        self.assertEqual(layout["size"], 63 * self.MIB_SECTORS)
+        self.assertEqual(layout["size"] % self.MIB_SECTORS, 0)
+
+    def test_largest_dos_label_disk_is_accepted_and_fits_32_bit_lba(self):
+        # util-linux limit: at most 2**32 - 1 sectors for a DOS label.
+        layout = worker.calculate_mbr_layout(2**32 - 1)
+        self.assertEqual(layout["size"], 2**32 - 4096)
+        self.assertLessEqual(layout["start"] + layout["size"], 2**32 - 1)
+
+    def test_2_tib_and_larger_is_rejected(self):
+        for total in (2**32, 2**32 + 1, 3 * 2**31 * 2):
+            with self.subTest(total=total), self.assertRaisesRegex(ValueError, "2 TiB"):
+                worker.calculate_mbr_layout(total)
+
+    def test_too_small_drive_is_rejected(self):
+        for total in (2048, 4095):
+            with self.subTest(total=total), self.assertRaisesRegex(ValueError, "túl kicsi"):
+                worker.calculate_mbr_layout(total)
+        with self.assertRaises(ValueError):
+            worker.calculate_mbr_layout(0)
+
+    def test_sfdisk_script_is_dos_with_one_active_type_7_partition(self):
+        script = worker.make_mbr_sfdisk_script({"start": 2048, "size": 129024, "bytes": 0})
+        self.assertEqual(
+            script,
+            "label: dos\nunit: sectors\nstart=2048, size=129024, type=7, bootable\n",
+        )
+
+    # -- verify_mbr_layout with mocked sfdisk --------------------------------
+
+    LAYOUT = {"start": 2048, "size": 129024, "bytes": 129024 * 512}
+
+    @staticmethod
+    def sfdisk_json(label="dos", partitions=None) -> str:
+        if partitions is None:
+            partitions = [{"node": "/dev/sdx1", "start": 2048, "size": 129024, "type": "7", "bootable": True}]
+        return json.dumps({"partitiontable": {"label": label, "unit": "sectors", "partitions": partitions}})
+
+    def run_verify(self, stdout: str):
+        responses = [
+            subprocess.CompletedProcess(["sfdisk"], 0, "No errors detected.\n", ""),
+            subprocess.CompletedProcess(["sfdisk"], 0, stdout, ""),
+        ]
+        with patch("worker.command", side_effect=responses) as run:
+            worker.verify_mbr_layout("/dev/sdx", self.LAYOUT)
+        return run
+
+    def test_verify_accepts_the_planned_layout_after_sfdisk_verify(self):
+        run = self.run_verify(self.sfdisk_json())
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["sfdisk", "--verify", "/dev/sdx"], ["sfdisk", "--json", "/dev/sdx"]],
+        )
+
+    def test_verify_rejects_every_deviation(self):
+        good = {"node": "/dev/sdx1", "start": 2048, "size": 129024, "type": "7", "bootable": True}
+        cases = {
+            "gpt label": (self.sfdisk_json(label="gpt"), "MBR elrendezést"),
+            "two partitions": (self.sfdisk_json(partitions=[good, dict(good, start=200000)]), "MBR elrendezést"),
+            "no partition": (self.sfdisk_json(partitions=[]), "MBR elrendezést"),
+            "wrong start": (self.sfdisk_json(partitions=[dict(good, start=63)]), "eltér"),
+            "wrong size": (self.sfdisk_json(partitions=[dict(good, size=2048)]), "eltér"),
+            "linux type": (self.sfdisk_json(partitions=[dict(good, type="83")]), "típusa hibás"),
+            "not active": (self.sfdisk_json(partitions=[dict(good, bootable=False)]), "aktívnak"),
+            "no bootable field": (
+                self.sfdisk_json(partitions=[{k: v for k, v in good.items() if k != "bootable"}]),
+                "aktívnak",
+            ),
+            "invalid json": ("{", "visszaolvasni"),
+        }
+        for name, (stdout, pattern) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(RuntimeError, pattern):
+                self.run_verify(stdout)
+
+    def test_verify_stops_when_sfdisk_verify_fails(self):
+        with patch("worker.command", side_effect=RuntimeError("sfdisk: bad table")) as run:
+            with self.assertRaisesRegex(RuntimeError, "bad table"):
+                worker.verify_mbr_layout("/dev/sdx", self.LAYOUT)
+        self.assertEqual(run.call_count, 1)
+
+    # -- real sfdisk on sparse image files -------------------------------------
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_writes_and_verify_reads_back_generated_mbr_on_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            disk_bytes = 8 * 1024 * 1024 * 1024 + 12345 * 512
+            with image.open("wb") as stream:
+                stream.truncate(disk_bytes)
+            layout = worker.calculate_mbr_layout(disk_bytes // 512)
+            result = subprocess.run(
+                ["sfdisk", "--wipe", "always", str(image)],
+                input=worker.make_mbr_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            worker.verify_mbr_layout(str(image), layout)
+            with image.open("rb") as stream:
+                mbr = stream.read(512)
+            self.assertEqual(mbr[510:512], b"\x55\xaa")
+            self.assertEqual(mbr[446], 0x80)
+            self.assertEqual(mbr[450], 0x07)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_accepts_generated_mbr_script_on_largest_dos_label_sparse_image(self):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            with image.open("wb") as stream:
+                stream.truncate((2**32 - 1) * 512)
+            layout = worker.calculate_mbr_layout(2**32 - 1)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input=worker.make_mbr_sfdisk_script(layout),
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+
+    @unittest.skipUnless(shutil.which("sfdisk"), "sfdisk/util-linux is not available")
+    def test_sfdisk_warns_that_a_2_tib_image_exceeds_the_dos_label_limit(self):
+        """Documents why calculate_mbr_layout rejects 2**32 sectors and more."""
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / "disk.img"
+            with image.open("wb") as stream:
+                stream.truncate(2**32 * 512)
+            result = subprocess.run(
+                ["sfdisk", "--no-act", "--wipe", "never", str(image)],
+                input="label: dos\nunit: sectors\nstart=2048, type=7, bootable\n",
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env={**os.environ, "LC_ALL": "C"},
+            )
+            output = result.stdout + result.stderr
+            self.assertIn("2199023255040", output, msg=output)
+
+class BiosChainloaderTests(unittest.TestCase):
+    """GRUB i386-pc chainloader installation (Legacy BIOS work, T3)."""
+
+    DEVICE = "/dev/disk/by-id/usb-Test_Stick_0123-0:0"
+    LAYOUT = {"start": 2048, "size": 129024, "bytes": 129024 * 512}
+    GOOD_MBR = b"\xeb\x63\x90" + b"\x01" * 437 + bytes(70) + b"\x55\xaa"
+
+    # -- grub_install_args -------------------------------------------------
+
+    def test_args_are_bios_target_explicit_boot_directory_and_device_last(self):
+        args = worker.grub_install_args(self.DEVICE, "/run/bootmediakit-abc/usb")
+        self.assertEqual(
+            args,
+            ["grub-install", "--target=i386-pc", "--boot-directory=/run/bootmediakit-abc/usb", self.DEVICE],
+        )
+        joined = " ".join(args).lower()
+        for forbidden in ("efi", "--force", "--removable", "efibootmgr", "--no-nvram"):
+            self.assertNotIn(forbidden, joined)
+
+    def test_args_reject_missing_or_invalid_device(self):
+        for device in ("", "sdb", "dev/sdb", "/tmp/disk.img", "/dev/../tmp/x", None):
+            with self.subTest(device=device), self.assertRaisesRegex(RuntimeError, "céleszköze"):
+                worker.grub_install_args(device, "/run/bootmediakit-abc/usb")
+
+    def test_args_reject_missing_or_relative_mountpoint(self):
+        for mount in ("", "usb", "run/bootmediakit/usb", None):
+            with self.subTest(mount=mount), self.assertRaisesRegex(RuntimeError, "abszolút"):
+                worker.grub_install_args(self.DEVICE, mount)
+
+    def test_args_reject_host_root_boot_and_efi_directories(self):
+        for mount in ("/", "/boot", "/boot/", "/boot/grub", "/boot/efi", "/efi", "/efi/EFI",
+                      "/run/../boot", "//boot"):
+            with self.subTest(mount=mount), self.assertRaisesRegex(RuntimeError, "gép saját"):
+                worker.grub_install_args(self.DEVICE, mount)
+
+    def test_args_accept_lookalike_names_outside_host_boot_directories(self):
+        for mount in ("/bootstrap/usb", "/run/boot", "/mnt/efi-copy", "/run/bootmediakit-x/usb"):
+            with self.subTest(mount=mount):
+                self.assertEqual(worker.grub_install_args(self.DEVICE, mount)[2], f"--boot-directory={mount}")
+
+    # -- require_bios_grub ---------------------------------------------------
+
+    def make_grub_dir(self, root: Path, skip: tuple[str, ...] = ()) -> Path:
+        directory = root / "i386-pc"
+        directory.mkdir()
+        for name in worker.GRUB_PC_REQUIRED_FILES:
+            if name not in skip:
+                (directory / name).write_bytes(b"x")
+        return directory
+
+    def test_missing_grub_install_names_the_package(self):
+        with patch("worker.shutil.which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, r"sudo pacman -S grub"):
+                worker.require_bios_grub()
+
+    def test_missing_or_incomplete_i386_pc_directory_names_the_package(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            incomplete = self.make_grub_dir(root, skip=("ntldr.mod",))
+            for directory, detail in ((root / "absent", "nincs"), (incomplete, "ntldr.mod")):
+                with self.subTest(detail=detail), patch.object(worker, "GRUB_PC_DIRECTORY", directory), patch(
+                    "worker.shutil.which", return_value="/usr/bin/grub-install"
+                ), self.assertRaisesRegex(RuntimeError, f"{detail}.*sudo pacman -S grub"):
+                    worker.require_bios_grub()
+
+    # -- install_bios_chainloader -------------------------------------------
+
+    def run_install(self, *, command_effect=None, mbr=None, verify_effect=None, grub_files=None,
+                    before=None):
+        """Run install_bios_chainloader against a temp mountpoint with mocks.
+
+        Returns (events, mountpoint, error). events records the order of
+        identity check, grub-install and table verification.
+        """
+        events: list[str] = []
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        mountpoint = root / "usb"
+        mountpoint.mkdir()
+        grub_pc = self.make_grub_dir(root)
+        files = ("ntfs.mod", "ntldr.mod", "normal.mod") if grub_files is None else grub_files
+
+        def command(args, **kwargs):
+            if args[0] == "grub-install":
+                events.append("grub-install")
+                self.assertEqual(kwargs.get("timeout"), worker.GRUB_INSTALL_TIMEOUT)
+                modules = mountpoint / "grub" / "i386-pc"
+                modules.mkdir(parents=True)
+                for name in files:
+                    (modules / name).write_bytes(b"mod")
+                if command_effect:
+                    command_effect()
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        def validate(device, identity):
+            events.append("validate_target")
+            return 1
+
+        def verify(device, layout):
+            events.append("verify_mbr_layout")
+            if verify_effect:
+                raise verify_effect
+
+        error = None
+        with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+            "worker.shutil.which", return_value="/usr/bin/grub-install"
+        ), patch("worker.assert_mount_is_partition", side_effect=lambda *a: events.append("mount_check")), patch(
+            "worker.validate_target", side_effect=validate
+        ), patch("worker.command", side_effect=command) as run, patch(
+            "worker.read_mbr", return_value=self.GOOD_MBR if mbr is None else mbr
+        ), patch("worker.verify_mbr_layout", side_effect=verify), patch("worker.emit"):
+            if before:
+                before()
+            try:
+                worker.install_bios_chainloader(self.DEVICE, mountpoint, {"serial": "x"}, self.LAYOUT)
+            except Exception as exc:  # noqa: BLE001 - returned for assertions
+                error = exc
+            finally:
+                worker.CANCEL_EVENT.clear()
+        self.grub_install_calls = [call.args[0] for call in run.call_args_list if call.args[0][0] == "grub-install"]
+        return events, mountpoint, error
+
+    def test_install_runs_checks_then_grub_install_then_writes_config_and_verifies(self):
+        events, mountpoint, error = self.run_install()
+        self.assertIsNone(error)
+        self.assertEqual(events, ["mount_check", "validate_target", "grub-install", "verify_mbr_layout"])
+        self.assertEqual(
+            self.grub_install_calls,
+            [["grub-install", "--target=i386-pc", f"--boot-directory={mountpoint}", self.DEVICE]],
+        )
+        self.assertEqual((mountpoint / "grub" / "grub.cfg").read_text(encoding="ascii"), worker.BIOS_GRUB_CFG)
+
+    def test_grub_cfg_loads_every_module_explicitly_and_chainloads_bootmgr(self):
+        self.assertEqual(
+            worker.BIOS_GRUB_CFG.splitlines(),
+            ["insmod part_msdos", "insmod ntfs", "insmod ntldr", "insmod boot", "ntldr /bootmgr", "boot"],
+        )
+
+    def test_grub_cfg_is_fsynced(self):
+        with patch("worker.os.fsync") as fsync:
+            _events, _mountpoint, error = self.run_install()
+        self.assertIsNone(error)
+        fsync.assert_called_once()
+
+    def test_missing_grub_stops_before_any_command(self):
+        with patch("worker.shutil.which", return_value=None), patch("worker.command") as run, patch(
+            "worker.validate_target"
+        ) as validate:
+            with tempfile.TemporaryDirectory() as temp, self.assertRaisesRegex(RuntimeError, "pacman -S grub"):
+                worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+        validate.assert_not_called()
+
+    def test_host_boot_directory_is_refused_before_any_command(self):
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.command") as run, patch("worker.validate_target") as validate:
+                with self.assertRaisesRegex(RuntimeError, "gép saját"):
+                    worker.install_bios_chainloader(self.DEVICE, Path("/boot"), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+        validate.assert_not_called()
+
+    def test_identity_failure_stops_before_grub_install(self):
+        def failing_validate(*_args):
+            raise RuntimeError("A célmeghajtó fizikai azonossága megváltozott (serial)")
+
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.assert_mount_is_partition"), patch(
+                "worker.validate_target", side_effect=failing_validate
+            ), patch("worker.command") as run:
+                with self.assertRaisesRegex(RuntimeError, "azonossága"):
+                    worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        run.assert_not_called()
+
+    def test_changed_partition_table_is_an_error(self):
+        _events, _mountpoint, error = self.run_install(
+            verify_effect=RuntimeError("Az MBR partíció mérete/kezdete eltér a tervezettől")
+        )
+        self.assertIsInstance(error, RuntimeError)
+        self.assertIn("eltér", str(error))
+
+    def test_empty_boot_code_or_missing_signature_is_an_error(self):
+        for name, mbr, pattern in (
+            ("zero boot code", bytes(510) + b"\x55\xaa", "üres"),
+            ("no signature", b"\x01" * 512, "0x55AA"),
+        ):
+            with self.subTest(name):
+                _events, _mountpoint, error = self.run_install(mbr=mbr)
+                self.assertRegex(str(error), pattern)
+
+    def test_missing_ntldr_module_after_install_is_an_error(self):
+        events, mountpoint, error = self.run_install(grub_files=("ntfs.mod",))
+        self.assertRegex(str(error), "ntldr.mod")
+        self.assertFalse((mountpoint / "grub" / "grub.cfg").exists())
+        self.assertNotIn("verify_mbr_layout", events)
+
+    def test_cancel_before_install_runs_no_grub_install(self):
+        events, _mountpoint, error = self.run_install(before=worker.CANCEL_EVENT.set)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertEqual(events, [])
+        self.assertEqual(self.grub_install_calls, [])
+
+    def test_cancel_during_grub_install_takes_effect_right_after_it(self):
+        events, mountpoint, error = self.run_install(command_effect=worker.CANCEL_EVENT.set)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertEqual(events, ["mount_check", "validate_target", "grub-install"])
+        self.assertFalse((mountpoint / "grub" / "grub.cfg").exists())
+
+    def test_install_logs_that_grub_install_is_not_interruptible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            grub_pc = self.make_grub_dir(Path(temp))
+            with patch.object(worker, "GRUB_PC_DIRECTORY", grub_pc), patch(
+                "worker.shutil.which", return_value="/usr/bin/grub-install"
+            ), patch("worker.assert_mount_is_partition"), patch("worker.validate_target"), patch(
+                "worker.command", side_effect=RuntimeError("stop after emit")
+            ), patch("worker.emit") as emit:
+                with self.assertRaisesRegex(RuntimeError, "stop after emit"):
+                    worker.install_bios_chainloader(self.DEVICE, Path(temp), {"serial": "x"}, self.LAYOUT)
+        logs = " ".join(str(call.kwargs.get("log", "")) for call in emit.call_args_list)
+        self.assertIn("grub-install futása közben a megszakítás", logs)
+
+    # -- assert_mount_is_partition -------------------------------------------
+
+    def test_mount_check_requires_the_target_partition_device(self):
+        devices = {"/dev/sdx1": 0x0811, "/dev/sda2": 0x0802}
+        real_stat = os.stat
+
+        def fake_stat(path, *args, **kwargs):
+            # Python 3.12's Path.is_symlink() also goes through os.stat.
+            if str(path) not in devices:
+                if str(path).startswith("/dev/"):
+                    raise FileNotFoundError(path)
+                return real_stat(path, *args, **kwargs)
+            return unittest.mock.Mock(st_mode=stat.S_IFBLK | 0o660, st_rdev=devices[str(path)])
+
+        cases = (
+            ("matching source", "/dev/sdx1\n", True),
+            ("other device", "/dev/sda2\n", False),
+            ("one of two sources differs", "/dev/sdx1\n/dev/sda2\n", False),
+            ("unknown source", "tmpfs\n", False),
+            ("nothing mounted", "", False),
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            for name, stdout, ok in cases:
+                with self.subTest(name), patch(
+                    "worker.command", return_value=subprocess.CompletedProcess([], 0, stdout, "")
+                ) as run, patch("worker.os.stat", side_effect=fake_stat):
+                    if ok:
+                        worker.assert_mount_is_partition(Path(temp), "/dev/sdx1")
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "nem a pendrive NTFS partíciója"):
+                            worker.assert_mount_is_partition(Path(temp), "/dev/sdx1")
+                self.assertEqual(
+                    run.call_args.args[0], ["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", temp]
+                )
+
+    def test_mount_check_rejects_a_symlinked_mountpoint(self):
+        with tempfile.TemporaryDirectory() as temp:
+            real = Path(temp) / "real"
+            real.mkdir()
+            link = Path(temp) / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with patch("worker.command") as run, self.assertRaisesRegex(RuntimeError, "szimbolikus"):
+                worker.assert_mount_is_partition(link, "/dev/sdx1")
+            run.assert_not_called()
+
+
+class WindowsBiosWriterTests(unittest.TestCase):
+    """write_windows_bios with mocked system commands (Legacy BIOS work, T4)."""
+
+    DEVICE = "/dev/sdz"
+    DISK_BYTES = 16 * 1024**3
+
+    def setUp(self):
+        for name in ("TARGET_MODIFIED", "OUTPUT_BROKEN"):
+            patcher = patch.object(worker, name, False)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        worker.CANCEL_EVENT.clear()
+        self.addCleanup(worker.CANCEL_EVENT.clear)
+
+    def run_writer(self, *, verify=True, total_sectors=None, on_command=None, extra_patches=(),
+                   print_effect=None):
+        """Run write_windows_bios; return (events, commands, temp_root, error)."""
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        image = root / "windows.iso"
+        image.write_bytes(b"ISO")
+        temp_root = root / "bootmediakit-run"
+        iso_mount = temp_root / "iso"
+        events: list[str] = []
+        commands: list[list[str]] = []
+        sectors = self.DISK_BYTES // 512 if total_sectors is None else total_sectors
+
+        def record(name):
+            def effect(*args, **kwargs):
+                events.append(name)
+            return effect
+
+        def fake_mkdtemp(**kwargs):
+            events.append("mkdtemp")
+            temp_root.mkdir()
+            return str(temp_root)
+
+        def fake_command(args, **kwargs):
+            commands.append(list(args))
+            events.append("cmd:" + " ".join(args[:2]))
+            if on_command:
+                on_command(list(args))
+            stdout = ""
+            if args[:2] == ["blockdev", "--getss"]:
+                stdout = "512\n"
+            elif args[:2] == ["blockdev", "--getsz"]:
+                stdout = f"{sectors}\n"
+            return subprocess.CompletedProcess(args, 0, stdout, "")
+
+        def fake_mount_iso(_image, mountpoint):
+            events.append("mount_iso")
+            mountpoint.mkdir(parents=True)
+
+        def fake_scan(path, boot_mode="uefi"):
+            events.append(f"scan:{boot_mode}")
+            return path / "sources/install.wim", path / "sources/boot.wim", 4096
+
+        def fake_copy(iso, usb, total, verify_flag, boot_files, message):
+            events.append("copy")
+            self.copy_args = (iso, usb, total, verify_flag, boot_files, message)
+
+        def fake_chainloader(device, mount, identity, layout):
+            events.append("install_bios_chainloader")
+            self.chainloader_args = (device, mount, identity, layout)
+
+        patches = [
+            patch("worker.require_programs", side_effect=lambda programs: events.append("require_programs")),
+            patch("worker.ensure_source_not_on_target", side_effect=record("ensure_source")),
+            patch("worker.validate_target", side_effect=lambda *a: events.append("validate_target") or self.DISK_BYTES),
+            patch("worker.require_bios_grub", side_effect=record("require_bios_grub")),
+            patch("worker.tempfile.mkdtemp", side_effect=fake_mkdtemp),
+            patch("worker.mount_iso", side_effect=fake_mount_iso),
+            patch("worker.scan_windows_iso", side_effect=fake_scan),
+            patch("worker.read_iso_volume_label", return_value="WIN_TEST"),
+            patch("worker.unmount_disk", side_effect=record("unmount_disk")),
+            patch("worker.assert_disk_unmounted", side_effect=record("assert_disk_unmounted")),
+            patch("worker.verify_mbr_layout", side_effect=record("verify_mbr_layout")),
+            patch("worker.wait_for_partition_nodes", side_effect=lambda *a, **k: (worker.check_cancelled(), events.append("wait_partitions"))),
+            patch("worker.validate_ntfs_boot_sector", side_effect=record("validate_ntfs_boot_sector")),
+            patch("worker.mount_ntfs_volume", side_effect=lambda *a: events.append("mount_ntfs") or "ntfs3"),
+            patch("worker.copy_windows_files", side_effect=fake_copy),
+            patch("worker.install_bios_chainloader", side_effect=fake_chainloader),
+            patch("worker.command", side_effect=fake_command),
+            patch("builtins.print", side_effect=print_effect),
+            *extra_patches,
+        ]
+        error = None
+        import contextlib
+        with contextlib.ExitStack() as stack:
+            for item in patches:
+                stack.enter_context(item)
+            try:
+                worker.write_windows_bios(image, self.DEVICE, verify, {"serial": "x"})
+            except Exception as exc:  # noqa: BLE001 - returned for assertions
+                error = exc
+        self.iso_mount = iso_mount
+        return events, commands, temp_root, error
+
+    def test_full_sequence_matches_the_work_description(self):
+        events, commands, temp_root, error = self.run_writer()
+        self.assertIsNone(error)
+        usb_mount = str(temp_root / "usb")
+        order = [
+            "require_programs", "ensure_source", "validate_target", "require_bios_grub",
+            "cmd:blockdev --getss", "cmd:blockdev --getsz", "mkdtemp",
+            "ensure_source", "mount_iso", "scan:bios",
+            "ensure_source", "validate_target", "unmount_disk",
+            "validate_target", "ensure_source", "assert_disk_unmounted",
+            "cmd:wipefs --all", "cmd:sfdisk --wipe", "cmd:blockdev --rereadpt", "cmd:partprobe /dev/sdz",
+            "cmd:udevadm settle", "verify_mbr_layout", "wait_partitions",
+            "cmd:mkfs.ntfs --fast", "validate_ntfs_boot_sector",
+            "validate_target", "unmount_disk", "mount_ntfs", "copy", "install_bios_chainloader",
+            "cmd:sync --file-system", "cmd:umount --", "cmd:udevadm settle", "verify_mbr_layout",
+        ]
+        self.assertEqual(events[: len(order)], order)
+        self.assertIn(["wipefs", "--all", "--force", self.DEVICE], commands)
+        self.assertIn(["umount", "--", usb_mount], commands)
+        sfdisk = next(args for args in commands if args[0] == "sfdisk")
+        self.assertEqual(sfdisk, ["sfdisk", "--wipe", "never", self.DEVICE])
+        mkfs = next(args for args in commands if args[0] == "mkfs.ntfs")
+        self.assertEqual(
+            mkfs,
+            ["mkfs.ntfs", "--fast", "--force", "--label", "WIN_TEST", "--partition-start", "2048",
+             "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63",
+             "--cluster-size", "4096", "/dev/sdz1"],
+        )
+        self.assertTrue(worker.TARGET_MODIFIED)
+        self.assertFalse(temp_root.exists())
+
+    def test_grub_is_installed_after_the_copy_and_before_the_final_unmount(self):
+        events, _commands, temp_root, error = self.run_writer()
+        self.assertIsNone(error)
+        copy = events.index("copy")
+        grub = events.index("install_bios_chainloader")
+        final_umount = events.index("cmd:umount --", grub)
+        self.assertLess(copy, grub)
+        self.assertLess(grub, final_umount)
+        self.assertEqual(self.chainloader_args[0], self.DEVICE)
+        self.assertEqual(self.chainloader_args[1], temp_root / "usb")
+        self.assertEqual(self.chainloader_args[2], {"serial": "x"})
+        self.assertEqual(self.chainloader_args[3]["start"], 2048)
+
+    def test_copy_checks_bios_boot_files_and_passes_the_verify_flag(self):
+        for verify in (True, False):
+            with self.subTest(verify=verify):
+                worker.TARGET_MODIFIED = False
+                _events, _commands, _temp_root, error = self.run_writer(verify=verify)
+                self.assertIsNone(error)
+                self.assertEqual(self.copy_args[3], verify)
+                self.assertEqual(self.copy_args[4], ("bootmgr", "boot/bcd", "sources/boot.wim"))
+                self.assertIn("Legacy BIOS", self.copy_args[5])
+
+    def test_missing_grub_leaves_the_target_untouched(self):
+        def no_grub():
+            raise RuntimeError(worker.GRUB_MISSING_MESSAGE.format(detail="nincs grub-install"))
+
+        events, commands, temp_root, error = self.run_writer(
+            extra_patches=(patch("worker.require_bios_grub", side_effect=no_grub),)
+        )
+        self.assertRegex(str(error), "pacman -S grub")
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertEqual(commands, [])
+        self.assertNotIn("unmount_disk", events)
+        self.assertNotIn("mkdtemp", events)
+
+    def test_disk_of_2_tib_is_refused_before_any_change(self):
+        events, commands, _temp_root, error = self.run_writer(total_sectors=2**32)
+        self.assertIsInstance(error, ValueError)
+        self.assertIn("2 TiB", str(error))
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertFalse(any(args[0] in ("wipefs", "sfdisk", "mkfs.ntfs") for args in commands))
+        self.assertNotIn("mkdtemp", events)
+
+    def test_too_small_disk_for_the_iso_is_refused_before_any_change(self):
+        # 4096 bytes of ISO data + 128 MiB reserve does not fit in 100 MiB.
+        events, commands, temp_root, error = self.run_writer(total_sectors=100 * 2048)
+        self.assertRegex(str(error), "Kevés a pendrive kapacitása")
+        self.assertFalse(worker.TARGET_MODIFIED)
+        self.assertNotIn("unmount_disk", events)
+        self.assertFalse(any(args[0] == "wipefs" for args in commands))
+        self.assertFalse(temp_root.exists())
+
+    def test_cancel_after_wipefs_stops_and_cleans_up(self):
+        def cancel_on_wipefs(args):
+            if args[0] == "wipefs":
+                worker.CANCEL_EVENT.set()
+
+        events, commands, temp_root, error = self.run_writer(on_command=cancel_on_wipefs)
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertTrue(worker.TARGET_MODIFIED)
+        self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+        self.assertNotIn("install_bios_chainloader", events)
+        self.assertIn(["umount", "--", str(self.iso_mount)], commands)
+        self.assertEqual(events.count("unmount_disk"), 2)
+        self.assertFalse(temp_root.exists())
+
+    def test_broken_gui_pipe_stops_at_next_safe_point_and_cleans_up(self):
+        events, commands, temp_root, error = self.run_writer(
+            print_effect=GuiPipeBrokenTests.pipe_breaks_once_target_is_modified
+        )
+        self.assertIsInstance(error, worker.OperationCancelled)
+        self.assertIn("megszakadt a kapcsolat", str(error))
+        self.assertTrue(worker.OUTPUT_BROKEN)
+        self.assertIn(["wipefs", "--all", "--force", self.DEVICE], commands)
+        self.assertFalse(any(args[0] == "mkfs.ntfs" for args in commands))
+        self.assertFalse(any(args[0] == "mount" for args in commands))
+        self.assertNotIn("install_bios_chainloader", events)
+        self.assertIn(["umount", "--", str(self.iso_mount)], commands)
+        self.assertGreaterEqual(events.count("unmount_disk"), 2)
+        self.assertFalse(temp_root.exists())
+
+    def test_final_log_describes_the_layout_and_legacy_boot_limits(self):
+        emitted = []
+        _events, _commands, _temp_root, error = self.run_writer(
+            extra_patches=(patch("worker.emit", side_effect=lambda *a, **k: emitted.append((a, k)) or True),)
+        )
+        self.assertIsNone(error)
+        args, kwargs = emitted[-1]
+        self.assertEqual(args[1], 100)
+        for phrase in ("MBR", "aktív NTFS", "/grub", "Legacy BIOS / CSM indításhoz",
+                       "csak NTFS-t olvasó firmware-en", "UEFI (GPT) mód"):
+            self.assertIn(phrase, kwargs["log"])
+        self.assertNotIn("UEFI módban nem", kwargs["log"])
+
+
 class WindowsIsoScanTests(unittest.TestCase):
     def test_scan_accepts_case_insensitive_uefi_and_install_files(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1025,6 +1676,141 @@ class WindowsIsoScanTests(unittest.TestCase):
             (sources / "boot.wim").write_bytes(b"boot")
             with self.assertRaisesRegex(RuntimeError, "install.wim"):
                 worker.scan_windows_iso(root)
+
+
+class WindowsBiosIsoScanTests(unittest.TestCase):
+    """scan_windows_iso(boot_mode="bios") for the Legacy BIOS/MBR mode (Legacy BIOS work, T1)."""
+
+    @staticmethod
+    def make_tree(root: Path, files: dict[str, bytes]) -> None:
+        for relative, data in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+
+    BIOS_FILES = {
+        "BOOTMGR": b"bootmgr",
+        "Boot/BCD": b"bcd",
+        "Sources/Boot.WIM": b"boot-image",
+        "Sources/install.swm": b"install-image",
+    }
+
+    def test_bios_mode_accepts_case_insensitive_files_without_efi_loader(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            expected_total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+
+            install_image, boot_wim, total = worker.scan_windows_iso(root, boot_mode="bios")
+
+            self.assertEqual(install_image.name, "install.swm")
+            self.assertEqual(boot_wim.name, "Boot.WIM")
+            self.assertEqual(total, expected_total)
+
+    def test_bios_mode_accepts_wim_and_esd_install_images(self):
+        for name in ("install.wim", "INSTALL.ESD"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                files = {key: value for key, value in self.BIOS_FILES.items() if "install" not in key}
+                files[f"Sources/{name}"] = b"install-image"
+                self.make_tree(root, files)
+                install_image, _boot_wim, _total = worker.scan_windows_iso(root, boot_mode="bios")
+                self.assertEqual(install_image.name, name)
+
+    def test_default_and_explicit_uefi_mode_still_require_the_efi_loader(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            for kwargs in ({}, {"boot_mode": "uefi"}):
+                with self.subTest(kwargs=kwargs), self.assertRaisesRegex(RuntimeError, "BOOTX64.EFI"):
+                    worker.scan_windows_iso(root, **kwargs)
+
+    def test_bios_mode_rejects_missing_bootmgr(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["BOOTMGR"]
+            files["bootmgr.efi"] = b"efi bootmgr is not the BIOS bootmgr"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "bootmgr Windows indítókezelő"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_bootmgr_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["BOOTMGR"]
+            files["bootmgr/readme.txt"] = b"not a loader"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "bootmgr Windows indítókezelő"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_names_windows_xp_style_iso_as_unsupported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, {"I386/NTLDR": b"ntldr", "I386/SETUPLDR.BIN": b"setupldr"})
+            with self.assertRaisesRegex(RuntimeError, "XP / Server 2003.*nem támogatja"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_missing_bcd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            files = dict(self.BIOS_FILES)
+            del files["Boot/BCD"]
+            files["boot/boot.sdi"] = b"sdi"
+            self.make_tree(root, files)
+            with self.assertRaisesRegex(RuntimeError, "boot/BCD"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_rejects_missing_boot_wim_and_install_image(self):
+        for missing, pattern in (("Sources/Boot.WIM", "boot.wim"), ("Sources/install.swm", "install.wim")):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                files = dict(self.BIOS_FILES)
+                del files[missing]
+                self.make_tree(root, files)
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_bios_mode_refuses_an_existing_grub_entry_in_the_iso_root(self):
+        for extra in ({"grub/grub.cfg": b"cfg"}, {"GRUB": b"file"}):
+            with self.subTest(extra=list(extra)), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.make_tree(root, {**self.BIOS_FILES, **extra})
+                with self.assertRaisesRegex(RuntimeError, "„grub” nevű.*nem írom felül"):
+                    worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_grub_entry_is_not_an_error_in_uefi_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, {**self.BIOS_FILES, "efi/boot/bootx64.efi": b"efi", "grub/x": b"x"})
+            worker.scan_windows_iso(root)
+
+    def test_bios_mode_still_rejects_symlinks_and_special_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            (root / "link.txt").symlink_to(root / "BOOTMGR")
+            with self.assertRaisesRegex(RuntimeError, "szimbolikus fájllinket"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            (root / "support").mkdir()
+            (root / "support" / "dirlink").symlink_to(root / "Sources", target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "szimbolikus könyvtárlinket"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.make_tree(root, self.BIOS_FILES)
+            os.mkfifo(root / "pipe")
+            with self.assertRaisesRegex(RuntimeError, "Nem szabályos fájl"):
+                worker.scan_windows_iso(root, boot_mode="bios")
+
+    def test_unknown_boot_mode_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                worker.scan_windows_iso(Path(temp), boot_mode="legacy")
 
 
 class UefiNtfsLabelTests(unittest.TestCase):
@@ -1188,6 +1974,71 @@ class WindowsVerifyArgumentTests(unittest.TestCase):
             write.assert_not_called()
 
 
+class WorkerModeDispatchTests(unittest.TestCase):
+    """main() mode names, including windows-bios (Legacy BIOS work, T5)."""
+
+    IDENTITY = {
+        "path": "/dev/sdb", "size": 8 * 1024**3, "maj_min": "8:16",
+        "model": "USB Disk", "serial": "ABC123", "wwn": "",
+        "tran": "usb", "rm": False, "diskseq": "4", "by_id": "/dev/disk/by-id/usb-ABC",
+    }
+
+    def run_main(self, mode: str, verify: str = "1", suffix: str = ".iso"):
+        with tempfile.TemporaryDirectory() as temp:
+            image = Path(temp) / f"source{suffix}"
+            image.write_bytes(b"image")
+            with patch("worker.os.geteuid", return_value=0), patch(
+                "worker.validate_privileged_install"
+            ), patch("worker.start_control_reader"), patch("worker.emit") as emit, patch(
+                "worker.write_windows_uefi"
+            ) as uefi, patch("worker.write_windows_bios") as bios, patch("worker.write_raw") as raw:
+                result = worker.main(
+                    ["bootmediakit-worker", mode, str(image), "/dev/sdb", verify, json.dumps(self.IDENTITY)]
+                )
+            return result, {"uefi": uefi, "bios": bios, "raw": raw}, image.resolve(), emit
+
+    def test_windows_bios_mode_calls_the_bios_writer_with_verify_flag_and_identity(self):
+        for verify in ("0", "1"):
+            with self.subTest(verify=verify):
+                result, writers, image, _emit = self.run_main("windows-bios", verify)
+                self.assertEqual(result, 0)
+                writers["bios"].assert_called_once_with(image, "/dev/sdb", verify == "1", self.IDENTITY)
+                writers["uefi"].assert_not_called()
+                writers["raw"].assert_not_called()
+
+    def test_existing_modes_keep_their_writers(self):
+        for mode, name in (("windows", "uefi"), ("raw", "raw")):
+            with self.subTest(mode=mode):
+                result, writers, image, _emit = self.run_main(mode, "1")
+                self.assertEqual(result, 0)
+                writers[name].assert_called_once_with(image, "/dev/sdb", True, self.IDENTITY)
+                for other, mock in writers.items():
+                    if other != name:
+                        mock.assert_not_called()
+
+    def test_unknown_mode_names_are_still_errors(self):
+        for mode in ("bios", "windows_bios", "Windows-BIOS", "windows-uefi", ""):
+            with self.subTest(mode=mode):
+                result, writers, _image, emit = self.run_main(mode)
+                self.assertEqual(result, 1)
+                for mock in writers.values():
+                    mock.assert_not_called()
+                self.assertIn("Ismeretlen írási mód", str(emit.call_args))
+
+    def test_windows_bios_mode_requires_an_iso_file(self):
+        result, writers, _image, emit = self.run_main("windows-bios", suffix=".img")
+        self.assertEqual(result, 1)
+        writers["bios"].assert_not_called()
+        self.assertIn("ISO fájl szükséges", str(emit.call_args))
+
+    def test_wrapper_and_polkit_policy_pass_arguments_through_unchanged(self):
+        root = Path(__file__).resolve().parents[1]
+        wrapper = (root / "bootmediakit-worker").read_text(encoding="utf-8")
+        self.assertIn('exec /usr/bin/python3 -I /usr/lib/bootmediakit/worker.py "$@"', wrapper)
+        # The polkit action is bound to the wrapper path only; no argument filter.
+        policy = (root / "org.bootmediakit.policy").read_text(encoding="utf-8")
+        self.assertIn("org.freedesktop.policykit.exec.path", policy)
+        self.assertNotIn("argv", policy)
 
 
 class KernelCopyTests(unittest.TestCase):

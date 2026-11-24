@@ -21,7 +21,11 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 printf '\nA BootMediaKit működéséhez szükséges csomagok telepítése…\n'
-pacman -S --needed pyside6 util-linux parted ntfs-3g ntfsprogs dosfstools polkit 7zip
+pacman -S --needed pyside6 util-linux parted ntfs-3g ntfsprogs dosfstools polkit 7zip grub
+printf '\nA grub csomagból a BootMediaKit csak a grub-install eszközt és az i386-pc modulokat használja,\n'
+printf 'kizárólag a kiválasztott pendrive-ra (Windows Legacy BIOS mód). A gép saját rendszerbetöltőjét\n'
+printf 'a csomag telepítése nem módosítja. Ha a pacman a grub-install / grub-mkconfig futtatását javasolja,\n'
+printf 'az a gép saját rendszerbetöltőjére vonatkozik; a BootMediaKit-hez nem kell lefuttatni.\n'
 
 UEFI_DIR="/usr/share/bootmediakit/uefi"
 install -d -m 0755 "$UEFI_DIR"

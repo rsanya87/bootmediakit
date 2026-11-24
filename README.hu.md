@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.2.2` (stabil kiadás, 2026-11-10)  
+**Verzió:** `0.3.0` (stabil kiadás, 2026-11-24)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.2.2 karbantartó kiadás: új funkciót nem ad, és nem változtat sem az írási sorrenden, sem a Windows-mód GPT-elrendezésén. Az automatizált GitHub Actions ellenőrzései sikeresek, beleértve a valódi RAW és Windows írót futtató loop-eszközös integrációs teszteket. A 0.2.2-vel fizikailag újra ellenőrizve: a visszaolvasással kiírt Linux Mint 22.3 DD/RAW pendrive UEFI és Legacy BIOS/MBR módban is elindult, olyan pendrive-on is, amelyen előtte a Windows-mód kétpartíciós GPT-je volt; a Windows 10/11 IoT Enterprise LTSC pendrive a várt partíciónevekkel elkészült és elindult. A teljes Windows 10/11 IoT Enterprise LTSC telepítés, valamint a normál Windows 11 26H2 Telepítő indulása Secure Boot be- és kikapcsolt állapotában (csak a partícióválasztó képernyőig) a 0.2.1-gyel lett ellenőrizve, ezek teljes körűen nem lettek megismételve. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.3.0 új Windows Legacy BIOS/MBR telepítő módot ad: MBR egyetlen aktív NTFS partícióval és GNU GRUB i386-pc láncbetöltővel, amelyet a gép saját `grub-install` programja ír ki. A Linux DD/RAW és a Windows UEFI mód nem változott. Az automatizált GitHub Actions ellenőrzések sikeresek, beleértve a valódi RAW, Windows UEFI és Windows Legacy BIOS írót futtató loop-eszközös integrációs teszteket, valamint a Legacy pendrive QEMU/SeaBIOS alatti indítását egy teszt-rendszerindító-kezelőig. A 0.3.0-val fizikailag ellenőrizve: a Windows 10 és Windows 11 IoT Enterprise LTSC x64 Legacy pendrive egy nagyon régi Core 2 Duo laptopon a Windows Telepítő particionálási képernyőjéig jutott, és a Windows 7 SP1 x64 telepítő is elindult Legacy pendrive-ról. A Legacy pendrive QEMU/SeaBIOS alatt is elindult; a QEMU OVMF UEFI firmware-ével nem indult, egy Gigabyte B850 alaplap viszont kikapcsolt CSM mellett UEFI módban elindította róla a Windows Telepítőt, valószínűleg a firmware saját NTFS-támogatásával. A Windows UEFI pendrive és a Linux Mint DD/RAW pendrive (UEFI és Legacy BIOS) újratesztelve elindult. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 
@@ -28,6 +28,7 @@
 - Windows x64 UEFI telepítő készítése GPT lemezen, két partícióval:
   - egy nagy NTFS Microsoft Basic Data partíció az eredeti Windows ISO fájljainak;
   - egy 1 MiB-os FAT `BMK_EFI` UEFI:NTFS segédpartíció a pendrive végén. A GPT-típusa Microsoft Basic Data (nem EFI System), be van állítva a NoDriveLetter (GUID-specifikus 63-as) attribútum, és a GPT partíciónév, valamint a FAT kötetcímke is `BMK_EFI`.
+- Windows telepítő pendrive **Legacy BIOS/CSM** indításhoz, az „Indítási mód” választóval: MBR lemez egyetlen aktív NTFS partícióval az eredeti Windows ISO fájljainak, és GNU GRUB i386-pc indító, amely az ISO saját Windows `bootmgr`-ét indítja. Lásd: [Windows Legacy BIOS/MBR – hogyan működik?](#windows-legacy-biosmbr--hogyan-működik).
 - Az eredeti `install.esd`, `install.wim` és a többi Windows telepítőfájl változatlanul kerül át. Nincs ESD→WIM konvertálás és SWM-darabolás.
 - A hivatalos UEFI:NTFS segédkép méretének és Git-blob SHA-1 azonosítójának ellenőrzése telepítéskor és használat előtt.
 - A Windows telepítő nagy NTFS partíciója megőrzi az ISO eredeti kötetcímkéjét; a `BMK_EFI` név kizárólag a kis segédpartícióhoz tartozik.
@@ -56,10 +57,23 @@ A Rufus által közzétett UEFI:NTFS segédkép tartalmaz Secure Boot aláírás
 
 A kiadás fizikai tesztje során a normál Windows 11 26H2 x64 telepítő Secure Boot kikapcsolt és bekapcsolt állapotában is eljutott a Windows Telepítő partícióválasztó képernyőjéig. A telepítés ezen túl nem folytatódott. Ez kizárólag a tesztelt firmware-en megfigyelt eredmény; más alaplapok és UEFI firmware-ek eltérően viselkedhetnek.
 
+## Windows Legacy BIOS/MBR – hogyan működik?
+
+UEFI nélküli, vagy CSM (legacy) módban használt UEFI-s géphez válaszd a Windows módot, és az **Indítási mód** legyen **Legacy BIOS (MBR)**. A választó csak felismert Windows telepítő ISO-nál aktív; az alapérték továbbra is az UEFI (GPT).
+
+A BootMediaKit ekkor MBR partíciós táblát készít egyetlen aktív NTFS partícióval (típus: `7`), amely 1 MiB-tól a pendrive végéig tart. Erre másolja az eredeti Windows ISO fájljait, majd lefuttatja a gépre telepített `grub` csomag `grub-install` programját. A BIOS az MBR-ből a GRUB indítókódját tölti be, a partíció előtti résből a GRUB magját, az NTFS partíció `/grub` könyvtárából pedig a modulokat és a `grub.cfg`-t. A `grub.cfg` az `ntldr /bootmgr` paranccsal elindítja a Windows rendszerindító-kezelőjét, onnan a Windows Telepítő a megszokott módon folytatódik. Az SHA-256 ellenőrzés csak az ISO fájljaira vonatkozik; a `/grub` könyvtár utána kerül fel.
+
+- **Nincs beépített indítókód.** A BootMediaKit ehhez a módhoz nem tartalmaz és nem tölt le indítókódot, és más projektből sem másol Microsoft MBR- vagy boot-szektor-kódot. Az indítókódot a gép saját `grub-install` programja írja ki.
+- **A gép rendszere érintetlen marad.** A `grub-install` csak `--target=i386-pc` kapcsolóval fut, a `--boot-directory` a pendrive saját NTFS csatolási pontjára mutat, utolsó argumentuma pedig az újraellenőrzött USB-eszköz. A BootMediaKit soha nem futtat EFI-s `grub-install`-t, `grub-mkconfig`-ot vagy `efibootmgr`-t, és indítókönyvtárként elutasítja a gép gyökérkönyvtárát, valamint a `/boot`, az `/efi` és az alattuk lévő könyvtárakat; indítókönyvtár csak a pendrive NTFS partíciójának csatolási pontja lehet.
+- **Legacy indításhoz készül.** A pendrive Legacy BIOS/CSM indításhoz készül. NTFS-driver nélküli UEFI firmware-en (például a QEMU OVMF-en) **nem** indul. Az ISO saját `efi/boot/bootx64.efi` fájlja azonban a pendrive-ra kerül, ezért olyan gépen, amelynek UEFI firmware-e olvassa az NTFS-t, UEFI módban is elindulhat. Erre ne építs: UEFI-s géphez az UEFI (GPT) indítási módot használd. A megerősítő ablak is figyelmeztet erre.
+- **Régebbi gépekhez.** A mód régebbi gépekhez készült. Az újabb Windows telepítők ellenőrzik a hardverkövetelményeket, és régi gépen megtagadhatják a telepítést; ez a Windows Telepítő döntése, nem a pendrive hibája.
+- Feltételek és elutasítások: 2 TiB-os vagy nagyobb meghajtót nem fogad el (az MBR korlátja); 512 bájtos logikai szektor kell, mint az UEFI módban; Windows XP / Server 2003 jellegű ISO (`i386` könyvtár `bootmgr` nélkül) nem támogatott; ha az ISO gyökerében már van `grub` nevű elem, a program megáll, nem írja felül. `grub-install` és `/usr/lib/grub/i386-pc` nélkül a Legacy érték a felületen tiltott.
+- Tesztelés: az automatikus tesztek a termelési íróval loop-eszközre írják a pendrive-ot, és QEMU/SeaBIOS alatt egy teszt-`bootmgr`-ig indítják. A valódi Windows ISO-kkal és gépeken végzett fizikai teszteket a [ROADMAP.md](ROADMAP.md) követi.
+
 ### Jelenlegi korlátozások
 
-- Windows telepítő: **UEFI x64**. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
-- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
+- Windows telepítő: **UEFI x64 (GPT)** vagy **Legacy BIOS/CSM (MBR)**, pendrive-onként egy mód; kombinált BIOS+UEFI Windows pendrive még nincs. A Linux ISOHybrid/DD mód az ISO saját bootképessége szerint Legacy BIOS és UEFI rendszeren is használható.
+- Windows To Go, FreeDOS, Linux persistence és Windows 11 telepítő testreszabása még nincs.
 - A jelenlegi elrendezés 512 bájtos logikai szektorú USB-meghajtót igényel.
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
 - A Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítése a tesztelt rendszeren sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot be- és kikapcsolt állapotában is eljutott a partícióválasztó képernyőig; a telepítés további része nem lett igazolva.
@@ -90,6 +104,7 @@ Szükséges Arch csomagok:
 - `dosfstools` — `fatlabel` a BMK_EFI FAT kötetcímkéjének beállításához és ellenőrzéséhez
 - `polkit` — jogosultságemelés
 - `7zip` — Windows ISO felismerése
+- `grub` — a `grub-install` és az i386-pc modulok a Windows Legacy BIOS módhoz. A BootMediaKit csak ezeket használja, és a `grub-install`-t kizárólag a kiválasztott pendrive-ra futtatja. A csomag telepítése **nem** módosítja a gép saját rendszerbetöltőjét. A csomag telepítés utáni üzenete a `grub-install` és a `grub-mkconfig` futtatását javasolja; ez a gép saját rendszerbetöltőjére vonatkozik, a BootMediaKit-hez nem kell.
 
 KDE alatt aktív polkit hitelesítő ügynök szükséges.
 
@@ -103,7 +118,7 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 
 A GUI-tesztekhez (`tests/test_app.py`) `PySide6` kell; a CI ezen felül a `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker` parancsot is futtatja.
 
-Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütközésvizsgálatot, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet, az SHA-256 visszaellenőrzést, a megszakítást és a csomagolást. Az opcionális loop-eszközös integrációs tesztek a valódi RAW és Windows írót futtatják rootként egy lemezképfájlon:
+Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütközésvizsgálatot, a GPT partícióelrendezést, a partícióneveket, az sfdisk típusokat, az ISO szerkezetét, a fájlmásolási manifestet, az SHA-256 visszaellenőrzést, a megszakítást és a csomagolást. Az opcionális loop-eszközös integrációs tesztek a valódi RAW, Windows UEFI és Windows Legacy BIOS írót futtatják rootként egy lemezképfájlon; `BMK_QEMU=1` mellett a Legacy BIOS pendrive-képet QEMU/SeaBIOS alatt el is indítják:
 
 ```bash
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v

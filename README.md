@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.2.2` (stable release, 2026-11-10)  
+**Version:** `0.3.0` (stable release, 2026-11-24)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> 0.2.2 is a maintenance release: it adds no features and does not change the write sequence or the Windows-mode GPT layout. Its automated GitHub Actions checks passed, including loop-device integration tests of the real RAW and Windows writers. Physically re-validated for 0.2.2: Linux Mint 22.3 DD/RAW media written with read-back verification booted in UEFI and Legacy BIOS/MBR modes, including on a drive that previously carried the Windows-mode two-partition GPT; Windows 10/11 IoT Enterprise LTSC media was created with the expected partition names and booted. The complete Windows 10/11 IoT Enterprise LTSC installations and the standard Windows 11 26H2 Setup launch with Secure Boot enabled and disabled (to the disk-selection screen only) were verified on 0.2.1 and were not repeated in full. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
+> 0.3.0 adds a Windows Legacy BIOS/MBR installer mode: an MBR with one active NTFS partition and a GNU GRUB i386-pc chainloader written by the computer's own `grub-install`. The Linux DD/RAW and Windows UEFI modes are unchanged. The automated GitHub Actions checks passed, including loop-device integration tests of the real RAW, Windows UEFI and Windows Legacy BIOS writers and a QEMU/SeaBIOS boot of the Legacy media up to a test boot manager. Physically validated for 0.3.0: Windows 10 and Windows 11 IoT Enterprise LTSC x64 Legacy media booted on a very old Core 2 Duo laptop to the Setup partitioning screen, and Windows 7 SP1 x64 Setup started from Legacy media. The Legacy media also booted in QEMU/SeaBIOS; it did not boot with QEMU's OVMF UEFI firmware, but a Gigabyte B850 board with CSM disabled started Windows Setup from it in UEFI mode, presumably through the firmware's own NTFS support. Windows UEFI media and Linux Mint DD/RAW media (UEFI and Legacy BIOS) were re-tested and booted. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
 
 ## Current capabilities
 
@@ -28,6 +28,7 @@ BootMediaKit is an open-source Linux desktop application for creating bootable U
 - Prepare x64 UEFI Windows installation media using a GPT disk with:
   - a large NTFS Basic Data partition containing the original Windows ISO files;
   - a 1 MiB FAT `BMK_EFI` UEFI:NTFS helper partition at the end of the drive. Its GPT type is Microsoft Basic Data (not EFI System), with NoDriveLetter (GUID-specific bit 63); its GPT partition name and FAT volume label are both `BMK_EFI`.
+- Prepare Windows installation media for **Legacy BIOS/CSM** boot, selected with the "Indítási mód" (boot mode) control: an MBR disk with one active NTFS partition holding the original Windows ISO files, and the GNU GRUB i386-pc boot loader, which starts the ISO's own Windows `bootmgr`. See [Windows Legacy BIOS/MBR workflow](#windows-legacy-biosmbr-workflow).
 - Keep `install.esd`, `install.wim`, and all other Windows setup files unchanged. No ESD-to-WIM conversion or SWM splitting is needed in this mode.
 - Verify the upstream UEFI:NTFS image before use and verify the written helper partition by reading it back.
 - Preserve the source Windows ISO volume label on the large NTFS partition; reserve `BMK_EFI` for the small helper partition.
@@ -53,10 +54,23 @@ The upstream UEFI:NTFS helper image contains Secure Boot-signed x64 UEFI:NTFS co
 
 On the hardware used for release validation, the standard Windows 11 26H2 x64 installer reached the Windows Setup disk-selection screen with Secure Boot both enabled and disabled. The installation was not continued beyond that point. This confirms the observed boot path on that test firmware only; other systems may differ.
 
+## Windows Legacy BIOS/MBR workflow
+
+For computers without UEFI, or with UEFI in CSM (legacy) mode, choose the Windows mode and set **Indítási mód** to **Legacy BIOS (MBR)**. The selector is active only for a recognised Windows installation ISO; UEFI (GPT) stays the default.
+
+BootMediaKit then creates an MBR partition table with a single active NTFS partition (type `7`) from 1 MiB to the end of the drive, copies the original Windows ISO files to it, and runs `grub-install` from the `grub` package installed on your computer. The BIOS loads GRUB's boot code from the MBR, GRUB's core image from the gap before the partition, and its modules and `grub.cfg` from the `/grub` directory on the NTFS partition. `grub.cfg` starts the Windows Boot Manager with `ntldr /bootmgr`, and Windows Setup continues from there. The SHA-256 verification covers the ISO files only; `/grub` is added afterwards.
+
+- **No bundled boot code.** BootMediaKit neither contains nor downloads boot code for this mode, and it does not copy Microsoft MBR/boot-sector code from any project. The boot code is written by your system's own `grub-install`.
+- **The host stays untouched.** `grub-install` runs only with `--target=i386-pc`, with `--boot-directory` pointing at the USB drive's own NTFS mountpoint, and with the re-validated USB device as its last argument. BootMediaKit never runs an EFI `grub-install`, `grub-mkconfig` or `efibootmgr`, and it refuses the computer's root directory, `/boot`, `/efi` and anything below them as the boot directory; the boot directory must be the USB partition's own mountpoint.
+- **Made for Legacy boot.** The drive is made for Legacy BIOS/CSM boot. It does **not** boot on UEFI firmware without an NTFS driver (for example QEMU's OVMF). The ISO's own `efi/boot/bootx64.efi` is copied too, however, so on a computer whose UEFI firmware reads NTFS it may also start in UEFI mode. Do not rely on that: for UEFI computers use the UEFI (GPT) boot mode. The confirmation dialog repeats this.
+- **Older computers.** The mode is meant for older machines. Newer Windows installers check hardware requirements and may refuse to install on an old computer; that is Windows Setup's decision, not a problem of the USB drive.
+- Requirements and refusals: drives of 2 TiB or more are refused (MBR limit); 512-byte logical sectors are required, as in the UEFI mode; Windows XP/Server 2003-style ISOs (an `i386` directory without `bootmgr`) are not supported; an ISO that already has a `grub` entry in its root is refused rather than overwritten. Without `grub-install` and `/usr/lib/grub/i386-pc` the Legacy option is disabled in the GUI.
+- Testing: automated tests write the media to a loop device with the production writer and boot it in QEMU/SeaBIOS up to a test `bootmgr`. Physical tests with real Windows ISOs and computers are tracked in [ROADMAP.md](ROADMAP.md).
+
 ### Current scope and limitations
 
-- Windows target: **UEFI x64 only**. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
-- Windows Legacy BIOS/CSM, Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
+- Windows target: **UEFI x64 (GPT)** or **Legacy BIOS/CSM (MBR)**, one mode per drive; a combined BIOS+UEFI Windows drive is not implemented. Linux ISOHybrid/DD images can boot in Legacy BIOS and UEFI when the source image supports those modes.
+- Windows To Go, FreeDOS, Linux persistence and Windows 11 setup customization are not implemented.
 - The current layout requires a 512-byte logical-sector USB device.
 - The current installer targets Arch-based distributions only. Debian/Ubuntu and Fedora support are future work.
 - Physical UEFI installation tests for Windows 10 and Windows 11 IoT Enterprise LTSC x64 completed successfully on the tested system(s). The standard Windows 11 26H2 x64 ISO was also tested with Secure Boot enabled and disabled and reached the Setup disk-selection screen; installation beyond that point was not verified.
@@ -87,6 +101,7 @@ Arch dependencies:
 - `dosfstools` — `fatlabel` to set and verify the `BMK_EFI` FAT volume label
 - `polkit` — narrowly scoped privilege elevation
 - `7zip` — Windows ISO detection
+- `grub` — `grub-install` and the i386-pc modules for the Windows Legacy BIOS mode. BootMediaKit uses only these, and runs `grub-install` exclusively on the selected USB drive. Installing the package does **not** change your computer's own boot loader. Its post-install message suggests running `grub-install` and `grub-mkconfig`; that refers to your computer's own boot loader and is not needed for BootMediaKit.
 
 KDE users need an active polkit authentication agent.
 
@@ -100,7 +115,7 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 
 The GUI tests (`tests/test_app.py`) need `PySide6`; CI additionally runs `shellcheck -S warning install.sh uninstall.sh bootmediakit-worker`.
 
-The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW and Windows writers against a disk image as root:
+The unit tests cover target safety, source/target collision detection, GPT partition layout, partition naming, sfdisk type declarations, ISO structure scanning, file-copy manifests, SHA-256 verification, cancellation and packaging. Optional loop-device integration tests run the real RAW, Windows UEFI and Windows Legacy BIOS writers against a disk image as root; with `BMK_QEMU=1` the Legacy BIOS media is also booted in QEMU/SeaBIOS:
 
 ```bash
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
