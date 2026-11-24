@@ -240,15 +240,20 @@ Ez a feladat dönti el, hogy a választott megoldás működik-e. **Amíg ez nem
 
 Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. Csak eldobható pendrive-on.
 
-- [ ] Kézi QEMU-próba a kész Legacy pendrive-ról (írásvédetten): megjelenik a Windows Telepítő.
+- [x] Kézi QEMU-próba a kész Legacy pendrive-ról (írásvédetten): megjelenik a Windows Telepítő. *(Visszajelzés 2026-11-24: QEMU/SeaBIOS alatt megjelent a Windows Telepítő; OVMF-fel nem indult.)*
 - [x] Windows 10 x64 ISO, Legacy mód: indulás valódi gépen Legacy BIOS/CSM módban, a telepítő a partícióválasztóig. *(Visszajelzés 2026-11-11: két külön ISO, Windows 10 IoT Enterprise LTSC és Windows 11 IoT Enterprise LTSC, nagyon régi Core 2 Duo laptopon, Legacy módban: a pendrive elindult, a Windows Telepítő a particionálásig jutott, tovább nem lett próbálva. A Windows 10 ISO a gazda megerősítése szerint x64 volt; a Windows 11 ISO architektúrája nem lett külön visszajelezve.)*
-- [ ] Windows 7 SP1 ISO (ha van kéznél), Legacy mód: indulás és a telepítő első képernyője. (USB 3.0 portról a Windows 7 telepítő illesztőprogram hiányában elakadhat; ez nem a pendrive hibája, USB 2.0 porton próbáld.)
+- [x] Windows 7 SP1 ISO (ha van kéznél), Legacy mód: indulás és a telepítő első képernyője. (USB 3.0 portról a Windows 7 telepítő illesztőprogram hiányában elakadhat; ez nem a pendrive hibája, USB 2.0 porton próbáld.) *(Visszajelzés 2026-11-24: `hu_windows_7_professional_with_sp1_vl_build_x64_dvd_u_677833`, MBR-re kiírva, a telepítő elindult.)*
 - [x] `sudo sfdisk -d /dev/sdX` a Legacy pendrive-on: `label: dos`, egy partíció, `type=7`, `bootable`. *(Visszajelzés 2026-11-11: `label: dos`, `sector-size: 512`, egyetlen partíció `start=2048, size=15562752, type=7, bootable`.)*
-- [ ] Legacy mód olyan pendrive-on, amelyen előtte Windows UEFI mód (GPT) volt: `sudo wipefs /dev/sdX` nem mutat `gpt` sort.
-- [ ] Ugyanaz a pendrive UEFI-only módban **nem** indul (elvárt viselkedés, a GUI figyelmeztetésével egyezik).
-- [ ] Regresszió: Windows UEFI mód és Linux RAW mód továbbra is működik (egy-egy kiírás és indítás).
-- [ ] A saját gép rendszerbetöltője érintetlen a `grub` csomag telepítése és egy Legacy kiírás után (a gép újraindul a megszokott módon).
-- [ ] GRUB nélküli állapot: a `grub` csomag eltávolítása után a Legacy érték tiltott a felületen, a súgószöveg helyes.
+- [x] Legacy mód olyan pendrive-on, amelyen előtte Windows UEFI mód (GPT) volt: `sudo wipefs /dev/sdX` nem mutat `gpt` sort. *(Visszajelzés 2026-11-24: a Windows UEFI próba pendrive-jára írt Legacy mód után a `wipefs` csak `dos` sort mutat, `gpt`-t nem.)*
+- [x] Ugyanaz a pendrive UEFI-only módban: NTFS-driver nélküli UEFI-ben (OVMF) nem indul; NTFS-t olvasó firmware-en indulhat (a GUI figyelmeztetésével egyezik). *(Eredeti szöveg: „UEFI-only módban **nem** indul”; a fizikai teszt alapján a gazda kérésére átfogalmazva.)* *(Visszajelzés 2026-11-24: Gigabyte B850 D3HP, CSM kikapcsolva: a Legacy pendrive `UEFI:` előtaggal látszik, és elindul a Windows Telepítő, `PEFirmwareType` 0x2 (UEFI). Valószínűleg a firmware NTFS-drivere olvassa az ISO `efi\boot\bootx64.efi` fájlját. QEMU OVMF-fel (nincs NTFS-driver) nem indul. A gazda szerint nem programhiba, a kiadást nem blokkolja.)*
+- [x] Regresszió: Windows UEFI mód és Linux RAW mód továbbra is működik (egy-egy kiírás és indítás). *(Visszajelzés 2026-11-24: Windows UEFI mód: az `sfdisk` kimenet rendben, a fő gépen UEFI-ből elindult a telepítő. Linux Mint RAW: UEFI-ből és Legacy gépről is elindult.)*
+- [x] A saját gép rendszerbetöltője érintetlen a `grub` csomag telepítése és egy Legacy kiírás után (a gép újraindul a megszokott módon). *(Visszajelzés 2026-11-24: a Windows UEFI próba után a fő gépen a CachyOS rendesen elindult; a `grub` csomag és a korábbi Legacy kiírások ekkor már megvoltak.)*
+- [x] GRUB nélküli állapot: a `grub` csomag eltávolítása után a Legacy érték tiltott a felületen, a súgószöveg helyes. *(Visszajelzés 2026-11-24: a Legacy érték szürke, a szöveg és a súgó helyes; a `grub` visszatelepítése után újra választható.)*
+
+További visszajelzés (2026-11-24, nem a listán szereplő pontok):
+
+- Az MBR-es Windows pendrive MBR-es gépen elindult.
+- A SHA-256 visszaellenőrzés (Windows ISO) és a teljes visszaolvasás (Linux ISO) rendesen működik; egy félig hibás pendrive-on mindkét módban az ellenőrzés hibát jelzett.
 
 ---
 
