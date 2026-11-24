@@ -107,7 +107,7 @@ Szükséges Arch csomagok:
 - `7zip` — Windows ISO felismerése
 - `grub` — a `grub-install` és az i386-pc modulok a Windows Legacy BIOS módhoz. A BootMediaKit csak ezeket használja, és a `grub-install`-t kizárólag a kiválasztott pendrive-ra futtatja. A csomag telepítése **nem** módosítja a gép saját rendszerbetöltőjét. A csomag telepítés utáni üzenete a `grub-install` és a `grub-mkconfig` futtatását javasolja; ez a gép saját rendszerbetöltőjére vonatkozik, a BootMediaKit-hez nem kell.
 
-KDE alatt aktív polkit hitelesítő ügynök szükséges.
+Az íráshoz a polkit szolgáltatás és a grafikus munkamenetben futó polkit hitelesítési ügynök szükséges; az ügynök jeleníti meg a jelszókérő ablakot. A legtöbb asztali környezet elindít ilyet (Archon például `polkit-kde-agent`, `polkit-gnome`, `lxqt-policykit` vagy `mate-polkit`); minimális ablakkezelőnél vagy távoli munkamenetben előfordulhat, hogy a disztribúció ügynökét magadnak kell elindítanod. A BootMediaKit nem hoz magával ügynököt, nem indít ilyet, és soha nem tér át `sudo`-ra. Ügynök nélkül a hitelesítés sikertelen (a pkexec kilépési kódja 127); a BootMediaKit ilyenkor leírja, mit ellenőrizz, és a célmeghajtóhoz nem nyúl.
 
 ## Automatikus tesztek
 

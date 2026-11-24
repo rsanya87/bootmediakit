@@ -219,6 +219,58 @@ class ElidedLabel(QLabel):
             self._auto_tooltip = False
 
 
+# pkexec(1), polkit 128: 126 = the user dismissed the authentication dialog;
+# 127 = not authorized, no authorization obtained, or an error. Without a
+# registered authentication agent pkexec tries its own textual agent, which
+# fails without a terminal, so a missing agent also ends with 127. Only the
+# exit code is used; pkexec's (possibly translated) text is only logged.
+PKEXEC_DISMISSED = 126
+PKEXEC_NOT_AUTHORIZED = 127
+
+
+def describe_privilege_failure(exit_code: int) -> tuple[str, str, str]:
+    """(status line, dialog title, dialog text) for a worker that never started.
+
+    BootMediaKit brings no authentication agent of its own, starts none and
+    never falls back to sudo (docs/INVARIANTS.md B1).
+    """
+    if exit_code == PKEXEC_DISMISSED:
+        return (
+            tr("A jogosultságkérés megszakítva; a célmeghajtóhoz nem nyúltunk."),
+            tr("A hitelesítés megszakítva"),
+            tr(
+                "A jelszókérő ablakot bezártad vagy megszakítottad, ezért a művelet nem indult el. "
+                "A célmeghajtóhoz nem nyúltunk.\n\n"
+                "Ha folytatnád, indítsd újra a műveletet, és add meg a rendszergazdai jelszót."
+            ),
+        )
+    if exit_code == PKEXEC_NOT_AUTHORIZED:
+        return (
+            tr("Nem sikerült rendszergazdai jogosultságot kapni; a célmeghajtóhoz nem nyúltunk."),
+            tr("A hitelesítés nem sikerült"),
+            tr(
+                "A rendszer nem adott jogosultságot a lemezíráshoz (pkexec kilépési kód: 127), "
+                "ezért a művelet nem indult el. A célmeghajtóhoz nem nyúltunk.\n\n"
+                "Lehetséges okok:\n"
+                "• Ebben a munkamenetben nem fut polkit hitelesítési ügynök, ezért nem jelent meg "
+                "jelszókérő ablak. A legtöbb asztali környezet indít ilyet; minimális ablakkezelő "
+                "vagy távoli munkamenet esetén külön kell elindítani.\n"
+                "• A jelszó hibás volt, vagy a felhasználód nem jogosult rendszergazdai műveletre.\n"
+                "• A polkit szolgáltatás nem fut.\n\n"
+                "Mit tegyél: indítsd el a munkamenetedhez tartozó polkit hitelesítési ügynököt, vagy "
+                "jelentkezz be egy olyan grafikus munkamenetbe, amely elindítja; ellenőrizd, hogy a "
+                "felhasználód rendszergazdai jogosultságú; majd próbáld újra. "
+                "A BootMediaKit nem indít saját ügynököt, és nem használ sudo-t."
+            ),
+        )
+    return (
+        "A jogosultságkérés vagy a worker indítása nem sikerült.",
+        "A művelet nem indult el",
+        "A rendszergazdai jogosultságkérés megszakadt/megtagadásra került, "
+        "vagy a biztonságos worker nem indult el. A célmeghajtóhoz nem nyúltunk.",
+    )
+
+
 class LogView(QPlainTextEdit):
     """Process log: asks only for its minimum height and takes the spare
     space; long logs scroll inside the box, never the window."""
@@ -1543,16 +1595,15 @@ class MainWindow(QMainWindow):
         elif not self._worker_started:
             # pkexec 126/127 and failures before the worker's first structured
             # event cannot have touched the target disk.
-            self.status_label.setText("A jogosultságkérés vagy a worker indítása nem sikerült.")
-            self.set_status_state("error")
+            status, title, text = describe_privilege_failure(exit_code)
+            self.status_label.setText(status)
+            self.set_status_state("warning" if exit_code == PKEXEC_DISMISSED else "error")
             self.append_log(f"A pkexec kilépési kódja: {exit_code}. A célmeghajtót nem módosítottuk.")
             if not was_closing:
-                QMessageBox.information(
-                    self,
-                    "A művelet nem indult el",
-                    "A rendszergazdai jogosultságkérés megszakadt/megtagadásra került, "
-                    "vagy a biztonságos worker nem indult el. A célmeghajtóhoz nem nyúltunk.",
-                )
+                if exit_code == PKEXEC_NOT_AUTHORIZED:
+                    QMessageBox.critical(self, title, text)
+                else:
+                    QMessageBox.information(self, title, text)
         else:
             self.status_label.setText("A művelet nem fejeződött be.")
             self.set_status_state("error")

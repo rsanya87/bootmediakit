@@ -34,7 +34,7 @@ jobs:
       - name: Install system and Python test dependencies
         timeout-minutes: 20
         run: |
-          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86"
+          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86 desktop-file-utils"
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y $packages; then
               break

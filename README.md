@@ -104,7 +104,7 @@ Arch dependencies:
 - `7zip` — Windows ISO detection
 - `grub` — `grub-install` and the i386-pc modules for the Windows Legacy BIOS mode. BootMediaKit uses only these, and runs `grub-install` exclusively on the selected USB drive. Installing the package does **not** change your computer's own boot loader. Its post-install message suggests running `grub-install` and `grub-mkconfig`; that refers to your computer's own boot loader and is not needed for BootMediaKit.
 
-KDE users need an active polkit authentication agent.
+Writing needs the polkit service and a running polkit authentication agent in your graphical session; the agent shows the password dialog. Most desktop environments start one (on Arch for example `polkit-kde-agent`, `polkit-gnome`, `lxqt-policykit` or `mate-polkit`); with a minimal window manager or a remote session you may have to start your distribution's agent yourself. BootMediaKit brings no agent, starts none and never falls back to `sudo`. Without an agent the authentication fails (pkexec exit code 127) and BootMediaKit shows what to check; the target drive is not touched.
 
 ## Run the automated tests
 

@@ -14,7 +14,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 - [x] T1. Writer-ujjlenyomat tesztek (a három writer rögzítése, még változtatás előtt)
 - [x] T2. Téma: paletta-tokenek, rendszerkövetés, sötét tartalék, kézi váltó
 - [x] T3. Reszponzív elrendezés, DPI, minimális ablakméret, görgetés csak a naplóban
-- [ ] T4. Desktop-integráció és polkit-agent hibajelzés
+- [x] T4. Desktop-integráció és polkit-agent hibajelzés
 - [ ] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt
 - [ ] T6. `msg_id`/`msg_args` az `emit()` hívásokon
 - [ ] T7. Automatizált téma-/elrendezés-/kontrasztteszt, CI
