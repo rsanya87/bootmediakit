@@ -1,6 +1,48 @@
 # Testing
 
-## BootMediaKit 0.2.2 — Stable release (2026-11-10)
+## BootMediaKit 0.3.0 — Stable release (2026-11-24)
+
+0.3.0 adds the Windows Legacy BIOS/MBR mode. The Linux DD/RAW write sequence and the Windows UEFI GPT layout are unchanged from 0.2.2; their existing unit and integration tests pass unmodified.
+
+### Automated checks
+
+The GitHub Actions suite passed on the final pre-release source commit: [run 45436385317](https://github.com/rsanya87/bootmediakit/actions/runs/45436385317). The release commit after it changes only the version number and documentation. In addition to the 0.2.2 checks, the workflow now runs:
+
+- 213 unit, packaging and offscreen GUI tests (129 in 0.2.2).
+- Ten loop-device integration tests as root (three in 0.2.2): the T0 GRUB chainload gate with ntfs3 and ntfs-3g, the production `write_windows_bios` writer, a Legacy write over Windows UEFI media (no primary or backup GPT header left), and the existing RAW and Windows UEFI writer tests.
+- With `BMK_QEMU=1`, three QEMU/SeaBIOS boots of Legacy media (T0 ntfs3, T0 ntfs-3g, production writer), each printing `BMK-BOOT-OK` from the test `bootmgr`.
+
+The loop-device integration tests (10/10) also passed on the maintainer's CachyOS system during development (T7).
+
+### Physical validation confirmed for 0.3.0
+
+Reported by the maintainer on 2026-11-11 and 2026-11-24:
+
+- **Windows Legacy BIOS on real hardware:** Windows 10 IoT Enterprise LTSC x64 and Windows 11 IoT Enterprise LTSC (x64; Windows 11 exists only as x64) Legacy media booted on a very old Core 2 Duo laptop; Windows Setup reached the partitioning screen. Installation was not continued.
+- **Windows 7 SP1:** `hu_windows_7_professional_with_sp1_vl_build_x64_dvd_u_677833` written in Legacy (MBR) mode; Setup started.
+- **Legacy layout:** `sfdisk -d` showed `label: dos`, `sector-size: 512` and one partition `start=2048, type=7, bootable`.
+- **Legacy over former GPT media:** after a Legacy write on a drive that carried the Windows UEFI layout, `wipefs` showed only a `dos` entry, no `gpt`.
+- **Manual QEMU check:** the finished Legacy drive showed Windows Setup in QEMU/SeaBIOS. With OVMF it did not boot.
+- **UEFI-only firmware:** on a Gigabyte B850 D3HP with CSM disabled the Legacy drive was listed with a `UEFI:` prefix and started Windows Setup in UEFI mode (`PEFirmwareType` 0x2), presumably because the firmware's NTFS driver reads the ISO's own `efi\boot\bootx64.efi`. This is not treated as a defect; the GUI, the worker log and the READMEs say that the drive is made for Legacy BIOS/CSM and may start in UEFI only on firmware that reads NTFS.
+- **Regression:** Windows UEFI mode (`sfdisk` output as expected, Setup started from UEFI on the maintainer's main computer) and Linux Mint DD/RAW (booted from UEFI and from a Legacy computer).
+- **Host boot loader:** after the Windows UEFI test the maintainer's CachyOS system booted normally; the `grub` package was installed and Legacy writes had been made before.
+- **Without GRUB:** after removing the `grub` package the Legacy option was greyed out with the correct note and hint; after reinstalling it the option was selectable again.
+- **Verification:** SHA-256 verification (Windows) and full read-back (Linux RAW) worked; on a partly failing USB drive both reported a verification error.
+
+### Release acceptance record
+
+- Windows 10/11 IoT Enterprise LTSC x64 Legacy BIOS boot to Setup partitioning: passed.
+- Windows 7 SP1 x64 Legacy BIOS, Setup start: passed.
+- `sfdisk -d` MBR layout and `wipefs` after a former GPT: passed.
+- Manual QEMU/SeaBIOS boot of the finished drive: passed.
+- UEFI-only behaviour: does not boot without an NTFS driver (OVMF); started on a Gigabyte B850 with NTFS-reading firmware. Documentation reworded accordingly.
+- Regression of Windows UEFI and Linux DD/RAW modes: passed.
+- Host boot loader untouched; Legacy option disabled without GRUB: passed.
+- Not physically tested: complete Windows installation from Legacy media (Setup was stopped at partitioning or the first screen); the items left open in 0.2.2 (Windows 11 26H2 Secure Boot off/on, the source-filesystem rejection message from a FUSE/network/overlay source, a `fuseblk` source, device refresh during unplug/replug).
+
+Do not treat mocked unit tests or loop-device tests as proof of physical hardware behavior. Destructive tests must use disposable media only. Never use a drive containing the source ISO or user data as a test target.
+
+## BootMediaKit 0.2.2 — Historical release test record (2026-11-10)
 
 0.2.2 is a maintenance release. The write sequence and the Windows-mode GPT layout are unchanged from 0.2.1.
 

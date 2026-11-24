@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.2.2` (stabil kiadás, 2026-11-10)  
+**Verzió:** `0.3.0` (stabil kiadás, 2026-11-24)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.2.2 karbantartó kiadás: új funkciót nem ad, és nem változtat sem az írási sorrenden, sem a Windows-mód GPT-elrendezésén. Az automatizált GitHub Actions ellenőrzései sikeresek, beleértve a valódi RAW és Windows írót futtató loop-eszközös integrációs teszteket. A 0.2.2-vel fizikailag újra ellenőrizve: a visszaolvasással kiírt Linux Mint 22.3 DD/RAW pendrive UEFI és Legacy BIOS/MBR módban is elindult, olyan pendrive-on is, amelyen előtte a Windows-mód kétpartíciós GPT-je volt; a Windows 10/11 IoT Enterprise LTSC pendrive a várt partíciónevekkel elkészült és elindult. A teljes Windows 10/11 IoT Enterprise LTSC telepítés, valamint a normál Windows 11 26H2 Telepítő indulása Secure Boot be- és kikapcsolt állapotában (csak a partícióválasztó képernyőig) a 0.2.1-gyel lett ellenőrizve, ezek teljes körűen nem lettek megismételve. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.3.0 új Windows Legacy BIOS/MBR telepítő módot ad: MBR egyetlen aktív NTFS partícióval és GNU GRUB i386-pc láncbetöltővel, amelyet a gép saját `grub-install` programja ír ki. A Linux DD/RAW és a Windows UEFI mód nem változott. Az automatizált GitHub Actions ellenőrzések sikeresek, beleértve a valódi RAW, Windows UEFI és Windows Legacy BIOS írót futtató loop-eszközös integrációs teszteket, valamint a Legacy pendrive QEMU/SeaBIOS alatti indítását egy teszt-rendszerindító-kezelőig. A 0.3.0-val fizikailag ellenőrizve: a Windows 10 és Windows 11 IoT Enterprise LTSC x64 Legacy pendrive egy nagyon régi Core 2 Duo laptopon a Windows Telepítő particionálási képernyőjéig jutott, és a Windows 7 SP1 x64 telepítő is elindult Legacy pendrive-ról. A Legacy pendrive QEMU/SeaBIOS alatt is elindult; a QEMU OVMF UEFI firmware-ével nem indult, egy Gigabyte B850 alaplap viszont kikapcsolt CSM mellett UEFI módban elindította róla a Windows Telepítőt, valószínűleg a firmware saját NTFS-támogatásával. A Windows UEFI pendrive és a Linux Mint DD/RAW pendrive (UEFI és Legacy BIOS) újratesztelve elindult. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 

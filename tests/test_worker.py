@@ -985,7 +985,7 @@ class NtfsMountTests(unittest.TestCase):
 
 
 class MbrLayoutTests(unittest.TestCase):
-    """MBR layout for the Legacy BIOS mode (0.3.0 T2)."""
+    """MBR layout for the Legacy BIOS mode (Legacy BIOS work, T2)."""
 
     MIB_SECTORS = 2048
 
@@ -1136,7 +1136,7 @@ class MbrLayoutTests(unittest.TestCase):
             self.assertIn("2199023255040", output, msg=output)
 
 class BiosChainloaderTests(unittest.TestCase):
-    """GRUB i386-pc chainloader installation (0.3.0 T3)."""
+    """GRUB i386-pc chainloader installation (Legacy BIOS work, T3)."""
 
     DEVICE = "/dev/disk/by-id/usb-Test_Stick_0123-0:0"
     LAYOUT = {"start": 2048, "size": 129024, "bytes": 129024 * 512}
@@ -1409,7 +1409,7 @@ class BiosChainloaderTests(unittest.TestCase):
 
 
 class WindowsBiosWriterTests(unittest.TestCase):
-    """write_windows_bios with mocked system commands (0.3.0 T4)."""
+    """write_windows_bios with mocked system commands (Legacy BIOS work, T4)."""
 
     DEVICE = "/dev/sdz"
     DISK_BYTES = 16 * 1024**3
@@ -1679,7 +1679,7 @@ class WindowsIsoScanTests(unittest.TestCase):
 
 
 class WindowsBiosIsoScanTests(unittest.TestCase):
-    """scan_windows_iso(boot_mode="bios") for the Legacy BIOS/MBR mode (0.3.0 T1)."""
+    """scan_windows_iso(boot_mode="bios") for the Legacy BIOS/MBR mode (Legacy BIOS work, T1)."""
 
     @staticmethod
     def make_tree(root: Path, files: dict[str, bytes]) -> None:
@@ -1975,7 +1975,7 @@ class WindowsVerifyArgumentTests(unittest.TestCase):
 
 
 class WorkerModeDispatchTests(unittest.TestCase):
-    """main() mode names, including windows-bios (0.3.0 T5)."""
+    """main() mode names, including windows-bios (Legacy BIOS work, T5)."""
 
     IDENTITY = {
         "path": "/dev/sdb", "size": 8 * 1024**3, "maj_min": "8:16",

@@ -2,7 +2,7 @@
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
-## 0.3.0 — Fejlesztés alatt: Windows Legacy BIOS/MBR telepítő-pendrive
+## 0.3.0 — Stabil kiadás (2026-11-24): Windows Legacy BIOS/MBR telepítő-pendrive
 
 > **Ez a szakasz egyben végrehajtható munkaleírás.** Aki (ember vagy asszisztens) ezt kapja feladatként, a fizikai, éles USB-teszteken és a root jogot igénylő futtatásokon kívül mindent el tud végezni belőle. A fizikai teszteket kizárólag a projekt gazdája végzi, lásd a „Fizikai tesztek" szakaszt. Az asszisztens ezeket nem állíthatja késznek.
 
@@ -18,7 +18,7 @@ A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a h
 - [x] T7. Integrációs teszt a termelési íróval, QEMU-s indítási próbával (CI és a gazda gépe: 10/10).
 - [x] T8. Telepítő és függőségek (`grub`), README-k.
 - [x] T9. Dokumentáció.
-- [ ] T10. Kiadási commit (a gazda visszajelzése után).
+- [x] T10. Kiadási commit a zöld CI és a gazda visszajelzése után. A merge, a `v0.3.0` tag és a release a gazda dolga.
 
 ### Jóváhagyott és dokumentált eltérések a munkaleírástól
 
@@ -238,7 +238,7 @@ Ez a feladat dönti el, hogy a választott megoldás működik-e. **Amíg ez nem
 
 ### Fizikai tesztek (a projekt gazdája végzi)
 
-Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. Csak eldobható pendrive-on.
+Az asszisztens ezeket nem végezheti el, és nem jelölheti késznek. Csak eldobható pendrive-on. A pipák a gazda 2026-11-11-i és 2026-11-24-i visszajelzését rögzítik; a kiadást a gazda 2026-11-24-én hagyta jóvá.
 
 - [x] Kézi QEMU-próba a kész Legacy pendrive-ról (írásvédetten): megjelenik a Windows Telepítő. *(Visszajelzés 2026-11-24: QEMU/SeaBIOS alatt megjelent a Windows Telepítő; OVMF-fel nem indult.)*
 - [x] Windows 10 x64 ISO, Legacy mód: indulás valódi gépen Legacy BIOS/CSM módban, a telepítő a partícióválasztóig. *(Visszajelzés 2026-11-11: két külön ISO, Windows 10 IoT Enterprise LTSC és Windows 11 IoT Enterprise LTSC, nagyon régi Core 2 Duo laptopon, Legacy módban: a pendrive elindult, a Windows Telepítő a particionálásig jutott, tovább nem lett próbálva. A Windows 10 ISO a gazda megerősítése szerint x64 volt; a Windows 11 ISO architektúrája nem lett külön visszajelezve. Kiegészítés 2026-11-24: a gazda szerint a Windows 11 kizárólag 64 bites változatban érhető el, így a tesztelt ISO is x64 volt.)*

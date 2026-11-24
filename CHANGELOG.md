@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-24
+
+Feature release: a new Windows Legacy BIOS/MBR installer mode (MBR, one active NTFS partition, GNU GRUB i386-pc chainloader written by the system's `grub-install`). New runtime dependency: `grub`. The Linux DD/RAW and Windows UEFI modes are unchanged.
 
 - Tests: T0 feasibility gate for the Legacy BIOS/MBR Windows mode. A loop-device integration test builds an MBR disk with one active NTFS partition, runs `grub-install --target=i386-pc` (no `--force`) and chainloads a test `bootmgr` with `ntldr /bootmgr`; with `BMK_QEMU=1` it boots the image in QEMU/SeaBIOS and waits for `BMK-BOOT-OK` on the debug port (T0).
 - Tests: when the T0 QEMU boot check fails, it now prints the GRUB and QEMU versions, the SeaBIOS log (port 0x402), the guest's VGA text screen and CPU registers, so the stage where booting stops is visible in CI logs (T0).

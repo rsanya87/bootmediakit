@@ -2,11 +2,11 @@
 
 BootMediaKit is an open-source Linux desktop application for creating bootable USB media from ISO and raw disk-image files. The interface is built with Python and PySide6. Disk-writing operations are delegated to a dedicated root-owned worker wrapper through a BootMediaKit-specific Polkit action. The GUI itself remains unprivileged.
 
-**Version:** `0.2.2` (stable release, 2026-11-10)  
+**Version:** `0.3.0` (stable release, 2026-11-24)  
 **Current platform target:** Arch Linux family (initial development and testing on CachyOS)  
 **Application license:** GNU GPL-3.0-only
 
-> 0.2.2 is a maintenance release: it adds no features and does not change the write sequence or the Windows-mode GPT layout. Its automated GitHub Actions checks passed, including loop-device integration tests of the real RAW and Windows writers. Physically re-validated for 0.2.2: Linux Mint 22.3 DD/RAW media written with read-back verification booted in UEFI and Legacy BIOS/MBR modes, including on a drive that previously carried the Windows-mode two-partition GPT; Windows 10/11 IoT Enterprise LTSC media was created with the expected partition names and booted. The complete Windows 10/11 IoT Enterprise LTSC installations and the standard Windows 11 26H2 Setup launch with Secure Boot enabled and disabled (to the disk-selection screen only) were verified on 0.2.1 and were not repeated in full. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
+> 0.3.0 adds a Windows Legacy BIOS/MBR installer mode: an MBR with one active NTFS partition and a GNU GRUB i386-pc chainloader written by the computer's own `grub-install`. The Linux DD/RAW and Windows UEFI modes are unchanged. The automated GitHub Actions checks passed, including loop-device integration tests of the real RAW, Windows UEFI and Windows Legacy BIOS writers and a QEMU/SeaBIOS boot of the Legacy media up to a test boot manager. Physically validated for 0.3.0: Windows 10 and Windows 11 IoT Enterprise LTSC x64 Legacy media booted on a very old Core 2 Duo laptop to the Setup partitioning screen, and Windows 7 SP1 x64 Setup started from Legacy media. The Legacy media also booted in QEMU/SeaBIOS; it did not boot with QEMU's OVMF UEFI firmware, but a Gigabyte B850 board with CSM disabled started Windows Setup from it in UEFI mode, presumably through the firmware's own NTFS support. Windows UEFI media and Linux Mint DD/RAW media (UEFI and Legacy BIOS) were re-tested and booted. These results describe the tested configurations, not universal firmware compatibility. BootMediaKit is not a full Rufus feature replacement.
 
 ## Current capabilities
 
