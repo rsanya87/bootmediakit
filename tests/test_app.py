@@ -367,7 +367,10 @@ class BootModeSelectorTests(unittest.TestCase):
         self.assertEqual(args[1:5], ["windows-bios", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0", "1"])
         details = warning.call_args_list[0].args[2]
         self.assertIn("indítási mód: Legacy BIOS (MBR)", details)
-        self.assertIn("UEFI módban NEM", details)
+        self.assertIn("Legacy BIOS / CSM indításhoz készül", details)
+        self.assertIn("csak NTFS-t olvasó firmware-en indulhat", details)
+        self.assertIn("UEFI (GPT) indítási módot használd", details)
+        self.assertNotIn("UEFI módban NEM", details)
 
     def test_legacy_start_is_refused_when_grub_disappeared(self):
         window, image = self.windows_iso_window()

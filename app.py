@@ -891,7 +891,7 @@ class MainWindow(QMainWindow):
         if self.selected_boot_mode() == "bios":
             self.mode_description.setText(
                 "Windows Legacy BIOS: MBR, egy aktív NTFS partíció, GRUB láncbetöltő a /grub "
-                "könyvtárban. Csak Legacy BIOS / CSM módban indul, UEFI módban nem."
+                "könyvtárban. Legacy BIOS / CSM indításhoz; UEFI-s géphez az UEFI (GPT) mód kell."
             )
         else:
             self.mode_description.setText(
@@ -1024,7 +1024,9 @@ class MainWindow(QMainWindow):
                 "\n\nÍrási mód: Windows telepítő, indítási mód: Legacy BIOS (MBR).\n"
                 "MBR-t hoz létre egy aktív NTFS partícióval, és a GRUB láncbetöltőt a pendrive "
                 "/grub könyvtárába telepíti. A Windows ISO eredeti fájljai másolódnak.\n\n"
-                "FIGYELEM: ez a pendrive csak Legacy BIOS / CSM módban indul, UEFI módban NEM."
+                "FIGYELEM: ez a pendrive Legacy BIOS / CSM indításhoz készül. UEFI módban csak "
+                "NTFS-t olvasó firmware-en indulhat, erre ne számíts: UEFI-s géphez az "
+                "UEFI (GPT) indítási módot használd."
             )
         reply = QMessageBox.warning(
             self,

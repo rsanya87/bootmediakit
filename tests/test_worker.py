@@ -1620,7 +1620,7 @@ class WindowsBiosWriterTests(unittest.TestCase):
         self.assertGreaterEqual(events.count("unmount_disk"), 2)
         self.assertFalse(temp_root.exists())
 
-    def test_final_log_describes_the_layout_and_legacy_only_boot(self):
+    def test_final_log_describes_the_layout_and_legacy_boot_limits(self):
         emitted = []
         _events, _commands, _temp_root, error = self.run_writer(
             extra_patches=(patch("worker.emit", side_effect=lambda *a, **k: emitted.append((a, k)) or True),)
@@ -1628,8 +1628,10 @@ class WindowsBiosWriterTests(unittest.TestCase):
         self.assertIsNone(error)
         args, kwargs = emitted[-1]
         self.assertEqual(args[1], 100)
-        for phrase in ("MBR", "aktív NTFS", "/grub", "csak Legacy BIOS", "UEFI módban nem"):
+        for phrase in ("MBR", "aktív NTFS", "/grub", "Legacy BIOS / CSM indításhoz",
+                       "csak NTFS-t olvasó firmware-en", "UEFI (GPT) mód"):
             self.assertIn(phrase, kwargs["log"])
+        self.assertNotIn("UEFI módban nem", kwargs["log"])
 
 
 class WindowsIsoScanTests(unittest.TestCase):

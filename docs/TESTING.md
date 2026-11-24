@@ -146,7 +146,7 @@ Before rebooting a physical computer, a finished Windows Legacy BIOS drive can b
    sudo setfacl -x u:"$USER" /dev/sdX
    ```
 
-The same QEMU command shows that the drive does **not** boot in UEFI mode if `-machine pc` is replaced by `-machine q35 -bios /usr/share/edk2/x64/OVMF.4m.fd` (Arch package `edk2-ovmf`; the firmware path can differ between distributions). Neither check replaces a test on the real computer.
+If `-machine pc` is replaced by `-machine q35 -bios /usr/share/edk2/x64/OVMF.4m.fd` (Arch package `edk2-ovmf`; the firmware path can differ between distributions), the drive is expected **not** to boot, because OVMF has no NTFS driver. This does not prove that the drive never starts in UEFI mode: UEFI firmware that reads NTFS can start the ISO's own `efi/boot/bootx64.efi` from the NTFS partition (seen on a Gigabyte B850 board with CSM disabled, see [ROADMAP.md](../ROADMAP.md)). Neither check replaces a test on the real computer.
 
 ## BootMediaKit 0.1.3 — Historical release test record
 

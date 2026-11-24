@@ -1874,7 +1874,8 @@ def write_windows_bios(
             log=(
                 "MBR: egyetlen aktív NTFS partíció a Windows fájlokkal; "
                 "GRUB láncbetöltő az MBR-ben és a /grub könyvtárban, amely a Windows bootmgr-t indítja. "
-                "A pendrive csak Legacy BIOS / CSM módban indul, UEFI módban nem. "
+                "A pendrive Legacy BIOS / CSM indításhoz készült; UEFI módban csak NTFS-t olvasó "
+                "firmware-en indulhat, UEFI-s géphez az UEFI (GPT) mód való. "
                 "A Windows ISO fájljai eredeti formájukban kerültek át."
             ),
         )
