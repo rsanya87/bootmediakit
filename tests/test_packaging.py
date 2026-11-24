@@ -349,5 +349,32 @@ class SafetyDocumentationTests(unittest.TestCase):
         self.assertIn("részlegesen írt állapotban maradhat", hungarian)
 
 
+class ProjectRuleDocumentTests(unittest.TestCase):
+    DOCUMENTS = (
+        "docs/INVARIANTS.md",
+        "docs/LESSONS.md",
+        "docs/REGRESSION_CHECKLIST.md",
+    )
+
+    def test_rule_documents_exist_and_are_not_empty(self):
+        for relative in self.DOCUMENTS:
+            path = ROOT / relative
+            self.assertTrue(path.is_file(), msg=f"hiányzik: {relative}")
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
+
+    def test_contributing_and_readmes_link_the_rule_documents(self):
+        for document in ("CONTRIBUTING.md", "README.md", "README.hu.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for relative in self.DOCUMENTS:
+                self.assertIn(f"({relative})", text, msg=f"{document} nem hivatkozik rá: {relative}")
+
+    def test_invariants_keep_the_frozen_writer_rules(self):
+        text = (ROOT / "docs/INVARIANTS.md").read_text(encoding="utf-8")
+        for writer in ("write_raw()", "write_windows_uefi()", "write_windows_bios()"):
+            self.assertIn(writer, text)
+        self.assertIn("wipefs --all --force", text)
+        self.assertIn("130-as kilépési kóddal", text)
+
+
 if __name__ == "__main__":
     unittest.main()

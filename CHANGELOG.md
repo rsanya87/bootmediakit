@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Docs: `docs/INVARIANTS.md` (rules no change may break; the three writers are frozen), `docs/LESSONS.md` (mistakes that already happened) and `docs/REGRESSION_CHECKLIST.md` (the maintainer's physical pre-release checks) are now in the repository; `CONTRIBUTING.md` and both READMEs link to them. `ROADMAP.md` gets the 0.4.0 section with its status list (T0).
+
 ## 0.3.0 — 2026-11-24
 
 Feature release: a new Windows Legacy BIOS/MBR installer mode (MBR, one active NTFS partition, GNU GRUB i386-pc chainloader written by the system's `grub-install`). New runtime dependency: `grub`. The Linux DD/RAW and Windows UEFI modes are unchanged.

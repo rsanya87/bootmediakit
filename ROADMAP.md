@@ -2,6 +2,36 @@
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
+## 0.4.0 — Fejlesztés alatt: DE-független, reszponzív GUI; writer-ujjlenyomat; worker-eseményazonosítók
+
+A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); a kötelező szabályok: [docs/INVARIANTS.md](docs/INVARIANTS.md), a korábbi hibák: [docs/LESSONS.md](docs/LESSONS.md), a kiadás előtti fizikai ellenőrzőlista: [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md).
+
+**Cél:** ugyanaz a funkcionalitás és biztonsági modell KDE Plasma, GNOME, XFCE, Cinnamon, MATE, LXQt és más Qt-kompatibilis munkamenetek alatt; a rendszer világos/sötét beállításának követése, sötét tartalék, kézi váltó; kis laptopkijelzőn is használható, dokumentált minimális ablakmérettel; érthető hiba hitelesítési ügynök nélkül; stabil `msg_id` a worker eseményein. **Nem cél:** distrofüggetlenítés, új írási funkció, fordítás, a három writer módosítása.
+
+### Állapot
+
+- [x] T0. Ág, repó-dokumentumok (INVARIANTS, LESSONS, REGRESSION_CHECKLIST) a repóba
+- [ ] T1. Writer-ujjlenyomat tesztek (a három writer rögzítése, még változtatás előtt)
+- [ ] T2. Téma: paletta-tokenek, rendszerkövetés, sötét tartalék, kézi váltó
+- [ ] T3. Reszponzív elrendezés, DPI, minimális ablakméret, görgetés csak a naplóban
+- [ ] T4. Desktop-integráció és polkit-agent hibajelzés
+- [ ] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt
+- [ ] T6. `msg_id`/`msg_args` az `emit()` hívásokon
+- [ ] T7. Automatizált téma-/elrendezés-/kontrasztteszt, CI
+- [ ] T8. Dokumentáció, függőség- és csomagolási konzisztencia
+- [ ] T9. Kiadási commit (a zöld CI és a gazda visszajelzése után)
+
+### Jóváhagyott és dokumentált eltérések a munkaleírástól
+
+Nincs.
+
+### Fizikai és kézi tesztek (a gazda végzi; csak az ő visszajelzése alapján pipálva)
+
+- [ ] `docs/REGRESSION_CHECKLIST.md` kötelező pontjai a fő gépen (Linux RAW, Windows UEFI, Windows Legacy, saját rendszerbetöltő érintetlen)
+- [ ] DE-tesztmátrix (legalább KDE, GNOME, XFCE, Cinnamon; világos és sötét; X11/Wayland, ahol elérhető)
+- [ ] Polkit-agent nélküli munkamenet: érthető hiba jelenik meg
+- [ ] A gyorsváltó és a rendszerkövetés visszaállítása működik
+
 ## 0.3.0 — Stabil kiadás (2026-11-24): Windows Legacy BIOS/MBR telepítő-pendrive
 
 > **Ez a szakasz egyben végrehajtható munkaleírás.** Aki (ember vagy asszisztens) ezt kapja feladatként, a fizikai, éles USB-teszteken és a root jogot igénylő futtatásokon kívül mindent el tud végezni belőle. A fizikai teszteket kizárólag a projekt gazdája végzi, lásd a „Fizikai tesztek" szakaszt. Az asszisztens ezeket nem állíthatja késznek.
