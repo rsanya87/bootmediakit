@@ -1,0 +1,77 @@
+{"BOOTMEDIA_FAT_VOLUME_LABEL": "BMK_EFI", "CHUNK": 8388608, "GPT_ALIGNMENT_SECTORS": 2048, "GPT_BASIC_DATA_GUID": "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "GPT_NO_DRIVE_LETTER_ATTR": "GUID:63", "GPT_RESERVED_SECTORS": 34, "UEFI_NTFS_GIT_BLOB_SHA1": "ac50eed9730af847c43c145a5c17678f54128b33", "UEFI_NTFS_IMAGE": "/usr/share/bootmediakit/uefi/uefi-ntfs.img", "UEFI_NTFS_IMAGE_SIZE": 1048576, "UEFI_NTFS_SHA256": "72683fa1250eeea772d3399277b434d4e55ba8dd0dc926e52d817e701fc2eb9e", "UPSTREAM_FAT_VOLUME_LABEL": "RUFUS_BOOT", "fingerprint": "windows_uefi_verify", "windows_copy_progress_span": [43, 54]}
+{"args": [], "call": "validate_privileged_install"}
+{"emit": {"message": "A BootMediaKit biztonságos háttérfolyamata elindult.", "percent": 0, "target_modified": false, "worker_started": true}}
+{"args": [["lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync", "mount", "partprobe", "sfdisk", "mkfs.ntfs", "fatlabel", "blkid", "7z"]], "call": "require_programs"}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": [], "call": "verify_uefi_ntfs_image"}
+{"check": true, "run": ["blockdev", "--getss", "/dev/sdX"]}
+{"check": true, "run": ["blockdev", "--getsz", "/dev/sdX"]}
+{"call": "tempfile.mkdtemp", "kwargs": {"dir": "/run", "prefix": "bootmediakit-"}}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"emit": {"message": "Windows ISO és UEFI:NTFS segédkép ellenőrzése…", "percent": 1, "target_modified": false}}
+{"check": true, "run": ["mount", "-o", "loop,ro,nosuid,nodev", "<SOURCE>/windows.iso", "<TEMP>/iso"]}
+{"check": false, "run": ["blkid", "--probe", "--match-tag", "LABEL", "--output", "value", "<SOURCE>/windows.iso"], "timeout": 20}
+{"check": true, "run": ["fatlabel", "<TMP>/uefi-ntfs.img"]}
+{"check": true, "run": ["fatlabel", "<TEMP>/uefi-ntfs-bmk-efi.img", "BMK_EFI"]}
+{"check": true, "run": ["fatlabel", "<TEMP>/uefi-ntfs-bmk-efi.img"]}
+{"emit": {"log": "Windows PE: sources/boot.wim; telepítőkép: sources/install.wim; ISO kötetcímke: CCCOMA_X64FRE_HU-HU_DV9; másolandó fájlméret: 109,148 bájt.", "message": "ISO előellenőrzés kész; a pendrive-ot még nem módosítottam.", "percent": 8, "target_modified": false}}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"emit": {"message": "USB lemez leválasztása és GPT partíciók létrehozása…", "percent": 10, "target_modified": false}}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX"], "call": "assert_disk_unmounted"}
+{"check": true, "run": ["wipefs", "--all", "--force", "/dev/sdX"]}
+{"check": true, "input": "label: gpt\nunit: sectors\nfirst-lba: 2048\nstart=2048, size=16771072, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, name=\"CCCOMA_X64FRE_HU-HU_DV9\"\nstart=16773120, size=2048, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, attrs=GUID:63, name=\"BMK_EFI\"\n", "run": ["sfdisk", "--wipe", "never", "/dev/sdX"]}
+{"check": false, "run": ["blockdev", "--rereadpt", "/dev/sdX"]}
+{"check": false, "run": ["partprobe", "/dev/sdX"]}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"check": true, "run": ["sfdisk", "--verify", "/dev/sdX"]}
+{"check": true, "run": ["sfdisk", "--json", "/dev/sdX"]}
+{"emit": {"message": "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.", "percent": 22, "target_modified": true}}
+{"emit": {"message": "NTFS fájlrendszer létrehozása…", "percent": 25, "target_modified": true}}
+{"check": true, "run": ["mkfs.ntfs", "--fast", "--force", "--label", "CCCOMA_X64FRE_HU-HU_DV9", "--partition-start", "2048", "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", "/dev/sdX1"], "timeout": 300}
+{"args": ["/dev/sdX1", 2048], "call": "validate_ntfs_boot_sector"}
+{"check": true, "run": ["blockdev", "--getsize64", "/dev/sdX2"]}
+{"emit": {"message": "BMK_EFI FAT indítópartíció telepítése…", "percent": 38, "target_modified": true}}
+{"flags": ["O_WRONLY"], "open": "/dev/sdX2"}
+{"fsync": "/dev/sdX2"}
+{"check": true, "run": ["blockdev", "--flushbufs", "/dev/sdX2"]}
+{"flags": ["O_RDONLY"], "open": "/dev/sdX2"}
+{"check": true, "run": ["fatlabel", "/dev/sdX2"]}
+{"emit": {"message": "BMK_EFI FAT segédpartíció SHA-256 és kötetcímke visszaellenőrzése sikeres.", "percent": 40, "target_modified": true}}
+{"emit": {"message": "Windows ISO fájlok másolása az NTFS partícióra…", "percent": 42, "target_modified": true}}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"check": true, "run": ["mount", "-t", "ntfs3", "-o", "rw,nosuid,nodev", "/dev/sdX1", "<TEMP>/usb"], "timeout": 120}
+{"emit": {"message": "NTFS kötet csatolása a Linux kernel NTFS3 driverével…", "percent": 41, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 448 / 109,148 bájt", "percent": 42, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 6,048 / 109,148 bájt", "percent": 44, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 9,948 / 109,148 bájt", "percent": 45, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 12,948 / 109,148 bájt", "percent": 47, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 44,148 / 109,148 bájt", "percent": 59, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 109,148 / 109,148 bájt", "percent": 85, "target_modified": true}}
+{"emit": {"message": "Windows telepítőfájlok átmásolva.", "percent": 85, "target_modified": true}}
+{"emit": {"message": "A másolt adatok kiírása a pendrive-ra…", "percent": 85, "target_modified": true}}
+{"check": true, "run": ["sync", "--file-system", "<TEMP>/usb"], "timeout": 300}
+{"emit": {"message": "USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", "percent": 86, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 448 / 109,148 bájt", "percent": 86, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 6,048 / 109,148 bájt", "percent": 86, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 6,948 / 109,148 bájt", "percent": 86, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 9,948 / 109,148 bájt", "percent": 87, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 12,948 / 109,148 bájt", "percent": 87, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 14,148 / 109,148 bájt", "percent": 87, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 44,148 / 109,148 bájt", "percent": 90, "target_modified": true}}
+{"emit": {"message": "SHA-256 visszaellenőrzés… 109,148 / 109,148 bájt", "percent": 98, "target_modified": true}}
+{"emit": {"message": "Minden telepítőfájl SHA-256 ellenőrzése sikeres.", "percent": 98, "target_modified": true}}
+{"emit": {"message": "Fájlrendszer kiürítése és leválasztása…", "percent": 99, "target_modified": true}}
+{"check": true, "run": ["sync", "--file-system", "<TEMP>/usb"], "timeout": 300}
+{"check": true, "run": ["umount", "--", "<TEMP>/usb"], "timeout": 120, "usb_content": ["bootmgr 448 acfebff930b2c592", "setup.exe 5600 97381b75d59a417e", "boot/bcd 900 b0e6dc6db63beebe", "boot/boot.sdi 3000 cd69c442c3769d7d", "efi/boot/bootx64.efi 3000 3e0290fdf067d2e5", "efi/microsoft/boot/bcd 1200 fea9f4f3b605ad74", "sources/boot.wim 30000 d10a35e21eeea9dc", "sources/install.wim 65000 b8edfae53afd4a88"]}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"emit": {"log": "GPT: 1. partíció Microsoft Basic Data / NTFS (Windows fájlok); 2. partíció BMK_EFI nevű Microsoft Basic Data / FAT UEFI:NTFS segédpartíció, NoDriveLetter GUID:63 attribútummal. A segédpartíció szándékosan nem ESP, hogy a Windows Setup ne találjon második EFI System Partitiont. A Windows ISO fájljai eredeti formájukban kerültek át.", "message": "A Windows UEFI:NTFS telepítő USB elkészült.", "percent": 100, "target_modified": true}}
+{"check": false, "run": ["umount", "--", "<TEMP>/iso"], "timeout": 120}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"exit": 0}

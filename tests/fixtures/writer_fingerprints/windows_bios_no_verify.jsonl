@@ -1,0 +1,71 @@
+{"BIOS_GRUB_CFG": "insmod part_msdos\ninsmod ntfs\ninsmod ntldr\ninsmod boot\nntldr /bootmgr\nboot\n", "CHUNK": 8388608, "GPT_ALIGNMENT_SECTORS": 2048, "GRUB_INSTALL_TIMEOUT": 300, "GRUB_PC_DIRECTORY": "/usr/lib/grub/i386-pc", "GRUB_PC_REQUIRED_FILES": ["boot.img", "biosdisk.mod", "part_msdos.mod", "ntfs.mod", "ntldr.mod"], "HOST_BOOT_DIRECTORIES": ["/boot", "/efi"], "MBR_MAX_SECTORS": 4294967295, "MBR_NTFS_PARTITION_TYPE": "7", "WINDOWS_BIOS_PROGRAMS": ["lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync", "mount", "partprobe", "sfdisk", "mkfs.ntfs", "blkid", "7z"], "fingerprint": "windows_bios_no_verify", "windows_copy_progress_span": [43, 54]}
+{"args": [], "call": "validate_privileged_install"}
+{"emit": {"message": "A BootMediaKit biztonságos háttérfolyamata elindult.", "percent": 0, "target_modified": false, "worker_started": true}}
+{"args": [["lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync", "mount", "partprobe", "sfdisk", "mkfs.ntfs", "blkid", "7z"]], "call": "require_programs"}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": [], "call": "require_bios_grub"}
+{"check": true, "run": ["blockdev", "--getss", "/dev/sdX"]}
+{"check": true, "run": ["blockdev", "--getsz", "/dev/sdX"]}
+{"call": "tempfile.mkdtemp", "kwargs": {"dir": "/run", "prefix": "bootmediakit-"}}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"emit": {"message": "Windows ISO ellenőrzése a Legacy BIOS módhoz…", "percent": 1, "target_modified": false}}
+{"check": true, "run": ["mount", "-o", "loop,ro,nosuid,nodev", "<SOURCE>/windows.iso", "<TEMP>/iso"]}
+{"check": false, "run": ["blkid", "--probe", "--match-tag", "LABEL", "--output", "value", "<SOURCE>/windows.iso"], "timeout": 20}
+{"emit": {"log": "Windows PE: sources/boot.wim; telepítőkép: sources/install.wim; ISO kötetcímke: CCCOMA_X64FRE_HU-HU_DV9; másolandó fájlméret: 109,148 bájt.", "message": "ISO előellenőrzés kész; a pendrive-ot még nem módosítottam.", "percent": 8, "target_modified": false}}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"emit": {"message": "USB lemez leválasztása és MBR partíció létrehozása…", "percent": 10, "target_modified": false}}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": ["<SOURCE>/windows.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX"], "call": "assert_disk_unmounted"}
+{"check": true, "run": ["wipefs", "--all", "--force", "/dev/sdX"]}
+{"check": true, "input": "label: dos\nunit: sectors\nstart=2048, size=16775168, type=7, bootable\n", "run": ["sfdisk", "--wipe", "never", "/dev/sdX"]}
+{"check": false, "run": ["blockdev", "--rereadpt", "/dev/sdX"]}
+{"check": false, "run": ["partprobe", "/dev/sdX"]}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"check": true, "run": ["sfdisk", "--verify", "/dev/sdX"]}
+{"check": true, "run": ["sfdisk", "--json", "/dev/sdX"]}
+{"emit": {"message": "MBR ellenőrzése sikeres: egy aktív NTFS partíció.", "percent": 22, "target_modified": true}}
+{"emit": {"message": "NTFS fájlrendszer létrehozása…", "percent": 25, "target_modified": true}}
+{"check": true, "run": ["mkfs.ntfs", "--fast", "--force", "--label", "CCCOMA_X64FRE_HU-HU_DV9", "--partition-start", "2048", "--sector-size", "512", "--heads", "255", "--sectors-per-track", "63", "--cluster-size", "4096", "/dev/sdX1"], "timeout": 300}
+{"args": ["/dev/sdX1", 2048], "call": "validate_ntfs_boot_sector"}
+{"emit": {"message": "Windows ISO fájlok másolása az NTFS partícióra…", "percent": 42, "target_modified": true}}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"check": true, "run": ["mount", "-t", "ntfs3", "-o", "rw,nosuid,nodev", "/dev/sdX1", "<TEMP>/usb"], "timeout": 120}
+{"emit": {"message": "NTFS kötet csatolása a Linux kernel NTFS3 driverével…", "percent": 41, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 448 / 109,148 bájt", "percent": 42, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 6,048 / 109,148 bájt", "percent": 44, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 6,948 / 109,148 bájt", "percent": 45, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 9,948 / 109,148 bájt", "percent": 46, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 12,948 / 109,148 bájt", "percent": 48, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 44,148 / 109,148 bájt", "percent": 63, "target_modified": true}}
+{"emit": {"message": "Windows fájlok másolása… 109,148 / 109,148 bájt", "percent": 96, "target_modified": true}}
+{"emit": {"message": "Windows telepítőfájlok átmásolva.", "percent": 96, "target_modified": true}}
+{"emit": {"message": "A másolt adatok kiírása a pendrive-ra…", "percent": 96, "target_modified": true}}
+{"check": true, "run": ["sync", "--file-system", "<TEMP>/usb"], "timeout": 300}
+{"emit": {"message": "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.", "percent": 96, "target_modified": true}}
+{"args": [], "call": "require_bios_grub"}
+{"args": ["/dev/sdX", "<TEMP>/usb"], "call": "grub_install_args"}
+{"check": false, "run": ["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", "<TEMP>/usb"], "timeout": 10}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"emit": {"log": "A grub-install futása közben a megszakítás csak a lépés végén érvényesül.", "message": "GRUB indító telepítése a pendrive-ra…", "percent": 99, "target_modified": true}}
+{"check": true, "run": ["grub-install", "--target=i386-pc", "--boot-directory=<TEMP>/usb", "/dev/sdX"], "timeout": 300}
+{"flags": ["O_WRONLY", "O_CREAT", "O_TRUNC", "O_NOFOLLOW"], "open": "<TEMP>/usb/grub/grub.cfg"}
+{"fsync": "<TEMP>/usb/grub/grub.cfg"}
+{"check": true, "run": ["sfdisk", "--verify", "/dev/sdX"]}
+{"check": true, "run": ["sfdisk", "--json", "/dev/sdX"]}
+{"emit": {"message": "A GRUB indító települt; a partíciós tábla változatlan.", "percent": 99, "target_modified": true}}
+{"emit": {"message": "Fájlrendszer kiürítése és leválasztása…", "percent": 99, "target_modified": true}}
+{"check": true, "run": ["sync", "--file-system", "<TEMP>/usb"], "timeout": 300}
+{"check": true, "run": ["umount", "--", "<TEMP>/usb"], "timeout": 120, "usb_content": ["bootmgr 448 acfebff930b2c592", "setup.exe 5600 97381b75d59a417e", "boot/bcd 900 b0e6dc6db63beebe", "boot/boot.sdi 3000 cd69c442c3769d7d", "efi/boot/bootx64.efi 3000 3e0290fdf067d2e5", "efi/microsoft/boot/bcd 1200 fea9f4f3b605ad74", "grub/grub.cfg 75 1966913e54552a9f", "grub/i386-pc/boot.img 13 255b0c2bd69f4d2a", "grub/i386-pc/core.img 13 31a6ec3d113b9ee8", "grub/i386-pc/ntfs.mod 13 4a834a61091580c5", "grub/i386-pc/ntldr.mod 14 3b73db63bfbcd66b", "grub/i386-pc/part_msdos.mod 19 e08f53a54564e274", "sources/boot.wim 30000 d10a35e21eeea9dc", "sources/install.wim 65000 b8edfae53afd4a88"]}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"check": true, "run": ["sfdisk", "--verify", "/dev/sdX"]}
+{"check": true, "run": ["sfdisk", "--json", "/dev/sdX"]}
+{"emit": {"log": "MBR: egyetlen aktív NTFS partíció a Windows fájlokkal; GRUB láncbetöltő az MBR-ben és a /grub könyvtárban, amely a Windows bootmgr-t indítja. A pendrive Legacy BIOS / CSM indításhoz készült; UEFI módban csak NTFS-t olvasó firmware-en indulhat, UEFI-s géphez az UEFI (GPT) mód való. A Windows ISO fájljai eredeti formájukban kerültek át.", "message": "A Windows Legacy BIOS telepítő USB elkészült.", "percent": 100, "target_modified": true}}
+{"check": false, "run": ["umount", "--", "<TEMP>/iso"], "timeout": 120}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 20}
+{"exit": 0}

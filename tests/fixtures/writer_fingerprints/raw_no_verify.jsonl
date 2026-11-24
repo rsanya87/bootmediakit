@@ -1,0 +1,26 @@
+{"CHUNK": 8388608, "fingerprint": "raw_no_verify"}
+{"args": [], "call": "validate_privileged_install"}
+{"emit": {"message": "A BootMediaKit biztonságos háttérfolyamata elindult.", "percent": 0, "target_modified": false, "worker_started": true}}
+{"args": ["<SOURCE>/linux.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": [["lsblk", "blockdev", "findmnt", "umount", "wipefs", "udevadm", "sync"]], "call": "require_programs"}
+{"emit": {"log": "Forrás: <SOURCE>/linux.iso (20,971,643 bájt); cél: /dev/sdX (8,589,934,592 bájt)", "message": "Célmeghajtó ellenőrzése…", "percent": 1, "target_modified": false}}
+{"args": ["/dev/sdX"], "call": "unmount_disk"}
+{"args": ["<SOURCE>/linux.iso", "/dev/sdX"], "call": "ensure_source_not_on_target"}
+{"args": ["/dev/sdX", {"serial": "FAKE-SERIAL", "size": 8589934592}], "call": "validate_target"}
+{"args": ["/dev/sdX"], "call": "assert_disk_unmounted"}
+{"emit": {"message": "Régi partíciós és fájlrendszer-aláírások eltávolítása…", "percent": 2, "target_modified": false}}
+{"check": true, "run": ["wipefs", "--all", "--force", "/dev/sdX"]}
+{"check": true, "run": ["sync"]}
+{"emit": {"message": "Lemezkép kiírása…", "percent": 3, "target_modified": true}}
+{"flags": ["O_WRONLY", "O_CLOEXEC"], "open": "/dev/sdX"}
+{"emit": {"message": "Lemezkép kiírása… 8,388,608 / 20,971,643 bájt", "percent": 41, "target_modified": true}}
+{"emit": {"message": "Lemezkép kiírása… 16,777,216 / 20,971,643 bájt", "percent": 79, "target_modified": true}}
+{"emit": {"message": "Lemezkép kiírása… 20,971,643 / 20,971,643 bájt", "percent": 99, "target_modified": true}}
+{"fsync": "/dev/sdX"}
+{"check": true, "run": ["sync"]}
+{"check": false, "run": ["blockdev", "--rereadpt", "/dev/sdX"]}
+{"check": false, "run": ["udevadm", "settle"], "timeout": 15}
+{"check": true, "run": ["sync"]}
+{"emit": {"message": "A lemezkép sikeresen kiírva.", "percent": 100, "target_modified": true}}
+{"exit": 0}
