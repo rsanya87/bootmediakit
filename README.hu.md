@@ -17,7 +17,8 @@
 - Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
 
 
-- Képernyőmérethez igazodó PySide6 felület: legfeljebb 740×900-as ablak, 1366×768-as laptopon kompakt elrendezés és görgetés nélküli használatra optimalizált méret; a 10 pontos betűméret megmarad.
+- Reszponzív PySide6 felület, amely a rendszer betűtípusát és a Qt saját nagy DPI-s méretezését használja: magas képernyőn egy oszlop, alacsonyon két oszlop tömörebb térközökkel. A legkisebb ablakméret 880×540 logikai képpont (elfér egy 1280×800-as kijelzőn 100% és 125% skálázásnál); ekkora vagy nagyobb ablakban a felületen nincs görgetősáv, csak a napló görgethető a saját dobozában. Ennél kisebb méretnél (például nagyon nagy rendszer-betűméretnél) a felület görgethető, de egyetlen vezérlő sem tűnik el. Ezt offscreen tesztek ellenőrzik; az asztali környezetekben végzett ellenőrzések a [ROADMAP.md](ROADMAP.md)-ben vannak.
+- Világos/sötét megjelenés, amely a rendszert követi (ha az nem állapítható meg, sötét), jobb felül nap/hold gyorsváltóval; a gomb menüje visszaállítja a rendszer szerinti módot.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
 - Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
 - Jól olvasható meghajtóadatok sötét KDE témán; a partíciók teljes listája a kis `i` információs ikon fölé húzott egérmutatóval jelenik meg.

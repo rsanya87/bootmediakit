@@ -122,6 +122,16 @@ The GUI tests (`tests/test_app.py`) need `PySide6`. CI also lints the shell scri
 shellcheck -S warning install.sh uninstall.sh bootmediakit-worker
 ```
 
+### Writer fingerprint, theme and layout tests (0.4.0)
+
+All three run in the normal `unittest discover -s tests` run, without root.
+
+- **Writer fingerprints (`tests/test_writer_fingerprint.py`):** each frozen writer runs through `worker.main()` against files, with a fake command runner; the normalised timeline must match `tests/fixtures/writer_fingerprints/`. See `docs/INVARIANTS.md` A6 before changing a golden file; `BMK_UPDATE_WRITER_FINGERPRINTS=1` rewrites them and fails on purpose. Proof level: unit/mock.
+- **Theme (`tests/test_theme.py`):** contrast of every colour-token pair (4.5:1 text, 3:1 large text and indicators) on light, dark, high-contrast and desktop-like palettes; system detection, dark fallback, the quick switch and its `QSettings` persistence (a temporary file, never the user's configuration).
+- **Layout (`tests/test_layout.py`):** offscreen windows at the minimum size and at 1024×600, 1280×720 and 1366×700 logical pixels with 9 and 10 pt fonts: no page scrollbar, every key control visible, inside the viewport and not overlapping another; the log scrolls inside; below the minimum (and with a 14 pt font at the minimum) the page scrolls and every control can still be scrolled into view; a run with `QT_SCALE_FACTOR=1.25` gives the same logical result.
+
+The minimum window size, 880×540 logical pixels (`MIN_WINDOW_WIDTH`/`MIN_WINDOW_HEIGHT` in `app.py`), was measured offscreen for the two-column layout at 880 px width: 530 px of height are needed with a 9 pt and 529 px with a 10 pt system font (584 px with 11 pt and 612 px with 12 pt, where the page scrolls at the minimum). It fits a 1280×800 screen at 125 % scaling (1024×640 logical) with a 44 px panel and a 40 px window frame. Offscreen measurements depend on the fonts of the machine; desktop checks record the Qt logical work area, the desktop, Qt/PySide6 version, X11/Wayland, theme and scale.
+
 ### Loop-device integration tests
 
 `tests/integration/` runs the real `worker.write_raw`, `worker.write_windows_uefi` and `worker.write_windows_bios` functions against a loop device backed by a disk image file. No physical drive is touched; all test files live on a private tmpfs that is unmounted afterwards.

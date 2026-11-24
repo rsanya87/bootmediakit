@@ -17,13 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QFont, QIcon
+from PySide6.QtGui import QAction, QActionGroup, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -50,7 +51,14 @@ from theme import (
     theme_icon,
     tr,
 )
-from ui_helpers import bios_grub_available, calculate_window_profile, format_elapsed_time
+from ui_helpers import (
+    bios_grub_available,
+    choose_layout_profile,
+    clamp_minimum_size,
+    density_for,
+    format_elapsed_time,
+    initial_window_size,
+)
 from version import __version__
 
 APP_VERSION = __version__
@@ -157,32 +165,87 @@ def mounted_paths(node: dict[str, Any]) -> list[str]:
 
 
 
+# Minimum logical client size (0.4.0 T3). Measured offscreen with the
+# two-column layout at 880 px width: 586x530 with a 9 pt and 607x529 with a
+# 10 pt system font (11 pt: 584, 12 pt: 612 px high). It fits the work area of
+# a 1280x800 screen at 100 % and 125 % scaling (1280x800 and 1024x640 logical,
+# minus panels and window frame). Larger fonts can need more; the content then
+# scrolls as a last resort. The minimum is never larger than the available area.
+MIN_WINDOW_WIDTH = 880
+MIN_WINDOW_HEIGHT = 540
+
+
+class ElidedLabel(QLabel):
+    """One-line label that shortens long text with "…" instead of clipping."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self._auto_tooltip = False
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        self._full_text = text or ""
+        self._elide()
+
+    def text(self) -> str:
+        return self._full_text
+
+    def setToolTip(self, text: str) -> None:  # noqa: N802 - Qt naming
+        self._auto_tooltip = False
+        super().setToolTip(text)
+
+    def is_elided(self) -> bool:
+        return super().text() != self._full_text
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        self._elide()
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt naming
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
+
+    def _elide(self) -> None:
+        width = max(0, self.contentsRect().width())
+        shown = self.fontMetrics().elidedText(self._full_text, Qt.TextElideMode.ElideMiddle, width)
+        QLabel.setText(self, shown)
+        if shown != self._full_text and (self._auto_tooltip or not self.toolTip()):
+            QLabel.setToolTip(self, self._full_text)
+            self._auto_tooltip = True
+        elif shown == self._full_text and self._auto_tooltip:
+            QLabel.setToolTip(self, "")
+            self._auto_tooltip = False
+
+
+class LogView(QPlainTextEdit):
+    """Process log: asks only for its minimum height and takes the spare
+    space; long logs scroll inside the box, never the window."""
+
+    def sizeHint(self):  # noqa: N802 - Qt naming
+        hint = super().sizeHint()
+        hint.setHeight(self.minimumHeight())
+        return hint
+
+
 class MainWindow(QMainWindow):
     def __init__(self, theme_controller: ThemeController | None = None) -> None:
         super().__init__()
         if theme_controller is None:
             theme_controller = ThemeController(QApplication.instance(), open_settings())
+            # Owned by this window, so it cannot outlive it and call into a
+            # deleted window when the system palette changes.
+            theme_controller.setParent(self)
             theme_controller.apply()
         self.theme = theme_controller
         self._applied_stylesheet = ""
         self._status_state = "idle"
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
-        screen = QApplication.primaryScreen()
-        available = screen.availableGeometry() if screen else None
-        available_width = available.width() if available else 1366
-        available_height = available.height() if available else 900
-        self._compact_ui = available_height < 850
-        initial_width, initial_height, _ = calculate_window_profile(
-            available_width, available_height
-        )
-        self.setMinimumSize(560, 520)
-        self.setMaximumSize(740, 900)
-        self.resize(initial_width, initial_height)
-        if available:
-            self.move(
-                available.x() + max(0, (available_width - initial_width) // 2),
-                available.y() + max(0, (available_height - initial_height) // 2),
-            )
+        self._compact_ui = False
+        self._layout_profile = ""
+        self._single_column_height = 0
+        self._last_viewport: tuple[int, int] | None = None
         if APP_ICON.is_file():
             self.setWindowIcon(QIcon(str(APP_ICON)))
         self.process: QProcess | None = None
@@ -225,11 +288,12 @@ class MainWindow(QMainWindow):
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        outer_margin = 8 if self._compact_ui else 12
+        self._root_layout = root_layout
+        outer_margin = 12
         root_layout.setContentsMargins(
             outer_margin, outer_margin, outer_margin, outer_margin
         )
-        root_layout.setSpacing(5 if self._compact_ui else 7)
+        root_layout.setSpacing(7)
 
         header = QHBoxLayout()
         title_block = QVBoxLayout()
@@ -279,10 +343,10 @@ class MainWindow(QMainWindow):
         warning.setObjectName("warningPanel")
         warning_layout = QHBoxLayout(warning)
         warning_layout.setContentsMargins(
-            8 if self._compact_ui else 10,
-            5 if self._compact_ui else 7,
-            8 if self._compact_ui else 10,
-            5 if self._compact_ui else 7,
+            10,
+            7,
+            10,
+            7,
         )
         warning_icon = QLabel("⚠")
         warning_icon.setObjectName("warningIcon")
@@ -293,6 +357,7 @@ class MainWindow(QMainWindow):
         warning_text.setWordWrap(True)
         warning_layout.addWidget(warning_icon)
         warning_layout.addWidget(warning_text, 1)
+        self._warning_layout = warning_layout
         root_layout.addWidget(warning)
 
         # Image selection
@@ -300,12 +365,12 @@ class MainWindow(QMainWindow):
         image_card.setObjectName("panel")
         image_layout = QVBoxLayout(image_card)
         image_layout.setContentsMargins(
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
+            11,
+            7,
+            11,
+            7,
         )
-        image_layout.setSpacing(3 if self._compact_ui else 5)
+        image_layout.setSpacing(5)
         image_label = QLabel("1. Lemezkép kiválasztása")
         image_label.setObjectName("sectionTitle")
         image_layout.addWidget(image_label)
@@ -313,7 +378,8 @@ class MainWindow(QMainWindow):
         self.iso_edit = QLineEdit()
         self.iso_edit.setPlaceholderText("Válassz ISO / IMG / BIN fájlt…")
         self.iso_edit.setClearButtonEnabled(True)
-        self.iso_edit.setMinimumHeight(29 if self._compact_ui else 32)
+        self.iso_edit.setAccessibleName(tr("Forrás lemezkép"))
+        self.iso_edit.setMinimumHeight(32)
         self.iso_edit.setMinimumWidth(0)
         self.iso_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.browse_button = QPushButton("Tallózás…")
@@ -324,26 +390,25 @@ class MainWindow(QMainWindow):
         image_row.addWidget(self.iso_edit, 1)
         image_row.addWidget(self.browse_button)
         image_layout.addLayout(image_row)
-        self.file_info = QLabel("Támogatott formátumok: ISO, IMG, BIN, RAW")
+        self.file_info = ElidedLabel("Támogatott formátumok: ISO, IMG, BIN, RAW")
         self.file_info.setObjectName("muted")
         self.file_info.setWordWrap(False)
         self.file_info.setMinimumWidth(0)
-        self.file_info.setMaximumHeight(21)
         self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         image_layout.addWidget(self.file_info)
-        root_layout.addWidget(image_card)
+        self.image_card = image_card
 
         # Device selection
         device_card = QFrame()
         device_card.setObjectName("panel")
         device_layout = QVBoxLayout(device_card)
         device_layout.setContentsMargins(
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
+            11,
+            7,
+            11,
+            7,
         )
-        device_layout.setSpacing(3 if self._compact_ui else 5)
+        device_layout.setSpacing(5)
         device_header = QHBoxLayout()
         device_title = QLabel("2. Célmeghajtó")
         device_title.setObjectName("sectionTitle")
@@ -354,16 +419,18 @@ class MainWindow(QMainWindow):
         device_header.addWidget(self.refresh_button)
         device_layout.addLayout(device_header)
         self.device_combo = QComboBox()
-        self.device_combo.setMinimumHeight(29 if self._compact_ui else 33)
+        self.device_combo.setMinimumHeight(33)
         self.device_combo.setMinimumWidth(0)
+        self.device_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.device_combo.setMinimumContentsLength(12)
         self.device_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.device_combo.currentIndexChanged.connect(self.device_changed)
+        self.device_combo.setAccessibleName(tr("Célmeghajtó"))
         device_layout.addWidget(self.device_combo)
-        self.device_detail = QLabel("Csatlakoztass egy USB-meghajtót, majd frissítsd a listát.")
+        self.device_detail = ElidedLabel("Csatlakoztass egy USB-meghajtót, majd frissítsd a listát.")
         self.device_detail.setObjectName("muted")
         self.device_detail.setWordWrap(False)
         self.device_detail.setMinimumWidth(0)
-        self.device_detail.setMaximumHeight(24)
         self.device_detail.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         device_layout.addWidget(self.device_detail)
 
@@ -385,19 +452,19 @@ class MainWindow(QMainWindow):
         partition_info_row.addWidget(self.partition_info_button)
         partition_info_row.addStretch(1)
         device_layout.addLayout(partition_info_row)
-        root_layout.addWidget(device_card)
+        self.device_card = device_card
 
         # Mode selection
         mode_card = QFrame()
         mode_card.setObjectName("panel")
         mode_layout = QVBoxLayout(mode_card)
         mode_layout.setContentsMargins(
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
+            11,
+            7,
+            11,
+            7,
         )
-        mode_layout.setSpacing(3 if self._compact_ui else 5)
+        mode_layout.setSpacing(5)
         mode_title = QLabel("3. Írási mód")
         mode_title.setObjectName("sectionTitle")
         mode_layout.addWidget(mode_title)
@@ -414,7 +481,7 @@ class MainWindow(QMainWindow):
         for button in (self.raw_button, self.windows_button):
             button.setMinimumWidth(0)
             button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            button.setMinimumHeight(30 if self._compact_ui else 34)
+            button.setMinimumHeight(34)
         mode_buttons = QHBoxLayout()
         mode_buttons.setSpacing(8)
         mode_buttons.addWidget(self.raw_button, 1)
@@ -426,10 +493,10 @@ class MainWindow(QMainWindow):
         self.boot_mode_combo = QComboBox()
         self.boot_mode_combo.addItem("UEFI (GPT)", "uefi")
         self.boot_mode_combo.addItem("Legacy BIOS (MBR)", "bios")
-        self.boot_mode_combo.setMinimumHeight(28 if self._compact_ui else 30)
+        self.boot_mode_combo.setMinimumHeight(30)
         self.boot_mode_combo.currentIndexChanged.connect(self.boot_mode_changed)
         self.boot_mode_label.setBuddy(self.boot_mode_combo)
-        self.grub_hint = QLabel()
+        self.grub_hint = ElidedLabel()
         self.grub_hint.setObjectName("muted")
         self.grub_hint.setMinimumWidth(0)
         self.grub_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -445,8 +512,7 @@ class MainWindow(QMainWindow):
         self.boot_mode_note.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.boot_mode_note.setWordWrap(True)
         self.boot_mode_note.setMinimumWidth(0)
-        self.boot_mode_note.setMaximumHeight(34 if self._compact_ui else 42)
-        self.boot_mode_note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.boot_mode_note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
         mode_layout.addWidget(self.boot_mode_note)
         self.apply_grub_availability()
         self.mode_description = QLabel(
@@ -457,13 +523,12 @@ class MainWindow(QMainWindow):
         self.mode_description.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.mode_description.setWordWrap(True)
         self.mode_description.setMinimumWidth(0)
-        self.mode_description.setMaximumHeight(34 if self._compact_ui else 42)
-        self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
         mode_layout.addWidget(self.mode_description)
         self.verify_checkbox = QCheckBox("Kiírás utáni teljes visszaolvasás és ellenőrzés")
         self.verify_checkbox.setChecked(True)
         mode_layout.addWidget(self.verify_checkbox)
-        root_layout.addWidget(mode_card)
+        self.mode_card = mode_card
         self.update_boot_mode_controls()
 
         # Progress / log
@@ -471,12 +536,12 @@ class MainWindow(QMainWindow):
         progress_card.setObjectName("panel")
         progress_layout = QVBoxLayout(progress_card)
         progress_layout.setContentsMargins(
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
-            9 if self._compact_ui else 11,
-            5 if self._compact_ui else 7,
+            11,
+            7,
+            11,
+            7,
         )
-        progress_layout.setSpacing(3 if self._compact_ui else 5)
+        progress_layout.setSpacing(5)
         progress_header = QHBoxLayout()
         progress_title = QLabel("Művelet állapota")
         progress_title.setObjectName("sectionTitle")
@@ -508,20 +573,29 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.progress.setTextVisible(True)
+        self.progress.setAccessibleName(tr("Folyamatjelző"))
         progress_layout.addWidget(self.progress)
-        self.log = QPlainTextEdit()
+        self.log = LogView()
         self.log.setReadOnly(True)
+        self.log.setAccessibleName(tr("Folyamatnapló"))
         self.log.setMaximumBlockCount(500)
-        self.log.setMinimumHeight(44 if self._compact_ui else 56)
+        self.log.setMinimumHeight(56)
         self.log.setMinimumWidth(0)
-        self.log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.log.setMaximumHeight(56 if self._compact_ui else 76)
+        # The log takes the spare height; it scrolls inside, the window does not.
+        self.log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.log.setPlaceholderText("A műveletek és az ellenőrzés részletei itt jelennek meg.")
         progress_layout.addWidget(self.log)
-        root_layout.addWidget(progress_card, 1)
+        self.progress_card = progress_card
+        self._card_layouts = (image_layout, device_layout, mode_layout, progress_layout)
+        # The four cards sit in a grid: one column on tall screens, two
+        # columns (settings left, progress and log right) on short ones.
+        self.cards_widget = QWidget()
+        self.cards_grid = QGridLayout(self.cards_widget)
+        self.cards_grid.setContentsMargins(0, 0, 0, 0)
+        root_layout.addWidget(self.cards_widget, 1)
 
         footer = QHBoxLayout()
-        self.about_label = QLabel("Linux • helyi, nyílt forráskódú projekt")
+        self.about_label = ElidedLabel("Linux • helyi, nyílt forráskódú projekt")
         self.about_label.setObjectName("muted")
         self.about_label.setMinimumWidth(0)
         self.about_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -531,8 +605,8 @@ class MainWindow(QMainWindow):
         self.start_button = QPushButton("USB elkészítése")
         self.start_button.setObjectName("primaryButton")
         self.start_button.setMinimumWidth(150)
-        self.start_button.setMinimumHeight(34 if self._compact_ui else 38)
-        self.cancel_button.setMinimumHeight(34 if self._compact_ui else 38)
+        self.start_button.setMinimumHeight(38)
+        self.cancel_button.setMinimumHeight(38)
         self.start_button.clicked.connect(self.start_operation)
         footer.addWidget(self.about_label, 1)
         footer.addWidget(self.cancel_button)
@@ -549,40 +623,189 @@ class MainWindow(QMainWindow):
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setWidget(root)
         self.setCentralWidget(scroll_area)
+        self.scroll_area = scroll_area
         self.theme.changed.connect(self.apply_style)
         self.apply_style()
+        self._layout_timer = QTimer(self)
+        self._layout_timer.setSingleShot(True)
+        self._layout_timer.setInterval(0)
+        self._layout_timer.timeout.connect(self.update_layout_profile)
+        self._measure_timer = QTimer(self)
+        self._measure_timer.setSingleShot(True)
+        self._measure_timer.setInterval(0)
+        self._measure_timer.timeout.connect(self.measure_layout_profiles)
+        self.measure_layout_profiles()
+        self.setup_initial_geometry()
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
         self.refresh_timer.timeout.connect(self.refresh_devices_silently)
         self.refresh_timer.start()
         self.refresh_devices()
 
-    def fit_window_to_screen(self) -> None:
-        """Fit the outer window frame inside the active screen's work area."""
+    # -- responsive layout (0.4.0 T3) ---------------------------------------
+    def available_area(self) -> tuple[int, int, int, int]:
+        """Logical work area (x, y, width, height) of the window's screen."""
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
-            return
-        available = screen.availableGeometry()
+            return 0, 0, 1366, 768
+        area = screen.availableGeometry()
+        return area.x(), area.y(), area.width(), area.height()
+
+    def frame_extra(self) -> tuple[int, int]:
         frame = self.frameGeometry()
         client = self.geometry()
-        frame_width = max(0, frame.width() - client.width())
-        frame_height = max(0, frame.height() - client.height())
+        return max(0, frame.width() - client.width()), max(0, frame.height() - client.height())
 
-        outer_width = max(560, min(740, available.width() - 24))
-        outer_height = max(520, min(900, available.height() - 24))
-        client_width = max(560, outer_width - frame_width)
-        client_height = max(520, outer_height - frame_height)
-
-        self.setMaximumSize(
-            max(560, 740 - frame_width),
-            max(520, 900 - frame_height),
+    def minimum_client_size(self) -> tuple[int, int]:
+        _x, _y, width, height = self.available_area()
+        frame_width, frame_height = self.frame_extra()
+        return clamp_minimum_size(
+            (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT),
+            (width - frame_width, height - frame_height),
         )
-        self.resize(client_width, client_height)
+
+    def setup_initial_geometry(self) -> None:
+        x, y, width, height = self.available_area()
+        self.setMinimumSize(*self.minimum_client_size())
+        initial_width, initial_height = initial_window_size(
+            width, height, self._single_column_height, (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        )
+        self.resize(max(initial_width, self.minimumWidth()), max(initial_height, self.minimumHeight()))
+        self.move(
+            x + max(0, (width - self.width()) // 2),
+            y + max(0, (height - self.height()) // 2),
+        )
+
+    def fit_window_to_screen(self) -> None:
+        """Fit the outer window frame inside the active screen's work area."""
+        x, y, width, height = self.available_area()
+        frame_width, frame_height = self.frame_extra()
+        self.setMinimumSize(*self.minimum_client_size())
+        initial_width, initial_height = initial_window_size(
+            width, height, self._single_column_height, (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        )
+        self.resize(
+            max(self.minimumWidth(), initial_width - frame_width),
+            max(self.minimumHeight(), initial_height - frame_height),
+        )
         frame = self.frameGeometry()
         self.move(
-            available.x() + max(0, (available.width() - frame.width()) // 2),
-            available.y() + max(0, (available.height() - frame.height()) // 2),
+            x + max(0, (width - frame.width()) // 2),
+            y + max(0, (height - frame.height()) // 2),
         )
+
+    def apply_layout_profile(self, profile: str) -> None:
+        """Arrange the cards and set the density for one layout profile."""
+        if profile == self._layout_profile:
+            return
+        self._layout_profile = profile
+        self._compact_ui = profile != "normal"
+        metrics = density_for(profile)
+        margin = metrics["outer_margin"]
+        self._root_layout.setContentsMargins(margin, margin, margin, margin)
+        self._root_layout.setSpacing(metrics["spacing"])
+        self.cards_grid.setHorizontalSpacing(metrics["spacing"] + 3)
+        self.cards_grid.setVerticalSpacing(metrics["spacing"])
+        horizontal, vertical = metrics["card_margin"]
+        for layout in self._card_layouts:
+            layout.setContentsMargins(horizontal, vertical, horizontal, vertical)
+            layout.setSpacing(metrics["card_spacing"])
+        horizontal, vertical = metrics["warning_margin"]
+        self._warning_layout.setContentsMargins(horizontal, vertical, horizontal, vertical)
+        self.iso_edit.setMinimumHeight(metrics["line_edit"])
+        self.device_combo.setMinimumHeight(metrics["combo"])
+        self.raw_button.setMinimumHeight(metrics["mode_button"])
+        self.windows_button.setMinimumHeight(metrics["mode_button"])
+        self.boot_mode_combo.setMinimumHeight(metrics["boot_combo"])
+        self.start_button.setMinimumHeight(metrics["action_button"])
+        self.cancel_button.setMinimumHeight(metrics["action_button"])
+        self.log.setMinimumHeight(metrics["log_min"])
+
+        for card in (self.image_card, self.device_card, self.mode_card, self.progress_card):
+            self.cards_grid.removeWidget(card)
+        for row in range(5):
+            self.cards_grid.setRowStretch(row, 0)
+        for column in range(2):
+            self.cards_grid.setColumnStretch(column, 0)
+        if profile == "wide":
+            # Two by two, read left to right: 1 | 2, then 3 | progress.
+            self.cards_grid.addWidget(self.image_card, 0, 0)
+            self.cards_grid.addWidget(self.device_card, 0, 1)
+            self.cards_grid.addWidget(self.mode_card, 1, 0)
+            self.cards_grid.addWidget(self.progress_card, 1, 1)
+            self.cards_grid.setRowStretch(1, 1)
+            self.cards_grid.setColumnStretch(0, 1)
+            self.cards_grid.setColumnStretch(1, 1)
+        else:
+            self.cards_grid.addWidget(self.image_card, 0, 0)
+            self.cards_grid.addWidget(self.device_card, 1, 0)
+            self.cards_grid.addWidget(self.mode_card, 2, 0)
+            self.cards_grid.addWidget(self.progress_card, 3, 0)
+            self.cards_grid.setRowStretch(3, 1)
+            self.cards_grid.setColumnStretch(0, 1)
+        # The cards were created without a parent; a re-parented widget stays
+        # hidden until shown, and hidden widgets do not count in the layout.
+        for card in (self.image_card, self.device_card, self.mode_card, self.progress_card):
+            card.setVisible(True)
+        self.centralWidget().widget().layout().activate()
+
+    def content_requirement(self, width: int) -> tuple[int, int]:
+        """Minimum width and the height the content needs at ``width``."""
+        root = self.scroll_area.widget()
+        layout = root.layout()
+        layout.invalidate()
+        layout.activate()
+        hint = root.minimumSizeHint()
+        height = hint.height()
+        if layout.hasHeightForWidth():
+            height = max(height, layout.totalHeightForWidth(max(width, hint.width())))
+        return hint.width(), height
+
+    def measure_layout_profiles(self) -> None:
+        """Measure the single-column height with the current fonts.
+
+        It is taken at the classic 740 px window width and decides the first
+        window size; the layout itself is chosen from live measurements.
+        """
+        self.setUpdatesEnabled(False)
+        try:
+            self._layout_profile = ""
+            self.apply_layout_profile("normal")
+            reference = 740 - 2 * density_for("normal")["outer_margin"]
+            self._single_column_height = self.content_requirement(reference)[1]
+        finally:
+            self.setUpdatesEnabled(True)
+        self._last_viewport = None
+        self.update_layout_profile()
+
+    def update_layout_profile(self) -> None:
+        """Choose the first layout that fits the viewport without scrolling."""
+        if not self._single_column_height:
+            return
+        viewport = self.scroll_area.maximumViewportSize()
+        key = (viewport.width(), viewport.height())
+        if key == self._last_viewport:
+            return
+        self._last_viewport = key
+        requirements: dict[str, tuple[int, int]] = {}
+        self.setUpdatesEnabled(False)
+        try:
+            for profile in ("normal", "wide"):
+                self.apply_layout_profile(profile)
+                requirements[profile] = self.content_requirement(viewport.width())
+                if requirements[profile][0] <= key[0] and requirements[profile][1] <= key[1]:
+                    break
+            self.apply_layout_profile(choose_layout_profile(key, requirements))
+        finally:
+            self.setUpdatesEnabled(True)
+
+    def layout_profile(self) -> str:
+        return self._layout_profile
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().resizeEvent(event)
+        if hasattr(self, "_layout_timer"):
+            self._layout_timer.start()
 
     def apply_style(self) -> None:
         """Style sheet from palette-derived tokens (theme.py); no fixed colours here."""
@@ -630,6 +853,10 @@ class MainWindow(QMainWindow):
             self.status_label.style().polish(self.status_label)
 
     def changeEvent(self, event) -> None:
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.ApplicationFontChange) and self._single_column_height:
+            # A different system font size changes every layout's minimum.
+            # The timer belongs to the window, so it dies with it.
+            self._measure_timer.start()
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
             # A system theme switch while running; apply_style() is a no-op
             # when the derived style sheet did not change.
@@ -1396,7 +1623,6 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("BootMediaKit")
-    app.setFont(QFont("Noto Sans", 10))
     theme_controller = ThemeController(app, open_settings())
     theme_controller.apply()
     if hasattr(app, "setDesktopFileName"):

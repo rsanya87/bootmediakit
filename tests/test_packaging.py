@@ -112,12 +112,17 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
         self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
         self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
-        self.assertIn("calculate_window_profile(", app)
-        self.assertIn("self._compact_ui = available_height < 850", app)
-        self.assertIn("self.setMaximumSize(740, 900)", app)
+        # 0.4.0 T3 replaced the 740x900 cap, the screen-height compact flag
+        # and the fixed log height with a measured minimum size, layout
+        # profiles chosen from the real content size and a log that takes the
+        # spare height. tests/test_layout.py checks the behaviour itself (no
+        # scrollbar at the tested sizes, no lost or overlapping control).
+        self.assertIn("initial_window_size(", app)
+        self.assertIn("MIN_WINDOW_WIDTH = ", app)
+        self.assertIn("def update_layout_profile(self)", app)
         self.assertIn("def fit_window_to_screen(self)", app)
         self.assertIn("QTimer.singleShot(0, window.fit_window_to_screen)", app)
-        self.assertIn("self.log.setMaximumHeight(56 if self._compact_ui else 76)", app)
+        self.assertIn("self.log = LogView()", app)
         self.assertIn("self.file_info.setWordWrap(False)", app)
 
 
