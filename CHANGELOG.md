@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Docs: `docs/INVARIANTS.md` (rules no change may break; the three writers are frozen), `docs/LESSONS.md` (mistakes that already happened) and `docs/REGRESSION_CHECKLIST.md` (the maintainer's physical pre-release checks) are now in the repository; `CONTRIBUTING.md` and both READMEs link to them. `ROADMAP.md` gets the 0.4.0 section with its status list (T0).
+- Tests: writer fingerprint tests (`tests/test_writer_fingerprint.py`) run `write_raw`, `write_windows_uefi` and `write_windows_bios` through `worker.main()` without root or a device, with a fake command runner that simulates sfdisk, mkfs.ntfs, fatlabel, mount and grub-install on files. The normalised timeline (commands and arguments, sfdisk scripts, safety checks in order, `open`/`fsync` on the target, every JSON event with its Hungarian text, the copied USB content, the pinned writer constants) must match the golden files in `tests/fixtures/writer_fingerprints/`, which were generated from the unchanged v0.3.0 writers. Changing them needs the INVARIANTS A6 gate; `BMK_UPDATE_WRITER_FINGERPRINTS=1` rewrites them and fails on purpose. Further tests pin the cancel boundaries (exit 130, no `fsync`, `target_modified`) and check a byte-exact RAW write and its read-back on a file. Temporarily removing `--force` from `wipefs`, the RAW `fsync`, `insmod ntldr` from `grub.cfg`, changing one Hungarian message or adding `--force` to `grub-install` each failed the tests (checked by hand, not committed) (T1).
 
 ## 0.3.0 — 2026-11-24
 
