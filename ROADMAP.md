@@ -12,7 +12,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 
 - [x] T0. Ág, repó-dokumentumok (INVARIANTS, LESSONS, REGRESSION_CHECKLIST) a repóba
 - [x] T1. Writer-ujjlenyomat tesztek (a három writer rögzítése, még változtatás előtt)
-- [ ] T2. Téma: paletta-tokenek, rendszerkövetés, sötét tartalék, kézi váltó
+- [x] T2. Téma: paletta-tokenek, rendszerkövetés, sötét tartalék, kézi váltó
 - [ ] T3. Reszponzív elrendezés, DPI, minimális ablakméret, görgetés csak a naplóban
 - [ ] T4. Desktop-integráció és polkit-agent hibajelzés
 - [ ] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt

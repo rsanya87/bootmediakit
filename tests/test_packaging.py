@@ -85,10 +85,12 @@ class PrivilegedPackagingTests(unittest.TestCase):
 
     def test_elapsed_timer_cannot_expand_progress_header_vertically(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
+        # 0.4.0 T2: the style sheet moved to theme.py (STYLE_TEMPLATE).
+        style = app + (ROOT / "theme.py").read_text(encoding="utf-8")
         self.assertIn("self.elapsed_label.setFixedHeight(30)", app)
         self.assertIn("QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed", app)
-        self.assertIn("QLabel#elapsed", app)
-        self.assertIn("QToolButton#infoButton", app)
+        self.assertIn("QLabel#elapsed", style)
+        self.assertIn("QToolButton#infoButton", style)
 
     def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
@@ -96,8 +98,13 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("APP_VERSION = __version__", app)
         self.assertIn("version = QLabel(APP_VERSION)", app)
         self.assertIn('meta_row.addWidget(version', app)
-        self.assertIn('QLabel#version { color: #83bde2;', app)
-        self.assertIn('QLabel#muted { color: #b7c1cb; }', app)
+        # 0.4.0 T2: the fixed #83bde2/#b7c1cb colours became palette-derived
+        # tokens; tests/test_theme.py checks their contrast on light, dark and
+        # high-contrast palettes.
+        style = (ROOT / "theme.py").read_text(encoding="utf-8")
+        self.assertIn("QLabel#version {{ color: {accent_text};", style)
+        self.assertIn("QLabel#muted {{ color: {secondary_text}; }}", style)
+        self.assertIn("build_stylesheet(tokens)", app)
 
     def test_gui_disables_horizontal_scrollbar_and_wraps_long_iso_metadata(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
@@ -182,7 +189,7 @@ class SingleVersionSourceTests(unittest.TestCase):
 
 
 class TestCommandDocumentationTests(unittest.TestCase):
-    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py"
+    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py"
     SHELL_SYNTAX = "bash -n install.sh uninstall.sh bootmediakit-worker"
     UNIT = "QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v"
     SHELLCHECK = "shellcheck -S warning install.sh uninstall.sh bootmediakit-worker"

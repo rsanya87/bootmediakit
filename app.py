@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, Qt, QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QAction, QActionGroup, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -40,6 +41,15 @@ from PySide6.QtWidgets import (
 )
 
 from iso_utils import is_windows_install_iso
+from theme import (
+    ThemeController,
+    build_stylesheet,
+    open_settings,
+    status_accessible_name,
+    status_icon_pixmap,
+    theme_icon,
+    tr,
+)
 from ui_helpers import bios_grub_available, calculate_window_profile, format_elapsed_time
 from version import __version__
 
@@ -148,8 +158,14 @@ def mounted_paths(node: dict[str, Any]) -> list[str]:
 
 
 class MainWindow(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, theme_controller: ThemeController | None = None) -> None:
         super().__init__()
+        if theme_controller is None:
+            theme_controller = ThemeController(QApplication.instance(), open_settings())
+            theme_controller.apply()
+        self.theme = theme_controller
+        self._applied_stylesheet = ""
+        self._status_state = "idle"
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
@@ -231,6 +247,32 @@ class MainWindow(QMainWindow):
         title_block.addLayout(meta_row)
         header.addLayout(title_block)
         header.addStretch(1)
+        # Quick light/dark switch: the icon shows the current appearance, a
+        # click switches to the other one (manual override), the menu restores
+        # the system-following mode.
+        self.theme_button = QToolButton()
+        self.theme_button.setObjectName("themeButton")
+        self.theme_button.setAutoRaise(False)
+        self.theme_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.theme_button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.theme_button.clicked.connect(self.theme.toggle)
+        theme_menu = QMenu(self.theme_button)
+        self.theme_actions: dict[str, QAction] = {}
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for mode, label in (
+            ("system", tr("Rendszer / Automatikus")),
+            ("light", tr("Világos")),
+            ("dark", tr("Sötét")),
+        ):
+            action = QAction(label, theme_menu)
+            action.setCheckable(True)
+            action.triggered.connect(lambda _checked=False, value=mode: self.theme.set_mode(value))
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
+            self.theme_actions[mode] = action
+        self.theme_button.setMenu(theme_menu)
+        header.addWidget(self.theme_button, 0, Qt.AlignmentFlag.AlignTop)
         root_layout.addLayout(header)
 
         warning = QFrame()
@@ -451,9 +493,17 @@ class MainWindow(QMainWindow):
         progress_header.addStretch(1)
         progress_header.addWidget(self.elapsed_label)
         progress_layout.addLayout(progress_header)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        self.status_icon = QLabel()
+        self.status_icon.setObjectName("statusIcon")
+        self.status_icon.setFixedSize(16, 16)
         self.status_label = QLabel("Készen áll.")
         self.status_label.setObjectName("status")
-        progress_layout.addWidget(self.status_label)
+        self.status_label.setProperty("state", "idle")
+        status_row.addWidget(self.status_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status_label, 1)
+        progress_layout.addLayout(status_row)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -499,6 +549,7 @@ class MainWindow(QMainWindow):
         scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll_area.setWidget(root)
         self.setCentralWidget(scroll_area)
+        self.theme.changed.connect(self.apply_style)
         self.apply_style()
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
@@ -534,33 +585,56 @@ class MainWindow(QMainWindow):
         )
 
     def apply_style(self) -> None:
-        self.setStyleSheet("""
-            QMainWindow { background: palette(window); }
-            QLabel#appTitle { font-size: 27px; font-weight: 750; }
-            QLabel#subtitle { color: #aeb9c4; font-size: 9pt; }
-            QLabel#muted { color: #b7c1cb; }
-            QLabel#version { color: #83bde2; font-size: 9pt; font-weight: 650; padding-right: 10px; }
-            QLabel#sectionTitle { font-size: 15px; font-weight: 650; }
-            QLabel#status { font-weight: 600; }
-            QLabel#elapsed { color: palette(highlight); font-weight: 650; border: 1px solid palette(mid); border-radius: 7px; padding: 3px 8px; min-height: 24px; max-height: 24px; }
-            QToolButton#infoButton { color: palette(highlight); border: 1px solid palette(highlight); border-radius: 10px; font-weight: 750; font-size: 10pt; padding: 0; }
-            QToolButton#infoButton:hover { background: palette(alternate-base); }
-            QToolButton#infoButton:disabled { color: palette(mid); border-color: palette(mid); }
-            QFrame#panel { border: 1px solid palette(mid); border-radius: 11px; }
-            QFrame#warningPanel { border: 1px solid #b58136; border-radius: 10px; background: rgba(181,129,54,0.10); }
-            QLabel#warningIcon { font-size: 21px; font-weight: 700; color: #d19a48; }
-            QLineEdit, QComboBox, QPlainTextEdit { border: 1px solid palette(mid); border-radius: 7px; padding: 5px 7px; }
-            QComboBox { min-height: 20px; }
-            QPushButton { border: 1px solid palette(mid); border-radius: 7px; padding: 6px 10px; }
-            QPushButton:hover { border-color: palette(highlight); }
-            QPushButton#modeButton { text-align: left; padding: 7px 10px; min-height: 32px; }
-            QPushButton#modeButton:checked { border: 2px solid palette(highlight); background: palette(alternate-base); font-weight: 650; }
-            QPushButton#primaryButton { background: palette(highlight); color: palette(highlighted-text); font-weight: 700; border: none; padding: 8px 16px; }
-            QPushButton#primaryButton:disabled { background: palette(mid); color: palette(window); }
-            QProgressBar { border: 1px solid palette(mid); border-radius: 6px; text-align: center; min-height: 18px; }
-            QProgressBar::chunk { background: palette(highlight); border-radius: 5px; }
-            QCheckBox { spacing: 8px; }
-        """)
+        """Style sheet from palette-derived tokens (theme.py); no fixed colours here."""
+        tokens = self.theme.tokens()
+        stylesheet = build_stylesheet(tokens)
+        if stylesheet != self._applied_stylesheet:
+            self._applied_stylesheet = stylesheet
+            self.setStyleSheet(stylesheet)
+        self.update_theme_button(tokens)
+        self.set_status_state(self._status_state)
+
+    def update_theme_button(self, tokens=None) -> None:
+        tokens = tokens or self.theme.tokens()
+        scheme = self.theme.scheme
+        ratio = self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0
+        self.theme_button.setIcon(theme_icon(scheme, tokens["text"], 20, ratio))
+        appearance = tr("Sötét") if scheme == "dark" else tr("Világos")
+        source = {
+            "system": tr("a rendszer beállítása szerint"),
+            "manual": tr("kézi beállítás"),
+            "fallback": tr("a rendszer témája nem állapítható meg, ezért sötét"),
+        }[self.theme.source]
+        target = tr("világos") if scheme == "dark" else tr("sötét")
+        tooltip = tr(
+            "Megjelenés: {appearance} ({source}).\n"
+            "Kattintás: váltás {target} megjelenésre.\n"
+            "A gomb menüjében a „Rendszer / Automatikus” visszaállítja a rendszer szerinti módot."
+        ).format(appearance=appearance, source=source, target=target)
+        self.theme_button.setToolTip(tooltip)
+        self.theme_button.setAccessibleName(tr("Megjelenés váltása"))
+        self.theme_button.setAccessibleDescription(tooltip)
+        for mode, action in self.theme_actions.items():
+            action.setChecked(mode == self.theme.mode)
+
+    def set_status_state(self, state: str) -> None:
+        """Status icon and colour; the shape and the text tell the state too."""
+        self._status_state = state
+        ratio = self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0
+        self.status_icon.setPixmap(status_icon_pixmap(state, self.theme.tokens(), 16, ratio))
+        self.status_icon.setAccessibleName(status_accessible_name(state))
+        self.status_icon.setToolTip(status_accessible_name(state))
+        if self.status_label.property("state") != state:
+            self.status_label.setProperty("state", state)
+            self.status_label.style().unpolish(self.status_label)
+            self.status_label.style().polish(self.status_label)
+
+    def changeEvent(self, event) -> None:
+        if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
+            # A system theme switch while running; apply_style() is a no-op
+            # when the derived style sheet did not change.
+            self.theme.palette_changed()
+        super().changeEvent(event)
 
     def choose_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -1089,6 +1163,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.log.clear()
         self.status_label.setText("Rendszergazdai jogosultság kérése…")
+        self.set_status_state("progress")
         self.start_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.refresh_button.setEnabled(False)
@@ -1194,6 +1269,8 @@ class MainWindow(QMainWindow):
         message = str(event.get("message", ""))
         if message:
             self.status_label.setText(message)
+        if event.get("error"):
+            self.set_status_state("warning" if event.get("cancelled") else "error")
         if "percent" in event:
             self.progress.setValue(max(0, min(100, int(event["percent"]))))
         if event.get("log"):
@@ -1207,6 +1284,7 @@ class MainWindow(QMainWindow):
             self.stop_operation_clock()
             self.set_busy(False)
             self.status_label.setText("A privilegizált háttérfolyamat nem indult el; a céllemezt nem módosítottam.")
+            self.set_status_state("error")
             self.process = None
             if self._close_after_operation:
                 self.close()
@@ -1223,11 +1301,13 @@ class MainWindow(QMainWindow):
         if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
             self.progress.setValue(100)
             self.status_label.setText("Sikeres befejezés.")
+            self.set_status_state("success")
             self.append_log("Kész. Biztonságosan eltávolíthatod az USB-meghajtót.")
             if not was_closing:
                 QMessageBox.information(self, "Elkészült", "Az USB-meghajtó elkészült. Biztonságosan eltávolíthatod.")
         elif self._operation_cancelled or exit_code == 130:
             self.status_label.setText("A művelet biztonságosan megszakítva.")
+            self.set_status_state("warning")
             self.append_log(
                 "A célmeghajtó részleges állapotban maradhat."
                 if self._target_modified
@@ -1237,6 +1317,7 @@ class MainWindow(QMainWindow):
             # pkexec 126/127 and failures before the worker's first structured
             # event cannot have touched the target disk.
             self.status_label.setText("A jogosultságkérés vagy a worker indítása nem sikerült.")
+            self.set_status_state("error")
             self.append_log(f"A pkexec kilépési kódja: {exit_code}. A célmeghajtót nem módosítottuk.")
             if not was_closing:
                 QMessageBox.information(
@@ -1247,6 +1328,7 @@ class MainWindow(QMainWindow):
                 )
         else:
             self.status_label.setText("A művelet nem fejeződött be.")
+            self.set_status_state("error")
             self.append_log(f"A háttérfolyamat kilépési kódja: {exit_code}")
             if not was_closing:
                 QMessageBox.critical(
@@ -1315,11 +1397,13 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("BootMediaKit")
     app.setFont(QFont("Noto Sans", 10))
+    theme_controller = ThemeController(app, open_settings())
+    theme_controller.apply()
     if hasattr(app, "setDesktopFileName"):
         app.setDesktopFileName("bootmediakit")
     if APP_ICON.is_file():
         app.setWindowIcon(QIcon(str(APP_ICON)))
-    window = MainWindow()
+    window = MainWindow(theme_controller)
     window.show()
     QTimer.singleShot(0, window.fit_window_to_screen)
     exit_code = app.exec()

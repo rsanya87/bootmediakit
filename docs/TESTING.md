@@ -111,7 +111,7 @@ Do not treat mocked unit tests as proof of physical hardware behavior. Destructi
 ### Static checks, unit tests and offscreen GUI tests
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py
 bash -n install.sh uninstall.sh bootmediakit-worker
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
