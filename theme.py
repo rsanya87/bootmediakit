@@ -277,7 +277,8 @@ QLabel#elapsed {{ color: {accent_text}; font-weight: 650; border: 1px solid {bor
 QToolButton#infoButton {{ color: {accent_text}; border: 1px solid {focus}; border-radius: 10px; font-weight: 750; font-size: 10pt; padding: 0; }}
 QToolButton#infoButton:hover {{ background: {hover_bg}; }}
 QToolButton#infoButton:disabled {{ color: {disabled_text}; border-color: {disabled_text}; }}
-QToolButton#themeButton {{ border: 1px solid {border}; border-radius: 7px; padding: 3px; }}
+QToolButton#themeButton {{ border: 1px solid {border}; border-radius: 7px; padding: 3px 21px 3px 3px; }}
+QToolButton#themeButton::menu-button {{ width: 16px; border-left: 1px solid {border}; }}
 QToolButton#themeButton:hover {{ background: {hover_bg}; border-color: {focus}; }}
 QToolButton#themeButton:focus {{ border: 2px solid {focus}; }}
 QFrame#panel {{ border: 1px solid {border}; border-radius: 11px; }}

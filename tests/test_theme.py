@@ -254,6 +254,55 @@ class WindowThemeTests(QtAppMixin, unittest.TestCase):
         )
         self.assertTrue(window.theme_actions["system"].isChecked())
 
+    def test_menu_arrow_does_not_cover_the_icon(self):
+        # Seen on KDE Plasma (Wayland): the style sheet border made the
+        # menu-button part of the MenuButtonPopup button overlap the sun/moon.
+        from PySide6.QtGui import QIcon, QPixmap
+        from PySide6.QtWidgets import QStyle, QStyleOptionToolButton
+
+        marker = QColor("#ff00ff")
+        for scheme in ("light", "dark"):
+            with self.subTest(scheme=scheme):
+                window = self.make_window(self.controller(scheme))
+                window.show()
+                QApplication.processEvents()
+                button = window.theme_button
+                for focused in (False, True):
+                    if focused:
+                        button.setFocus()
+                        QApplication.processEvents()
+                    pixmap = QPixmap(button.iconSize())
+                    pixmap.fill(marker)
+                    button.setIcon(QIcon(pixmap))
+                    option = QStyleOptionToolButton()
+                    button.initStyleOption(option)
+                    menu_rect = button.style().subControlRect(
+                        QStyle.ComplexControl.CC_ToolButton,
+                        option,
+                        QStyle.SubControl.SC_ToolButtonMenu,
+                        button,
+                    )
+                    self.assertTrue(menu_rect.isValid())
+                    image = button.grab().toImage()
+                    icon_columns = {
+                        x
+                        for x in range(image.width())
+                        for y in range(image.height())
+                        if image.pixelColor(x, y) == marker
+                    }
+                    # The whole icon is visible (the menu part does not
+                    # paint over any of its columns) and lies left of it.
+                    self.assertEqual(
+                        len(icon_columns),
+                        button.iconSize().width(),
+                        f"icon partly covered: {len(icon_columns)} visible columns (focused={focused})",
+                    )
+                    self.assertLess(
+                        max(icon_columns),
+                        menu_rect.left(),
+                        f"menu button {menu_rect} covers the icon (focused={focused})",
+                    )
+
     def test_clicking_the_button_switches_and_the_menu_restores_system_mode(self):
         controller = self.controller("light")
         window = self.make_window(controller)
