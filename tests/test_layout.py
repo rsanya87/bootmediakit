@@ -549,6 +549,95 @@ class TestFontRequirementTests(unittest.TestCase):
         self.assertIn("betűtípusfüggő", str(raised.exception))
 
 
+class ScreenChangeTests(LayoutTestCase):
+    """The work area can change after start-up: another monitor, undocking,
+    a new resolution or scale. Simulated by changing available_area() and
+    emitting the real Qt signals."""
+
+    def area_window(self, area):
+        self.area = list(area)
+        window = self.make_window(font_size=10.0, font_family="DejaVu Sans")
+        patcher = patch.object(gui.MainWindow, "available_area", lambda _self: tuple(self.area))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return window
+
+    def assert_inside(self, window, area):
+        frame = window.frameGeometry()
+        self.assertTrue(QRect(*area).contains(frame), msg=f"{frame} kilóg a munkaterületből: {area}")
+        self.assertLessEqual(window.minimumWidth(), area[2])
+        self.assertLessEqual(window.minimumHeight(), area[3])
+
+    def assert_buttons_reachable(self, window, *, without_scrolling):
+        viewport = window.scroll_area.viewport()
+        for button in (window.start_button, window.cancel_button):
+            if not without_scrolling:
+                window.scroll_area.ensureWidgetVisible(button, 0, 0)
+                QApplication.processEvents()
+            mapped = QRect(button.mapTo(viewport, QPoint(0, 0)), button.size())
+            self.assertTrue(viewport.rect().contains(mapped), msg=f"a gomb nem érhető el: {button.text()}")
+
+    def change_area(self, window, area):
+        self.area = list(area)
+        window.screen().availableGeometryChanged.emit(QRect(*area))
+        for _ in range(5):
+            QApplication.processEvents()
+
+    def test_smaller_work_area_after_start(self):
+        window = self.area_window((0, 0, 1366, 728))
+        self.settle(window, 1280, 720)
+        self.change_area(window, (0, 0, 1024, 600))
+        self.assert_inside(window, (0, 0, 1024, 600))
+        self.assertEqual((window.minimumWidth(), window.minimumHeight()),
+                         (gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT))
+        self.assert_no_page_scrollbar(window)
+        self.assert_buttons_reachable(window, without_scrolling=True)
+        self.assertEqual(cut_off_texts(window), [])
+
+    def test_work_area_below_the_minimum(self):
+        window = self.area_window((0, 0, 1366, 728))
+        self.settle(window, 1280, 720)
+        self.change_area(window, (0, 0, 800, 480))
+        self.assert_inside(window, (0, 0, 800, 480))
+        self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible(), msg=self.font_context())
+        self.assert_buttons_reachable(window, without_scrolling=False)
+
+    def test_moving_to_another_screen(self):
+        window = self.area_window((0, 0, 1366, 728))
+        self.settle(window, 1280, 720)
+        # A second, smaller monitor to the right.
+        self.area = [1366, 0, 1024, 600]
+        window.windowHandle().screenChanged.emit(window.screen())
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assert_inside(window, (1366, 0, 1024, 600))
+        self.assert_no_page_scrollbar(window)
+        # The new screen's work area is watched too.
+        self.change_area(window, (1366, 0, 900, 560))
+        self.assert_inside(window, (1366, 0, 900, 560))
+
+    def test_a_window_that_fits_is_left_alone(self):
+        window = self.area_window((0, 0, 1366, 728))
+        self.settle(window, 1100, 650)
+        window.move(40, 30)
+        QApplication.processEvents()
+        before = window.frameGeometry()
+        self.change_area(window, (0, 0, 1280, 720))
+        self.assertEqual(window.frameGeometry(), before)
+
+
+class FitRectIntoAreaTests(unittest.TestCase):
+    def test_fit_rect_into_area(self):
+        fit = ui_helpers.fit_rect_into_area
+        area = (0, 0, 1024, 600)
+        self.assertEqual(fit((10, 20, 900, 560), area), (10, 20, 900, 560))   # fits: unchanged
+        self.assertEqual(fit((0, 0, 1280, 720), area), (0, 0, 1024, 600))     # larger: shrunk
+        self.assertEqual(fit((300, 200, 900, 560), area), (124, 40, 900, 560))  # sticks out: moved
+        self.assertEqual(fit((-50, -10, 900, 560), area), (0, 0, 900, 560))
+        self.assertEqual(fit((0, 0, 1280, 720), (1366, 0, 1024, 600)), (1366, 0, 1024, 600))  # other screen
+        self.assertEqual(fit((0, 0, 880, 550), (0, 0, 800, 480)), (0, 0, 800, 480))  # below the minimum
+
+
 class LayoutHelperTests(unittest.TestCase):
     def test_choose_layout_profile(self):
         choose = ui_helpers.choose_layout_profile

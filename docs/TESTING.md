@@ -156,7 +156,7 @@ Record for every check: desktop environment and version, distribution, Qt and Py
 python3 -c 'from PySide6.QtWidgets import QApplication; a=QApplication([]); s=a.primaryScreen(); print(s.availableGeometry(), s.devicePixelRatio(), a.font().family(), a.font().pointSizeF())'
 ```
 
-What to check: colours and automatic light/dark following, the sun/moon switch and restoring "Rendszer / Automatikus", the polkit dialog, the file dialog, the icon in the window, task bar, menu and window switcher, and at 1280×800 and 1366×768 with 100 % and 125 % scale no page scrollbar (with 150 % and 200 % and a larger font: nothing cut off or covered); the 880×550 minimum on KDE Plasma and XFCE (only 6 px to spare at 1280×800 with 125 %).
+What to check: colours and automatic light/dark following, the sun/moon switch and restoring "Rendszer / Automatikus", the polkit dialog, the file dialog, the icon in the window, task bar, menu and window switcher, and at 1280×800 and 1366×768 with 100 % and 125 % scale no page scrollbar (with 150 % and 200 % and a larger font: nothing cut off or covered); the 880×550 minimum on KDE Plasma and XFCE (only 6 px to spare at 1280×800 with 125 %); after start-up: moving the window to a smaller monitor, undocking a laptop, and changing the resolution or scale while the program runs: the window stays inside the screen and "USB elkészítése" and "Megszakítás" stay reachable.
 
 | Desktop | Theme | Session | Status |
 |---|---|---|---|
@@ -172,7 +172,7 @@ Reported by the maintainer on 2026-11-25, KDE Plasma, Wayland, CachyOS, `dev/0.4
 - 22" 1920×1080 monitor at 100 %: works; at 120 % the layout switches to two columns; no page scrollbar at 120 % and 130 %.
 - Found: the menu arrow of the sun/moon button covered the icon. Fixed (`f4f898c`); not re-checked on the desktop yet.
 - Not recorded: Plasma, Qt and PySide6 versions, the logical work area, the system font.
-- Not tested yet: a laptop screen (1280×800, 1366×768), the 880×550 minimum on KDE Plasma and XFCE, the other desktops, a session without a polkit agent, automatic theme following and restoring the system mode, and the layout after the T5 changes (tighter compact spacing, wrapping mode buttons and check box).
+- Not tested yet: a laptop screen (1280×800, 1366×768), the 880×550 minimum on KDE Plasma and XFCE, a monitor, dock or resolution/scale change while the program runs, the other desktops, a session without a polkit agent, automatic theme following and restoring the system mode, and the layout after the T5 changes (tighter compact spacing, wrapping mode buttons and check box).
 
 ### Loop-device integration tests
 

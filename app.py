@@ -55,6 +55,7 @@ from ui_helpers import (
     bios_grub_available,
     choose_layout_profile,
     clamp_minimum_size,
+    fit_rect_into_area,
     density_for,
     format_elapsed_time,
     initial_window_size,
@@ -859,6 +860,7 @@ class MainWindow(QMainWindow):
         self._measure_timer.timeout.connect(self.measure_layout_profiles)
         self.measure_layout_profiles()
         self.setup_initial_geometry()
+        self._watched_screen = None
         self.refresh_timer = QTimer(self)
         self.refresh_timer.setInterval(5000)
         self.refresh_timer.timeout.connect(self.refresh_devices_silently)
@@ -916,6 +918,39 @@ class MainWindow(QMainWindow):
             x + max(0, (width - frame.width()) // 2),
             y + max(0, (height - frame.height()) // 2),
         )
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle is not None and self._watched_screen is None:
+            # The window can move to another screen, and a screen's work area
+            # can change (undocking, a new resolution or scale) after start-up.
+            handle.screenChanged.connect(self.on_screen_changed)
+            self.on_screen_changed(self.screen())
+
+    def on_screen_changed(self, screen) -> None:
+        if self._watched_screen is not None:
+            try:
+                self._watched_screen.availableGeometryChanged.disconnect(self.adapt_to_screen)
+            except (RuntimeError, TypeError):
+                pass  # the old screen is already gone
+        self._watched_screen = screen
+        if screen is not None:
+            screen.availableGeometryChanged.connect(self.adapt_to_screen)
+        self.adapt_to_screen()
+
+    def adapt_to_screen(self, *_args) -> None:
+        """Keep the minimum and the window inside the current work area."""
+        self.setMinimumSize(*self.minimum_client_size())
+        frame = self.frameGeometry()
+        current = (frame.x(), frame.y(), frame.width(), frame.height())
+        x, y, width, height = fit_rect_into_area(current, self.available_area())
+        if (width, height) != current[2:]:
+            frame_width, frame_height = self.frame_extra()
+            self.resize(width - frame_width, height - frame_height)
+        if (x, y) != current[:2]:
+            self.move(x, y)
+        self.request_relayout()
 
     def apply_layout_profile(self, profile: str) -> None:
         """Arrange the cards and set the density for one layout profile."""

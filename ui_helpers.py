@@ -128,3 +128,21 @@ def initial_window_size(
 def clamp_minimum_size(minimum: tuple[int, int], available: tuple[int, int]) -> tuple[int, int]:
     """The minimum window size never exceeds the screen's available area."""
     return min(int(minimum[0]), int(available[0])), min(int(minimum[1]), int(available[1]))
+
+
+def fit_rect_into_area(
+    rect: tuple[int, int, int, int], area: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """Shrink an outer window rectangle (x, y, width, height) to the work
+    area if it is larger, then move it inside; unchanged if it already fits.
+
+    Used when the window's screen or its available area changes after
+    start-up (another monitor, undocking, a new resolution or scale).
+    """
+    x, y, width, height = (int(value) for value in rect)
+    area_x, area_y, area_width, area_height = (int(value) for value in area)
+    width = min(width, area_width)
+    height = min(height, area_height)
+    x = min(max(x, area_x), area_x + area_width - width)
+    y = min(max(y, area_y), area_y + area_height - height)
+    return x, y, width, height
