@@ -116,15 +116,25 @@ bash -n install.sh uninstall.sh bootmediakit-worker
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-The GUI tests (`tests/test_app.py`) need `PySide6`. CI also lints the shell scripts:
+The GUI tests (`tests/test_app.py`) need `PySide6`. The modules of `tests/`, all run by this command without root:
+
+- `test_worker.py`: unit tests of the privileged worker with mocked commands (target and source safety checks, Btrfs multi-device members, ISO labels, the UEFI GPT and Legacy MBR layouts, GRUB chainloader arguments and checks, RAW write and read-back, copy and SHA-256 verification, NTFS mounting, cancel and a broken GUI pipe, the worker modes). Proof level: unit/mock.
+- `test_app.py`: offscreen GUI tests (start-up and shutdown stability, the GRUB availability check, the boot mode selector and the worker arguments it produces, the verification check box and the mode buttons).
+- `test_ui_helpers.py`: the pure GUI helper functions (elapsed time, window profiles).
+- `test_desktop_polkit.py`: the GUI's handling of pkexec exit codes 126/127 without starting any process other than `pkexec` with the fixed wrapper and `lsblk`, the unchanged polkit action and wrapper (pinned hashes), and the `.desktop` file (standard keys, `desktop-file-validate`).
+- `test_packaging.py`: the installer, the polkit action scope and the root wrapper, the single version source, the documented test commands against CI, that CI cannot pass the integration step or the unit step by skipping, that the GUI quality suites below are discovered, that every test module is described here, and that the installer installs every local module the GUI needs and no test helper.
+- `test_messages.py`: the worker message identifiers (`docs/MESSAGES.md`): an AST scan of every `emit()` call, `emit()` output with and without the new fields, the identifiers and arguments of every event in the six writer runs and on cancel and failure, and that the GUI ignores the new fields.
+- `test_writer_fingerprint.py`, `test_theme.py`, `test_layout.py`, `test_i18n.py`: see the next section.
+
+In CI the unit step fails if any test is skipped (`OK (skipped=…)`), so a missing tool or font cannot silently weaken the GUI, layout or packaging checks. CI also lints the shell scripts:
 
 ```bash
 shellcheck -S warning install.sh uninstall.sh bootmediakit-worker
 ```
 
-### Writer fingerprint, theme and layout tests (0.4.0)
+### Writer fingerprint, theme, layout and pseudo-locale tests (0.4.0)
 
-All three run in the normal `unittest discover -s tests` run, without root.
+All of them run in the normal `unittest discover -s tests` run, without root.
 
 - **Writer fingerprints (`tests/test_writer_fingerprint.py`):** each frozen writer runs through `worker.main()` against files, with a fake command runner; the normalised timeline must match `tests/fixtures/writer_fingerprints/`. See `docs/INVARIANTS.md` A6 before changing a golden file; `BMK_UPDATE_WRITER_FINGERPRINTS=1` rewrites them and fails on purpose. Proof level: unit/mock.
 - **Theme (`tests/test_theme.py`):** contrast of every colour-token pair (4.5:1 text, 3:1 large text and indicators) on light, dark, high-contrast and desktop-like palettes; system detection, dark fallback, the quick switch and its `QSettings` persistence (a temporary file, never the user's configuration).

@@ -301,6 +301,86 @@ class TestCommandDocumentationTests(unittest.TestCase):
             self.assertNotIn('"loop"', text)
 
 
+class GuiTestCoverageTests(unittest.TestCase):
+    """T7: the theme, layout, contrast, pseudo-locale and message tests run in
+    CI, offscreen, and cannot drop out silently."""
+
+    WORKFLOW = ROOT / ".github/workflows/tests.yml"
+    # Test classes that carry the GUI quality checks; renaming or removing
+    # one must be a visible change here.
+    REQUIRED_SUITES = {
+        "test_theme": ("ContrastTests", "ClassificationTests", "ThemeControllerTests", "WindowThemeTests",
+                       "FixedColourTests"),
+        "test_layout": ("ResponsiveLayoutTests", "FontAndDpiTests", "MeasuredMinimumTests",
+                        "TestFontRequirementTests"),
+        "test_i18n": ("TrSourceTests", "PseudoHelperTests", "PseudoLocaleLayoutTests"),
+        "test_messages": ("MessageSourceTests", "EmitTests", "WriterMessageTests", "GuiIgnoresIdentifierTests"),
+        "test_writer_fingerprint": ("WriterFingerprintTests", "CancellationBoundaryTests", "RawByteExactnessTests"),
+        "test_desktop_polkit": (),
+    }
+
+    def discovered(self):
+        suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"), top_level_dir=str(ROOT / "tests"))
+        found = set()
+
+        def walk(item):
+            if isinstance(item, unittest.TestSuite):
+                for child in item:
+                    walk(child)
+            else:
+                found.add((type(item).__module__, type(item).__name__))
+
+        walk(suite)
+        return found
+
+    def test_required_gui_suites_are_discovered(self):
+        found = self.discovered()
+        failed_imports = sorted(name for module, name in found if module == "unittest.loader")
+        self.assertEqual(failed_imports, [], msg="importálhatatlan tesztmodul")
+        modules = {module for module, _name in found}
+        for module, classes in self.REQUIRED_SUITES.items():
+            self.assertIn(module, modules)
+            for name in classes:
+                self.assertIn((module, name), found, msg=f"hiányzó tesztosztály: {module}.{name}")
+
+    def test_ci_runs_them_offscreen_and_fails_on_any_skip(self):
+        workflow = self.WORKFLOW.read_text(encoding="utf-8")
+        step = workflow.split("- name: Run unit and offscreen GUI tests", 1)[1].split("- name:", 1)[0]
+        self.assertIn("QT_QPA_PLATFORM: offscreen", step)
+        self.assertIn("set -o pipefail", step)
+        self.assertIn('python -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"', step)
+        self.assertIn("skipped=", step)
+        self.assertIn("exit 1", step)
+        self.assertNotRegex(step, r"discover[^\n]*(-k|-p|--pattern)")
+        # The fonts are checked before the tests run.
+        self.assertLess(workflow.index("- name: Check layout test fonts"),
+                        workflow.index("- name: Run unit and offscreen GUI tests"))
+
+    def test_every_test_module_is_described_in_testing_md(self):
+        testing = (ROOT / "docs/TESTING.md").read_text(encoding="utf-8")
+        for path in sorted((ROOT / "tests").glob("test_*.py")) + sorted((ROOT / "tests/integration").glob("test_*.py")):
+            self.assertTrue(path.name in testing, msg=f"docs/TESTING.md nem írja le: {path.relative_to(ROOT)}")
+
+    def test_installer_installs_every_local_gui_module_and_no_test_helper(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        local = {path.stem for path in ROOT.glob("*.py")}
+        pending, needed = ["app"], set()
+        while pending:
+            module = pending.pop()
+            if module in needed:
+                continue
+            needed.add(module)
+            source = (ROOT / f"{module}.py").read_text(encoding="utf-8")
+            pending.extend(set(re.findall(r"^(?:from|import) (\w+)", source, flags=re.MULTILINE)) & local)
+        for module in sorted(needed - {"app"}):
+            self.assertIn(f'"$SCRIPT_DIR/{module}.py" "$APP_DIR/{module}.py"', installer,
+                          msg=f"az install.sh nem telepíti: {module}.py")
+        # Test helpers stay in the source tree (INVARIANTS D7).
+        self.assertNotIn("tests/", installer)
+        for helper in ("pseudo_locale", "text_scan", "loop_helpers"):
+            self.assertNotIn(helper, installer)
+
+
 class LegacyBiosPackagingTests(unittest.TestCase):
     def read(self, name):
         return (ROOT / name).read_text(encoding="utf-8")
