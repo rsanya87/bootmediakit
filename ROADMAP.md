@@ -23,7 +23,11 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 
 ### Jóváhagyott és dokumentált eltérések a munkaleírástól
 
-- **T5 pseudo-locale a minimális méreten:** a munkaleírás szerint a pseudo-locale-os szövegekkel a T3 ellenőrzései futnak a minimális méreten. A +40%-os szöveghez 880 px szélességben 596–598 px magasság kell, a 880×550-es minimum (az 1280×800@125% keretében legfeljebb 556 px) ezt nem adja meg. Ezért a minimumon a függőleges tartalék görgetés megengedett, de a teszt ellenőrzi, hogy megmarad a két oszlop, nincs vízszintes görgetősáv, nincs átfedés, és minden fontos vezérlő teljesen elgörgethető a látható részbe. 1024×600-tól fölfelé a teljes T3-ellenőrzés fut (görgetősáv nélkül, a tényleges kliensméreten). A +40% szándékos túlzás; a vezérlő eltűnése rosszabb, mint egy görgetősáv. A gazda jóváhagyta (2026-11-25).
+- **T5 pseudo-locale a minimális méreten:** a munkaleírás szerint a pseudo-locale-os szövegekkel a T3 ellenőrzései futnak a minimális méreten. A +40%-os szöveghez 880 px szélességben legfeljebb 587 px magasság kell (DejaVu Sans és Noto Sans, 9 és 10 pt; a kompakt térközök szűkítése előtt 596–598 px), a 880×550-es minimum (az 1280×800@125% keretében legfeljebb 556 px) ezt nem adja meg. Ezért a minimumon a függőleges tartalék görgetés megengedett, de a teszt ellenőrzi, hogy megmarad a két oszlop, nincs vízszintes görgetősáv, nincs átfedés, és minden fontos vezérlő teljesen elgörgethető a látható részbe. 1024×600-tól fölfelé a teljes T3-ellenőrzés fut (görgetősáv nélkül, a tényleges kliensméreten), mindkét betűtípussal; 1024×590-en sincs görgetősáv, tehát legalább 10 px a tartalék (a legrosszabb eset DejaVu Sans 10 pt-tal 578 px). A +40% szándékos túlzás; a vezérlő eltűnése rosszabb, mint egy görgetősáv. A gazda jóváhagyta (2026-11-25).
+
+### Későbbre halasztva
+
+- **0.8.0:** a worker hibakezelésének azonosítókkal ellátása. A T6 minden `emit()` hívásra `msg_id`-t tett, de a kivételekből jövő `error`-szövegeknek (például „A forrásfájl nem olvasható”) és a diagnosztikai `log`-szövegeknek még nincs azonosítójuk (lásd `docs/MESSAGES.md`). A munka a `raise` helyeket érinti, ezért külön figyelemmel az INVARIANTS A szakaszára (a writerek befagyasztottak) és a writer-ujjlenyomat tesztekre.
 
 ### Fizikai és kézi tesztek (a gazda végzi; csak az ő visszajelzése alapján pipálva)
 

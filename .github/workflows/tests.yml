@@ -34,7 +34,7 @@ jobs:
       - name: Install system and Python test dependencies
         timeout-minutes: 20
         run: |
-          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86 desktop-file-utils"
+          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86 desktop-file-utils fontconfig fonts-dejavu-core fonts-noto-core"
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y $packages; then
               break
@@ -47,6 +47,16 @@ jobs:
             sleep 30
           done
           python -m pip install --disable-pip-version-check PySide6
+      # The offscreen layout tests run with both fonts; a missing font is an
+      # error, never a silent skip (tests/test_layout.py fails as well).
+      - name: Check layout test fonts
+        run: |
+          for family in "DejaVu Sans" "Noto Sans"; do
+            if [ -z "$(LC_ALL=C fc-list "$family" family)" ]; then
+              echo "::error::Missing layout test font: $family"
+              exit 1
+            fi
+          done
       - name: Compile Python files
         run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py
       - name: Check shell syntax

@@ -137,8 +137,8 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
         self.qt_app.installTranslator(self.translator)
         self.addCleanup(self.qt_app.removeTranslator, self.translator)
 
-    def pseudo_window(self, font_size, state):
-        window = self.make_window(font_size=font_size)
+    def pseudo_window(self, font_size, state, family=None):
+        window = self.make_window(font_size=font_size, font_family=family)
         layout.apply_ui_state(window, state)
         changed = pseudo_localize_widgets(window)
         self.assertGreater(changed, 20)
@@ -159,19 +159,19 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
         # height than 880x550 offers; the vertical scroll fallback is allowed
         # there, but no horizontal scrollbar, no overlap and every control must
         # be reachable by scrolling.
-        for font_size in layout.TESTED_FONT_SIZES:
+        for family, font_size in layout.FONT_MATRIX:
             for state in layout.UI_STATES:
-                with self.subTest(font=font_size, state=state):
-                    window = self.pseudo_window(font_size, state)
+                with self.subTest(font=(family, font_size), state=state):
+                    window = self.pseudo_window(font_size, state, family)
                     self.settle(window, gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT)
                     self.assertEqual(
                         (window.geometry().width(), window.geometry().height()),
                         (gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT),
                     )
-                    self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible())
+                    self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible(), msg=self.font_context())
                     # Longer texts wrap instead of forcing the single column
                     # (a QCheckBox text did, see WrappingCheckBox).
-                    self.assertEqual(window.layout_profile(), "wide")
+                    self.assertEqual(window.layout_profile(), "wide", msg=self.font_context())
                     self.assert_controls_usable(window, must_be_in_viewport=False)
                     viewport = window.scroll_area.viewport()
                     for name, widget in layout.key_controls(window).items():
@@ -181,19 +181,29 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
                         self.assertTrue(viewport.rect().contains(mapped),
                                         msg=f"nem görgethető elő: {name} {mapped} {viewport.rect()}")
 
+    def test_1024x600_keeps_at_least_10_px_to_spare(self):
+        # The compact spacing was tightened so that the pseudo-locale fits
+        # 1024x600 with the wider DejaVu Sans with a margin (measured worst
+        # case: 578 px of height); 1024x590 must not scroll either.
+        for family, font_size in layout.FONT_MATRIX:
+            for state in layout.UI_STATES:
+                with self.subTest(font=(family, font_size), state=state):
+                    window = self.pseudo_window(font_size, state, family)
+                    self.settle(window, 1024, 590)
+                    self.assert_no_page_scrollbar(window)
+
     def test_from_1024x600_up_there_is_no_scrollbar(self):
         sizes = [size for size in layout.TESTED_SIZES
                  if size != (gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT)]
         self.assertIn((1024, 600), sizes)
-        for font_size in layout.TESTED_FONT_SIZES:
+        for family, font_size in layout.FONT_MATRIX:
             for state in layout.UI_STATES:
-                window = self.pseudo_window(font_size, state)
+                window = self.pseudo_window(font_size, state, family)
                 for width, height in sizes:
-                    with self.subTest(font=font_size, state=state, size=(width, height)):
+                    with self.subTest(font=(family, font_size), state=state, size=(width, height)):
                         self.settle(window, width, height)
+                        self.assert_no_page_scrollbar(window)
                         self.assert_client_size(window, width, height)
-                        self.assertFalse(window.scroll_area.verticalScrollBar().isVisible())
-                        self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible())
                         self.assert_controls_usable(window, must_be_in_viewport=True)
 
 

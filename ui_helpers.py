@@ -70,8 +70,8 @@ DENSITY = {
         "boot_combo": 30, "action_button": 38, "log_min": 56,
     },
     "compact": {
-        "outer_margin": 8, "spacing": 5, "card_margin": (9, 5), "card_spacing": 3,
-        "warning_margin": (8, 5), "line_edit": 29, "combo": 29, "mode_button": 30,
+        "outer_margin": 6, "spacing": 4, "card_margin": (9, 4), "card_spacing": 2,
+        "warning_margin": (8, 4), "line_edit": 29, "combo": 29, "mode_button": 30,
         "boot_combo": 28, "action_button": 34, "log_min": 44,
     },
 }

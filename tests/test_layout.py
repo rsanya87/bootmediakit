@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from PySide6.QtCore import QEvent, QPoint, QProcess, QRect
+from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
 
@@ -31,6 +32,26 @@ import ui_helpers
 WORK_AREA = (0, 0, 1366, 728)
 TESTED_SIZES = ((gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT), (1024, 600), (1280, 720), (1366, 700))
 TESTED_FONT_SIZES = (9.0, 10.0)
+# Offscreen layout results depend on the font: the CI runner uses DejaVu Sans,
+# a desktop often Noto Sans, and DejaVu Sans is wider (docs/LESSONS.md). Both
+# must be installed; a missing one is an error, not a skip (CI installs
+# fonts-dejavu-core and fonts-noto-core; Arch: ttf-dejavu and noto-fonts).
+TESTED_FONT_FAMILIES = ("DejaVu Sans", "Noto Sans")
+FONT_MATRIX = tuple((family, size) for family in TESTED_FONT_FAMILIES for size in TESTED_FONT_SIZES)
+FONT_HINT = (
+    "Az offscreen elrendezési teszt betűtípusfüggő: a CI DejaVu Sanst használ, "
+    "a fejlesztői gép gyakran mást (docs/LESSONS.md)."
+)
+
+
+def require_test_fonts():
+    families = set(QFontDatabase.families())
+    missing = [family for family in TESTED_FONT_FAMILIES if family not in families]
+    if missing:
+        raise AssertionError(
+            f"Hiányzó teszt-betűtípus: {', '.join(missing)}. Telepítsd (Ubuntu: fonts-dejavu-core, "
+            "fonts-noto-core; Arch: ttf-dejavu, noto-fonts). " + FONT_HINT
+        )
 # Every visible state of the mode card (and the always shown danger warning):
 # the minimum once failed in Windows mode because only the default state was
 # tested (docs/LESSONS.md).
@@ -101,14 +122,20 @@ class LayoutTestCase(unittest.TestCase):
     def setUpClass(cls):
         cls.qt_app = QApplication.instance() or QApplication([])
         cls.original_font = cls.qt_app.font()
+        require_test_fonts()
 
     def tearDown(self):
         self.qt_app.setFont(self.original_font)
 
-    def make_window(self, *, font_size=None, work_area=WORK_AREA):
-        if font_size is not None:
+    def make_window(self, *, font_size=None, font_family=None, work_area=WORK_AREA):
+        if font_size is not None or font_family is not None:
             font = self.qt_app.font()
-            font.setPointSizeF(font_size)
+            if font_size is not None:
+                font.setPointSizeF(font_size)
+            if font_family is not None:
+                font.setFamily(font_family)
+                # The family must really be used, not silently substituted.
+                self.assertEqual(QFontInfo(font).family(), font_family, msg=FONT_HINT)
             self.qt_app.setFont(font)
         patchers = [
             patch.object(QProcess, "start"),
@@ -156,6 +183,15 @@ class LayoutTestCase(unittest.TestCase):
             (window.scroll_area.width() - 2 * frame, window.scroll_area.height() - 2 * frame),
         )
 
+    def font_context(self):
+        font = self.qt_app.font()
+        return f"[{QFontInfo(font).family()} {font.pointSizeF():g} pt] {FONT_HINT}"
+
+    def assert_no_page_scrollbar(self, window):
+        context = self.font_context()
+        self.assertFalse(window.scroll_area.verticalScrollBar().isVisible(), msg=f"függőleges görgetősáv {context}")
+        self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible(), msg=f"vízszintes görgetősáv {context}")
+
     def window_rect(self, window, widget):
         top_left = widget.mapTo(window, QPoint(0, 0))
         return QRect(top_left, widget.size())
@@ -186,16 +222,15 @@ class LayoutTestCase(unittest.TestCase):
 
 class ResponsiveLayoutTests(LayoutTestCase):
     def test_tested_sizes_have_no_main_scrollbar_and_keep_every_control(self):
-        for font_size in TESTED_FONT_SIZES:
+        for family, font_size in FONT_MATRIX:
             for state in UI_STATES:
-                window = self.make_window(font_size=font_size)
+                window = self.make_window(font_size=font_size, font_family=family)
                 apply_ui_state(window, state)
                 for width, height in TESTED_SIZES:
-                    with self.subTest(font=font_size, state=state, size=(width, height)):
+                    with self.subTest(font=(family, font_size), state=state, size=(width, height)):
                         self.settle(window, width, height)
+                        self.assert_no_page_scrollbar(window)
                         self.assert_client_size(window, width, height)
-                        self.assertFalse(window.scroll_area.verticalScrollBar().isVisible())
-                        self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible())
                         self.assert_controls_usable(window, must_be_in_viewport=True)
 
     def test_ui_states_are_what_they_claim(self):
@@ -388,6 +423,24 @@ class MeasuredMinimumTests(unittest.TestCase):
         for readme in ("README.md", "README.hu.md"):
             text = (ROOT / readme).read_text(encoding="utf-8")
             self.assertTrue(size in text, msg=f"{readme} nem említi: {size}")
+
+
+class TestFontRequirementTests(unittest.TestCase):
+    def test_ci_installs_and_checks_both_fonts(self):
+        workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        for package in ("fontconfig", "fonts-dejavu-core", "fonts-noto-core"):
+            self.assertIn(package, workflow)
+        quoted = " ".join(f'"{family}"' for family in TESTED_FONT_FAMILIES)
+        self.assertIn(f"for family in {quoted}; do", workflow)
+        self.assertIn('echo "::error::Missing layout test font: $family"', workflow)
+
+    def test_a_missing_font_is_an_error_not_a_skip(self):
+        QApplication.instance() or QApplication([])
+        with patch.object(QFontDatabase, "families", return_value=["DejaVu Sans"]):
+            with self.assertRaises(AssertionError) as raised:
+                require_test_fonts()
+        self.assertIn("Noto Sans", str(raised.exception))
+        self.assertIn("betűtípusfüggő", str(raised.exception))
 
 
 class LayoutHelperTests(unittest.TestCase):
