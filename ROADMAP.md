@@ -35,6 +35,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 
 - [ ] `docs/REGRESSION_CHECKLIST.md` kötelező pontjai a fő gépen (Linux RAW, Windows UEFI, Windows Legacy, saját rendszerbetöltő érintetlen)
 - [ ] DE-tesztmátrix (legalább KDE, GNOME, XFCE, Cinnamon; világos és sötét; X11/Wayland, ahol elérhető)
+- [ ] GNOME két GTK-témával (`adw-gtk3-dark` és `Adwaita`): automata mód `color-scheme` default / prefer-dark / prefer-light beállítással, a kézi és az automata mód közti váltás minden párosításban, futás közbeni skálaváltás (1366×768, 133%); az első kör eredményei és a nyitott hibák a `docs/TESTING.md`-ben
 - [ ] A 880×550-es minimális ablakméret elfér KDE Plasma és XFCE alatt egy 1280×800-as kijelzőn 125% skálával (a tesztben feltételezett panel és keret mellett csak 6 px a tartalék); a jegyzőkönyvbe a Qt logikai munkaterület és a tényleges ablakkeret kerül
 - [ ] Kijelzőváltás futás közben (az ablak átvitele kisebb monitorra, laptop leválasztása a dokkolóról, felbontás- vagy skálaváltás): az ablak a képernyőn belül marad, az „USB elkészítése” és a „Megszakítás” gomb elérhető
 - [ ] Polkit-agent nélküli munkamenet: érthető hiba jelenik meg

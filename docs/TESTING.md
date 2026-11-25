@@ -161,7 +161,8 @@ What to check: colours and automatic light/dark following, the sun/moon switch a
 | Desktop | Theme | Session | Status |
 |---|---|---|---|
 | KDE Plasma (CachyOS, main computer) | light and dark | Wayland | partly reported, see below |
-| GNOME | light and dark | Wayland (X11 if available) | not tested |
+| GNOME, GTK theme `adw-gtk3-dark` | automatic (`color-scheme` default / prefer-dark / prefer-light), manual light and dark | Wayland (X11 if available) | partly reported, see below; open findings |
+| GNOME, GTK theme `Adwaita` | automatic (`color-scheme` default / prefer-dark / prefer-light), manual light and dark | Wayland (X11 if available) | partly reported, see below; open findings |
 | XFCE | light and dark | X11 | not tested |
 | Cinnamon | light and dark | X11 | not tested |
 | MATE or LXQt | at least one | available one | not tested |
@@ -173,6 +174,13 @@ Reported by the maintainer on 2026-11-25, KDE Plasma, Wayland, CachyOS, `dev/0.4
 - Found: the menu arrow of the sun/moon button covered the icon. Fixed (`f4f898c`); not re-checked on the desktop yet.
 - Not recorded: Plasma, Qt and PySide6 versions, the logical work area, the system font.
 - Not tested yet: a laptop screen (1280×800, 1366×768), the 880×550 minimum on KDE Plasma and XFCE, a monitor, dock or resolution/scale change while the program runs, the other desktops, a session without a polkit agent, automatic theme following and restoring the system mode, and the layout after the T5 changes (tighter compact spacing, wrapping mode buttons and check box).
+
+Reported by the maintainer on 2026-11-25, GNOME 51.1, Wayland, CachyOS in VirtualBox, `dev/0.4.0` at `55a212d`, at 1280×800 (100 % and 125 %), 1366×768 (133 %) and 1920×1080 (125 %):
+
+- With the GTK theme `adw-gtk3-dark` and `color-scheme` `prefer-light`, Qt reports `ColorScheme.Dark` (`QT_QPA_PLATFORMTHEME` empty, platform `wayland`), so the automatic mode is dark while GNOME's own settings and libadwaita applications are light. With the GTK theme `Adwaita` Qt reports `Light` at once, and the window switches to light while running, and back to dark with `adw-gtk3-dark`; both looked correct. Qt follows the GTK theme name here, not GNOME's `color-scheme` (open finding A).
+- Switching between manual "Sötét" and "Rendszer / Automatikus" while the automatic mode is also dark mixes the colours: the text colours change, the window and panel colours do not, and the text is hard to read. Other switches (automatic light ↔ automatic dark, manual light ↔ dark) were correct (open finding B).
+- At 1366×768 with 133 %, changing the scale while the program runs leaves the bottom of the window (the button row) off the screen; after a restart it fits. Changing the scale while running at 1280×800 (100 % / 125 %) and 1920×1080 (125 %) was correct (open finding C).
+- To be re-tested after the fixes: both GTK themes, automatic mode with `color-scheme` default, prefer-dark and prefer-light, every manual/automatic switch pair, and the scale change while running.
 
 ### Loop-device integration tests
 
