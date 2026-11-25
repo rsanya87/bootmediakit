@@ -58,6 +58,10 @@ import worker
 
 GOLDEN_DIR = ROOT / "tests" / "fixtures" / "writer_fingerprints"
 UPDATE_ENV = "BMK_UPDATE_WRITER_FINGERPRINTS"
+# Additive event fields (T6, docs/MESSAGES.md). They are left out of the
+# golden timeline, so the goldens keep pinning every field from before
+# byte for byte; MessageIdTests checks the identifiers themselves.
+ID_FIELDS = ("msg_id", "msg_args")
 GOLDEN_FAILURE = (
     "A(z) {name} writer ujjlenyomata eltér a rögzítettől ({path}).\n"
     "A három writer befagyasztott (docs/INVARIANTS.md A1-A6). A golden fájl csak az "
@@ -178,6 +182,9 @@ class FakeSystem:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
         self.steps: list[dict[str, object]] = []
+        # Full JSON events including the additive msg_id/msg_args fields
+        # (T6); the golden timeline keeps only the fields from before.
+        self.full_events: list[dict[str, object]] = []
         self.table: tuple[str, list[dict[str, object]]] | None = None
         self.fd_paths: dict[int, str] = {}
         self.on_step = None
@@ -195,6 +202,10 @@ class FakeSystem:
         self.uefi_image.write_bytes(bytes(image))
 
     # -- recording ------------------------------------------------------
+    def record_event(self, event: dict[str, object]) -> None:
+        self.full_events.append(event)
+        self.record({"emit": {key: value for key, value in event.items() if key not in ID_FIELDS}})
+
     def record(self, step: dict[str, object]) -> None:
         self.steps.append(step)
         if self.on_step is not None:
@@ -424,7 +435,7 @@ class FakeSystem:
             patch.object(worker.os, "open", self.fake_open),
             patch.object(worker.os, "fsync", self.fake_fsync),
             patch.object(worker.os, "walk", self.sorted_walk),
-            patch.object(worker.sys, "stdout", _EventStream(lambda event: self.record({"emit": event}))),
+            patch.object(worker.sys, "stdout", _EventStream(self.record_event)),
         ]
 
     def run(self, mode: str, source: Path, *, verify: bool, disk_bytes: int = DISK_BYTES) -> int:

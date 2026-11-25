@@ -16,7 +16,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 - [x] T3. Reszponzív elrendezés, DPI, minimális ablakméret, görgetés csak a naplóban
 - [x] T4. Desktop-integráció és polkit-agent hibajelzés
 - [x] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt
-- [ ] T6. `msg_id`/`msg_args` az `emit()` hívásokon
+- [x] T6. `msg_id`/`msg_args` az `emit()` hívásokon
 - [ ] T7. Automatizált téma-/elrendezés-/kontrasztteszt, CI
 - [ ] T8. Dokumentáció, függőség- és csomagolási konzisztencia
 - [ ] T9. Kiadási commit (a zöld CI és a gazda visszajelzése után)
