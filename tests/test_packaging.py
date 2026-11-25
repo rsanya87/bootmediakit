@@ -381,6 +381,42 @@ class GuiTestCoverageTests(unittest.TestCase):
             self.assertNotIn(helper, installer)
 
 
+class DependencyDocumentationTests(unittest.TestCase):
+    """T8: install.sh, both READMEs, CONTRIBUTING.md and docs/TESTING.md
+    name the same runtime packages (INVARIANTS D5)."""
+
+    def installed_packages(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        match = re.search(r"^pacman -S --needed (.+)$", installer, flags=re.MULTILINE)
+        self.assertIsNotNone(match)
+        return match.group(1).split()
+
+    def test_readmes_list_exactly_the_installed_packages(self):
+        packages = self.installed_packages()
+        self.assertIn("pyside6", packages)
+        for readme in ("README.md", "README.hu.md"):
+            text = (ROOT / readme).read_text(encoding="utf-8")
+            listed = re.findall(r"^- `([a-z0-9-]+)` — ", text, flags=re.MULTILINE)
+            self.assertEqual(listed, packages, msg=readme)
+
+    def test_contributing_and_testing_name_every_runtime_package(self):
+        packages = self.installed_packages()
+        for document in ("CONTRIBUTING.md", "docs/TESTING.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for package in packages:
+                self.assertIn(f"`{package}`", text, msg=f"{document}: hiányzik: {package}")
+
+    def test_wimlib_is_not_a_dependency(self):
+        # Removed together with the WIM splitting (see CHANGELOG.md); CONTRIBUTING.md says so.
+        for name in ("install.sh", "README.md", "README.hu.md", "docs/TESTING.md"):
+            self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"), msg=name)
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertEqual(contributing.count("wimlib"), 1)
+        self.assertIn("`wimlib` is not used", contributing)
+        for name in ("worker.py", "app.py", "iso_utils.py"):
+            self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"))
+
+
 class LegacyBiosPackagingTests(unittest.TestCase):
     def read(self, name):
         return (ROOT / name).read_text(encoding="utf-8")

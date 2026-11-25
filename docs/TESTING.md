@@ -116,6 +116,8 @@ bash -n install.sh uninstall.sh bootmediakit-worker
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
+Runtime dependencies (the Arch packages `install.sh` installs, also listed in both READMEs and `CONTRIBUTING.md`): `pyside6`, `util-linux`, `parted`, `ntfs-3g`, `ntfsprogs`, `dosfstools`, `polkit`, `7zip`, `grub`. Test-only: the fonts DejaVu Sans and Noto Sans (Arch: `ttf-dejavu`, `noto-fonts`; Ubuntu CI: `fonts-dejavu-core`, `fonts-noto-core`, `fontconfig`), `shellcheck`, `desktop-file-utils`, and QEMU for the integration boot checks.
+
 The GUI tests (`tests/test_app.py`) need `PySide6`. The modules of `tests/`, all run by this command without root:
 
 - `test_worker.py`: unit tests of the privileged worker with mocked commands (target and source safety checks, Btrfs multi-device members, ISO labels, the UEFI GPT and Legacy MBR layouts, GRUB chainloader arguments and checks, RAW write and read-back, copy and SHA-256 verification, NTFS mounting, cancel and a broken GUI pipe, the worker modes). Proof level: unit/mock.
@@ -143,6 +145,34 @@ All of them run in the normal `unittest discover -s tests` run, without root.
 - **Wrapping check box (`tests/test_app.py`):** the verification option is a text-less `QCheckBox` with a wrapping buddy label: a click on the label toggles it and gives the box focus, Space works on the box, the accessible name is the full text in both modes, a disabled box disables the label (disabled text colour at least 3:1 against the panel on the light and dark palette), and the setting still reaches the worker argument.
 
 The minimum window size, 880×550 logical pixels (`MIN_WINDOW_WIDTH`/`MIN_WINDOW_HEIGHT` in `app.py`), was measured offscreen for the two-column layout at 880 px width in every visible state of the window: RAW, Windows without a recognised ISO, Windows UEFI, Windows Legacy, RAW and Windows with the "Legacy nem elérhető" hint, always with the danger warning shown. With the compact spacing tightened in T5 they need at most 524 px of height with a 9 pt and a 10 pt font (Noto Sans 524 px, DejaVu Sans 514 px); before that change 548 px. The first value, 880×540, had been measured in the start-up state only; after a mode change the page scrolled at it. The layout tests run in all these states (`UI_STATES` in `tests/test_layout.py`) and check the real client size of the window. 880×550 fits a 1280×800 screen at 125 % scaling (1024×640 logical) with a 44 px panel and a 40 px window frame (at most 556 px), so only 6 px are left; the desktop checks therefore measure it on KDE Plasma and XFCE. Offscreen measurements depend on the fonts of the machine: the layout and pseudo-locale tests therefore run with DejaVu Sans (wider; with it the T5 CI failure could be reproduced exactly) and Noto Sans, both must be installed (Ubuntu: `fonts-dejavu-core`, `fonts-noto-core`, `fontconfig`; Arch: `ttf-dejavu`, `noto-fonts`), and a missing one is an error, not a skip; CI installs and checks them. Desktop checks record the Qt logical work area, the desktop, Qt/PySide6 version, X11/Wayland, theme and scale.
+
+### Desktop test matrix (0.4.0)
+
+The GUI must work the same under KDE Plasma, GNOME, XFCE, Cinnamon, MATE, LXQt and other Qt-capable sessions. The writer does not depend on the desktop, so a desktop needs no full write regression; the mandatory items of `docs/REGRESSION_CHECKLIST.md` are run on the main computer before a release. Only results reported by the maintainer are recorded here; everything else is "not tested".
+
+Record for every check: desktop environment and version, distribution, Qt and PySide6 versions, X11 or Wayland, theme (light, dark, high contrast), display resolution and scale, the Qt logical work area and the system font. The logical work area and font, without root:
+
+```bash
+python3 -c 'from PySide6.QtWidgets import QApplication; a=QApplication([]); s=a.primaryScreen(); print(s.availableGeometry(), s.devicePixelRatio(), a.font().family(), a.font().pointSizeF())'
+```
+
+What to check: colours and automatic light/dark following, the sun/moon switch and restoring "Rendszer / Automatikus", the polkit dialog, the file dialog, the icon in the window, task bar, menu and window switcher, and at 1280×800 and 1366×768 with 100 % and 125 % scale no page scrollbar (with 150 % and 200 % and a larger font: nothing cut off or covered); the 880×550 minimum on KDE Plasma and XFCE (only 6 px to spare at 1280×800 with 125 %).
+
+| Desktop | Theme | Session | Status |
+|---|---|---|---|
+| KDE Plasma (CachyOS, main computer) | light and dark | Wayland | partly reported, see below |
+| GNOME | light and dark | Wayland (X11 if available) | not tested |
+| XFCE | light and dark | X11 | not tested |
+| Cinnamon | light and dark | X11 | not tested |
+| MATE or LXQt | at least one | available one | not tested |
+
+Reported by the maintainer on 2026-11-25, KDE Plasma, Wayland, CachyOS, `dev/0.4.0` before the T5 changes:
+
+- 32" 2K monitor at 100 % and 130 % scale: the window resizes dynamically, no page scrollbar; at 130 % the single-column layout still fits.
+- 22" 1920×1080 monitor at 100 %: works; at 120 % the layout switches to two columns; no page scrollbar at 120 % and 130 %.
+- Found: the menu arrow of the sun/moon button covered the icon. Fixed (`f4f898c`); not re-checked on the desktop yet.
+- Not recorded: Plasma, Qt and PySide6 versions, the logical work area, the system font.
+- Not tested yet: a laptop screen (1280×800, 1366×768), the 880×550 minimum on KDE Plasma and XFCE, the other desktops, a session without a polkit agent, automatic theme following and restoring the system mode, and the layout after the T5 changes (tighter compact spacing, wrapping mode buttons and check box).
 
 ### Loop-device integration tests
 

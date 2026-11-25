@@ -14,7 +14,7 @@ Read these first (Hungarian): [`docs/INVARIANTS.md`](docs/INVARIANTS.md) lists t
 
 ## Development environment
 
-The current baseline targets Arch-based Linux and uses Python 3, PySide6, `parted`, `dosfstools`, `wimlib`, `7zip`, `grub` (only `grub-install` and the i386-pc modules, for the Windows Legacy BIOS mode) and polkit. The QEMU boot checks of the integration tests also need `qemu-system-x86_64` (Arch: `qemu-system-x86`).
+The current baseline targets Arch-based Linux. The runtime dependencies are the Arch packages `install.sh` installs and both READMEs list: `pyside6`, `util-linux`, `parted`, `ntfs-3g`, `ntfsprogs`, `dosfstools`, `polkit`, `7zip` and `grub` (only `grub-install` and the i386-pc modules, for the Windows Legacy BIOS mode). `wimlib` is not used since 0.1.2 (no WIM splitting). The tests additionally need the fonts DejaVu Sans and Noto Sans (Arch: `ttf-dejavu`, `noto-fonts`), `shellcheck`, `desktop-file-utils`, and for the QEMU boot checks of the integration tests `qemu-system-x86_64` (Arch: `qemu-system-x86`).
 
 ## Tests
 
