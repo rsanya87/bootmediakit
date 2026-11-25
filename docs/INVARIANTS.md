@@ -59,3 +59,5 @@ D5. **Új futási függőség** csak az `install.sh` és mindkét README egyidej
 D6. **Nem állítunk olyat, amit nem ellenőriztünk.** A dokumentáció csak ténylegesen kipróbált ISO-kat, indítási módokat, asztali környezeteket és disztribúciókat ígér. A tesztek bizonyító erejét pontosan címkézzük: egység/mock, loop-integráció, QEMU/OVMF/SeaBIOS, fizikai USB, Windows Setup. Ezek nem helyettesítik egymást.
 
 D7. **A végfelhasználói csomag csak futásidőben szükséges fájlokat tartalmaz** (explicit telepítési manifestből); a teljes tesztinfrastruktúra a forrásrepóban és a CI-ben marad.
+
+D8. **A verziószám csak a `version.py`-ban szerepelhet** a `.py` fájlok közül; kódkommentben, docstringben és kódszövegben nem. A hivatkozás feladatszámra (pl. T3) vagy a `CHANGELOG.md`/`ROADMAP.md` megfelelő részére mutat. A `tests/test_packaging.py` verziószám-őre minden `.py` fájl teljes szövegét vizsgálja; az őr nem lazítható.
