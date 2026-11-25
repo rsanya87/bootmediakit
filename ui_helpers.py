@@ -130,6 +130,37 @@ def clamp_minimum_size(minimum: tuple[int, int], available: tuple[int, int]) -> 
     return min(int(minimum[0]), int(available[0])), min(int(minimum[1]), int(available[1]))
 
 
+# Height kept free on Wayland when Qt reports the whole output as the work
+# area (docs/TESTING.md, ROADMAP.md approved deviations). Wayland gives Qt no
+# work area: QScreen.availableGeometry() equals QScreen.geometry() even with
+# panels (measured on GNOME 51.1 and on KDE Plasma). An estimate, not a
+# measurement of the panel: KDE Plasma's default panel is 44 logical px, plus
+# 4 px; it also covers GNOME's top bar (about 32 px in the maintainer's log).
+WAYLAND_PANEL_RESERVE = 48
+
+
+def usable_work_area(
+    geometry: tuple[int, int, int, int],
+    available: tuple[int, int, int, int],
+    *,
+    wayland: bool,
+    reserve: int = WAYLAND_PANEL_RESERVE,
+) -> tuple[int, int, int, int]:
+    """The work area (x, y, width, height) the window may fill.
+
+    Only on Wayland, and only when the available area is the whole output
+    (the panels are unknown), ``reserve`` logical pixels of height are kept
+    free; the compositor places the window, so only the height matters.
+    Everywhere else (X11, or a Wayland compositor that reports a smaller
+    available area) the available area is used unchanged.
+    """
+    available = tuple(int(value) for value in available)
+    if wayland and available == tuple(int(value) for value in geometry):
+        x, y, width, height = available
+        return x, y, width, max(1, height - int(reserve))
+    return available
+
+
 def fit_rect_into_area(
     rect: tuple[int, int, int, int], area: tuple[int, int, int, int]
 ) -> tuple[int, int, int, int]:

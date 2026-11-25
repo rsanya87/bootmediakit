@@ -59,6 +59,7 @@ from ui_helpers import (
     density_for,
     format_elapsed_time,
     initial_window_size,
+    usable_work_area,
 )
 from version import __version__
 
@@ -869,12 +870,25 @@ class MainWindow(QMainWindow):
 
     # -- responsive layout (T3, layout work) ---------------------------------
     def available_area(self) -> tuple[int, int, int, int]:
-        """Logical work area (x, y, width, height) of the window's screen."""
+        """Logical work area (x, y, width, height) of the window's screen.
+
+        The one place the work area is computed: the minimum size, the first
+        size and the fitting after a screen or scale change all use it. On
+        Wayland the panels are unknown to Qt, so a reserve is kept free
+        (ui_helpers.usable_work_area); after the compositor's answer the
+        layout works from the real window size (resizeEvent)."""
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
             return 0, 0, 1366, 768
-        area = screen.availableGeometry()
-        return area.x(), area.y(), area.width(), area.height()
+        return usable_work_area(
+            screen.geometry().getRect(),
+            screen.availableGeometry().getRect(),
+            wayland=self.on_wayland(),
+        )
+
+    @staticmethod
+    def on_wayland() -> bool:
+        return QApplication.platformName().lower().startswith("wayland")
 
     def frame_extra(self) -> tuple[int, int]:
         frame = self.frameGeometry()

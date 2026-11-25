@@ -199,10 +199,9 @@ class LayoutTestCase(unittest.TestCase):
                 # The family must really be used, not silently substituted.
                 self.assertEqual(QFontInfo(font).family(), font_family, msg=FONT_HINT)
             self.qt_app.setFont(font)
-        patchers = [
-            patch.object(QProcess, "start"),
-            patch.object(gui.MainWindow, "available_area", lambda _self: work_area),
-        ]
+        patchers = [patch.object(QProcess, "start")]
+        if work_area is not None:  # None: the real available_area() (screen patched by the test)
+            patchers.append(patch.object(gui.MainWindow, "available_area", lambda _self: work_area))
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -624,6 +623,112 @@ class ScreenChangeTests(LayoutTestCase):
         before = window.frameGeometry()
         self.change_area(window, (0, 0, 1280, 720))
         self.assertEqual(window.frameGeometry(), before)
+
+
+class WaylandScaleChangeTests(LayoutTestCase):
+    """GNOME on Wayland (maintainer's log, 1360x768): switching from 100 % to
+    133 % while running gives a 1020x576 logical output, and Qt reports the
+    whole output as the available area, without the top bar. The window was
+    fitted to all 576 px and its bottom hung off the screen. The screen is
+    simulated by patching QScreen; the real signal is emitted."""
+
+    def screen_window(self, geometry, *, wayland, available=None, family="DejaVu Sans"):
+        from PySide6.QtGui import QScreen
+
+        self.geometry = QRect(*geometry)
+        self.available = QRect(*(available or geometry))
+        patchers = [
+            patch.object(QScreen, "geometry", lambda _screen: self.geometry),
+            patch.object(QScreen, "availableGeometry", lambda _screen: self.available),
+            patch.object(gui.MainWindow, "on_wayland", staticmethod(lambda: wayland)),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        window = self.make_window(font_size=10.0, font_family=family, work_area=None)
+        window.fit_window_to_screen()
+        for _ in range(3):
+            QApplication.processEvents()
+        return window
+
+    def change_scale(self, window, geometry):
+        self.geometry = QRect(*geometry)
+        self.available = QRect(*geometry)
+        window.screen().geometryChanged.emit(self.geometry)
+        window.screen().availableGeometryChanged.emit(self.available)
+        for _ in range(5):
+            QApplication.processEvents()
+
+    def test_scale_change_at_runtime_keeps_the_reserve(self):
+        reserve = ui_helpers.WAYLAND_PANEL_RESERVE
+        usable = (0, 0, 1020, 576 - reserve)
+        for family in TESTED_FONT_FAMILIES:
+            with self.subTest(font=family):
+                window = self.screen_window((0, 0, 1360, 768), wayland=True, family=family)
+                self.change_scale(window, (0, 0, 1020, 576))
+                frame = window.frameGeometry()
+                self.assertTrue(QRect(*usable).contains(frame), msg=f"{frame} nem fér a {usable} területbe")
+                self.assertLessEqual(window.minimumHeight(), usable[3])
+                for state in UI_STATES:
+                    apply_ui_state(window, state)
+                    window.update_layout_profile()
+                    QApplication.processEvents()
+                    context = f"{state} {self.font_context()}"
+                    self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible(), msg=context)
+                    self.assertEqual(cut_off_texts(window), [], msg=context)
+                    viewport = window.scroll_area.viewport()
+                    for button in (window.start_button, window.cancel_button):
+                        window.scroll_area.ensureWidgetVisible(button, 0, 0)
+                        QApplication.processEvents()
+                        mapped = QRect(button.mapTo(viewport, QPoint(0, 0)), button.size())
+                        self.assertTrue(viewport.rect().contains(mapped), msg=f"{button.text()} {context}")
+
+    def test_restart_at_the_new_scale_uses_the_same_area(self):
+        window = self.screen_window((0, 0, 1020, 576), wayland=True)
+        self.assertEqual(window.available_area(), (0, 0, 1020, 576 - ui_helpers.WAYLAND_PANEL_RESERVE))
+        self.assertTrue(QRect(window.available_area()[0], 0, 1020, 528).contains(window.frameGeometry()))
+
+    def test_large_screens_are_unchanged(self):
+        # Reference: the earlier code, which used the available area as it is.
+        def snapshot(window):
+            result = (window.size().toTuple(), (window.minimumWidth(), window.minimumHeight()),
+                      window.layout_profile())
+            window.close()
+            return result
+
+        for geometry in ((0, 0, 1920, 1080), (0, 0, 2560, 1440)):
+            with patch.object(gui, "usable_work_area", lambda _geometry, available, **_kwargs: tuple(available)):
+                earlier = snapshot(self.screen_window(geometry, wayland=True))
+            with self.subTest(geometry=geometry):
+                self.assertEqual(snapshot(self.screen_window(geometry, wayland=True)), earlier)
+                self.assertEqual(snapshot(self.screen_window(geometry, wayland=False)), earlier)
+
+    def test_no_reserve_when_the_work_area_is_known(self):
+        # X11 (or a compositor that reports the panels): unchanged.
+        window = self.screen_window((0, 0, 1366, 768), wayland=False)
+        self.assertEqual(window.available_area(), (0, 0, 1366, 768))
+        window = self.screen_window((0, 0, 1366, 768), wayland=True, available=(0, 0, 1366, 724))
+        self.assertEqual(window.available_area(), (0, 0, 1366, 724))
+
+
+class UsableWorkAreaTests(unittest.TestCase):
+    def test_usable_work_area(self):
+        usable = ui_helpers.usable_work_area
+        reserve = ui_helpers.WAYLAND_PANEL_RESERVE
+        self.assertEqual(reserve, 48)
+        cases = [
+            # (geometry, available, wayland) -> expected
+            (((0, 0, 1020, 576), (0, 0, 1020, 576), True), (0, 0, 1020, 576 - reserve)),  # GNOME 133 %
+            (((0, 0, 1360, 768), (0, 0, 1360, 768), True), (0, 0, 1360, 768 - reserve)),
+            (((1366, 0, 1024, 600), (1366, 0, 1024, 600), True), (1366, 0, 1024, 600 - reserve)),  # second screen
+            (((0, 0, 1366, 768), (0, 0, 1366, 724), True), (0, 0, 1366, 724)),  # panel reported
+            (((0, 0, 1366, 768), (0, 0, 1366, 768), False), (0, 0, 1366, 768)),  # X11: as reported
+            (((0, 0, 1366, 768), (0, 32, 1366, 736), False), (0, 32, 1366, 736)),
+            (((0, 0, 100, 40), (0, 0, 100, 40), True), (0, 0, 100, 1)),
+        ]
+        for (geometry, available, wayland), expected in cases:
+            with self.subTest(geometry=geometry, available=available, wayland=wayland):
+                self.assertEqual(usable(geometry, available, wayland=wayland), expected)
 
 
 class FitRectIntoAreaTests(unittest.TestCase):
