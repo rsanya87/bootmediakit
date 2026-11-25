@@ -464,7 +464,6 @@ class MainWindow(QMainWindow):
         self._applied_stylesheet = ""
         self._status_state = "idle"
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
-        self._compact_ui = False
         self._layout_profile = ""
         self._single_column_height = 0
         self._last_viewport: tuple[int, int] | None = None
@@ -959,7 +958,6 @@ class MainWindow(QMainWindow):
         if profile == self._layout_profile:
             return
         self._layout_profile = profile
-        self._compact_ui = profile != "normal"
         metrics = density_for(profile)
         margin = metrics["outer_margin"]
         self._root_layout.setContentsMargins(margin, margin, margin, margin)
