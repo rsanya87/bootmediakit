@@ -1005,6 +1005,9 @@ class MainWindow(QMainWindow):
         """Choose the first layout that fits the viewport without scrolling."""
         if not self._single_column_height:
             return
+        # A text change (e.g. a mode description) posts a layout request; let
+        # it run first, or the measurement below still sees the old texts.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
         viewport = self.scroll_area.maximumViewportSize()
         key = (viewport.width(), viewport.height())
         if key == self._last_viewport:
@@ -1024,6 +1027,17 @@ class MainWindow(QMainWindow):
 
     def layout_profile(self) -> str:
         return self._layout_profile
+
+    def request_relayout(self) -> None:
+        """Choose the layout again although the window size did not change.
+
+        A mode change shows texts of a different length (the Windows Legacy
+        and RAW descriptions are longer), so the content may no longer fit
+        the current profile while another one would.
+        """
+        self._last_viewport = None
+        if hasattr(self, "_layout_timer"):
+            self._layout_timer.start()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
@@ -1364,6 +1378,7 @@ class MainWindow(QMainWindow):
         else:
             self.verify_checkbox.setText("USB-re másolt fájlok teljes SHA-256 visszaellenőrzése")
         self.update_boot_mode_controls()
+        self.request_relayout()
 
     def apply_grub_availability(self) -> None:
         """Enable or disable the Legacy BIOS item from the GRUB i386-pc check."""
@@ -1375,6 +1390,7 @@ class MainWindow(QMainWindow):
             self.boot_mode_combo.setToolTip(
                 "UEFI (GPT): újabb gépekhez. Legacy BIOS (MBR): UEFI nélküli vagy CSM módú gépekhez."
             )
+            self.request_relayout()
             return
         if self.boot_mode_combo.currentData() == "bios":
             self.boot_mode_combo.setCurrentIndex(0)
@@ -1386,6 +1402,7 @@ class MainWindow(QMainWindow):
         self.grub_hint.setToolTip(hint)
         item.setToolTip(hint)
         self.boot_mode_combo.setToolTip(hint)
+        self.request_relayout()
 
     def windows_iso_selected(self) -> bool:
         if not self._windows_iso_path:
@@ -1406,10 +1423,12 @@ class MainWindow(QMainWindow):
         self.boot_mode_label.setEnabled(active)
         if self._selected_mode == "windows":
             self.update_windows_description()
+        self.request_relayout()
 
     def boot_mode_changed(self, _index: int) -> None:
         if self._selected_mode == "windows":
             self.update_windows_description()
+            self.request_relayout()
 
     def update_windows_description(self) -> None:
         if self.selected_boot_mode() == "bios":

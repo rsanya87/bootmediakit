@@ -296,6 +296,49 @@ class ResponsiveLayoutTests(LayoutTestCase):
                         self.assert_controls_usable(window, must_be_in_viewport=True)
                         self.assertEqual(cut_off_texts(window), [], msg=f"levágott felirat {self.font_context()}")
 
+    def test_a_mode_change_chooses_the_layout_again(self):
+        # Windows Legacy and RAW show a longer description than Windows UEFI.
+        # Switching through the real controls must choose the layout again:
+        # no scrollbar where the two-column layout fits (it did stay single
+        # column with a scrollbar before).
+        switches = {
+            "raw": lambda window: window.raw_button.click(),
+            "windows-uefi": lambda window: (window.windows_button.click(), window.boot_mode_combo.setCurrentIndex(0)),
+            "windows-legacy": lambda window: (window.windows_button.click(), window.boot_mode_combo.setCurrentIndex(1)),
+        }
+        exercised = 0
+        for family, font_size in FONT_MATRIX:
+            window = self.make_window(font_size=font_size, font_family=family)
+            apply_ui_state(window, "windows-uefi")  # a Windows ISO and GRUB, so Legacy is selectable
+            needs = {}
+            for state, switch in switches.items():
+                switch(window)
+                QApplication.processEvents()
+                self.settle(window, 1024, 1000)
+                viewport_width = window.scroll_area.maximumViewportSize().width()
+                window.apply_layout_profile("normal")
+                single = window.content_requirement(viewport_width)[1]
+                window.apply_layout_profile("wide")
+                double = window.content_requirement(viewport_width)[1]
+                window._last_viewport = None
+                needs[state] = (single, double)
+            for before, after in ((a, b) for a in switches for b in switches if a != b):
+                if not needs[before][0] < needs[after][0] or needs[after][1] > needs[before][0]:
+                    continue
+                with self.subTest(font=(family, font_size), switch=(before, after)):
+                    switches[before](window)
+                    window._last_viewport = None
+                    self.settle(window, 1024, needs[before][0])
+                    self.assertEqual(window.layout_profile(), "normal")
+                    self.assert_no_page_scrollbar(window)
+                    switches[after](window)
+                    for _ in range(5):
+                        QApplication.processEvents()
+                    self.assertEqual(window.layout_profile(), "wide")
+                    self.assert_no_page_scrollbar(window)
+                    exercised += 1
+        self.assertGreater(exercised, 0, msg="egyik váltás sem növelte az egyoszlopos igényt")
+
     def test_ui_states_are_what_they_claim(self):
         expected = {
             "raw": ("raw", False, ""),
