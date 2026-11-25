@@ -16,8 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QIcon
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QProcess, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QFont, QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -297,6 +297,93 @@ class WrappingCheckBox(QCheckBox):
         self.label.style().unpolish(self.label)
         self.label.style().polish(self.label)
         self.label.update()
+
+
+class WrappingButton(QPushButton):
+    """Checkable push button whose text wraps instead of being cut off.
+
+    QPushButton never wraps, and a checked mode button is drawn bold, which
+    its size hint does not account for; at narrow widths the end of the text
+    was cut off. The QPushButton itself has no text; ``label`` shows it,
+    bold when checked. ``text()``/``setText()`` keep the QPushButton API and
+    the accessible name is the full text. Clicks go through the label to the
+    button; focus, Space and the focus frame stay on the button.
+    """
+
+    CHECKED_WEIGHT = QFont.Weight(650)
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = ""
+        self.label = QLabel(self)
+        self.label.setObjectName("buttonLabel")
+        self.label.setTextFormat(Qt.TextFormat.PlainText)
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.label.setProperty("checked", False)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.addWidget(self.label)
+        self.toggled.connect(self._show_checked)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        self._text = text or ""
+        self.label.setText(self._text)
+        self.setAccessibleName(self._text)
+        self.updateGeometry()
+
+    def text(self) -> str:
+        return self._text
+
+    def label_font(self) -> QFont:
+        # From the button's own (inherited) font, so system font changes apply.
+        font = self.font()
+        font.setWeight(self.CHECKED_WEIGHT if self.isChecked() else QFont.Weight.Normal)
+        return font
+
+    def _show_checked(self, checked: bool) -> None:
+        self.label.setFont(self.label_font())
+        self.label.setProperty("checked", checked)
+        self.label.style().unpolish(self.label)
+        self.label.style().polish(self.label)
+        self.updateGeometry()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self.label.setEnabled(self.isEnabled())
+        elif event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self.label.setFont(self.label_font())
+
+    def _margins(self) -> tuple[int, int]:
+        margins = self.layout().contentsMargins()
+        return margins.left() + margins.right(), margins.top() + margins.bottom()
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt naming
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt naming
+        horizontal, vertical = self._margins()
+        metrics = QFontMetrics(self.label_font())
+        text_rect = metrics.boundingRect(
+            0, 0, max(1, width - horizontal), 10_000, int(Qt.TextFlag.TextWordWrap), self._text
+        )
+        return max(self.minimumHeight(), text_rect.height() + vertical)
+
+    def sizeHint(self):  # noqa: N802 - Qt naming
+        horizontal, _vertical = self._margins()
+        width = QFontMetrics(self.label_font()).horizontalAdvance(self._text) + horizontal
+        return QSize(width, self.heightForWidth(width))
+
+    def minimumSizeHint(self):  # noqa: N802 - Qt naming
+        # The longest word must fit; the rest may wrap.
+        horizontal, _vertical = self._margins()
+        metrics = QFontMetrics(self.label_font())
+        widest = max((metrics.horizontalAdvance(word) for word in self._text.split()), default=0)
+        width = widest + horizontal
+        return QSize(width, self.heightForWidth(width))
 
 
 # pkexec(1), polkit 128: 126 = the user dismissed the authentication dialog;
@@ -601,18 +688,18 @@ class MainWindow(QMainWindow):
         mode_title.setObjectName("sectionTitle")
         mode_layout.addWidget(mode_title)
 
-        self.raw_button = QPushButton("Lemezkép közvetlen kiírása")
+        self.raw_button = WrappingButton("Lemezkép közvetlen kiírása")
         self.raw_button.setCheckable(True)
         self.raw_button.setChecked(True)
         self.raw_button.setObjectName("modeButton")
-        self.windows_button = QPushButton("Windows telepítő (NTFS)")
+        self.windows_button = WrappingButton("Windows telepítő (NTFS)")
         self.windows_button.setCheckable(True)
         self.windows_button.setObjectName("modeButton")
         self.raw_button.clicked.connect(lambda: self.select_mode("raw"))
         self.windows_button.clicked.connect(lambda: self.select_mode("windows"))
         for button in (self.raw_button, self.windows_button):
             button.setMinimumWidth(0)
-            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
             button.setMinimumHeight(34)
         mode_buttons = QHBoxLayout()
         mode_buttons.setSpacing(8)

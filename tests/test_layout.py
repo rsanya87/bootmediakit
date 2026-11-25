@@ -19,7 +19,7 @@ os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bmk-test-config-")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import QEvent, QPoint, QProcess, QRect
+from PySide6.QtCore import QEvent, QPoint, QProcess, QRect, Qt
 from PySide6.QtGui import QFontDatabase, QFontInfo
 from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
@@ -85,6 +85,68 @@ def apply_ui_state(window, state):
         # next to the selector, which stays on UEFI.
         window.boot_mode_combo.setCurrentIndex(1 if window._bios_grub_available else 0)
     window.update_boot_mode_controls()
+
+
+# Buttons whose style sheet draws the text bold while the size hint is
+# computed with the normal weight (and a checked "modeButton").
+BOLD_BUTTON_NAMES = ("primaryButton",)
+
+
+def _bold(font):
+    font.setBold(True)
+    return font
+
+
+def cut_off_texts(window):
+    """Visible texts that do not fit their widget (cut or hidden), with reasons.
+
+    Elided labels (ElidedLabel) are excluded: shortening with "…" and the
+    full text in the tooltip is their intended behaviour.
+    """
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QAbstractButton, QComboBox, QLabel
+
+    problems = []
+
+    def wrapped_fits(name, text, font, width, height):
+        metrics = QFontMetrics(font)
+        widest = max((metrics.horizontalAdvance(word) for word in text.split()), default=0)
+        if widest > width:
+            problems.append(f"{name}: a leghosszabb szó nem fér el ({widest} > {width}): {text!r}")
+        needed = metrics.boundingRect(0, 0, max(1, width), 100_000, int(Qt.TextFlag.TextWordWrap), text).height()
+        if needed > height:
+            problems.append(f"{name}: a tördelt szöveg nem fér el ({needed} > {height}): {text!r}")
+
+    for widget in window.findChildren(QWidget):
+        if not widget.isVisible() or isinstance(widget, gui.ElidedLabel):
+            continue
+        name = widget.objectName() or type(widget).__name__
+        if isinstance(widget, gui.WrappingButton):
+            label = widget.label
+            wrapped_fits(name, widget.text(), widget.label_font(), label.contentsRect().width(),
+                         label.contentsRect().height())
+        elif isinstance(widget, QLabel):
+            text = widget.text()
+            if not text or widget.parent() is not None and isinstance(widget.parent(), gui.WrappingButton):
+                continue
+            if widget.wordWrap():
+                wrapped_fits(name, text, widget.font(), widget.contentsRect().width(), widget.contentsRect().height())
+            elif widget.sizeHint().width() > widget.width():
+                problems.append(f"{name}: {widget.sizeHint().width()} > {widget.width()}: {text!r}")
+        elif isinstance(widget, QAbstractButton) and widget.text():
+            need = widget.sizeHint().width()
+            bold = widget.objectName() in BOLD_BUTTON_NAMES or (
+                widget.objectName() == "modeButton" and widget.isChecked()
+            )
+            if bold:
+                metrics = QFontMetrics(widget.font())
+                need += QFontMetrics(_bold(widget.font())).horizontalAdvance(widget.text()) - metrics.horizontalAdvance(widget.text())
+            if need > widget.width():
+                problems.append(f"{name}: {need} > {widget.width()}: {widget.text()!r}")
+        elif isinstance(widget, QComboBox) and widget.currentText():
+            if widget.sizeHint().width() > widget.width():
+                problems.append(f"{name}: {widget.sizeHint().width()} > {widget.width()}: {widget.currentText()!r}")
+    return problems
 
 
 def describe_state(window):
@@ -232,6 +294,7 @@ class ResponsiveLayoutTests(LayoutTestCase):
                         self.assert_no_page_scrollbar(window)
                         self.assert_client_size(window, width, height)
                         self.assert_controls_usable(window, must_be_in_viewport=True)
+                        self.assertEqual(cut_off_texts(window), [], msg=f"levágott felirat {self.font_context()}")
 
     def test_ui_states_are_what_they_claim(self):
         expected = {

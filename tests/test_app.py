@@ -434,6 +434,46 @@ class BootModeSelectorTests(unittest.TestCase):
         box.setEnabled(True)
         self.assertTrue(box.label.isEnabled())
 
+    def test_mode_buttons_keep_text_api_click_focus_and_state(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QPushButton
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        raw, windows = window.raw_button, window.windows_button
+        self.assertEqual(raw.text(), "Lemezkép közvetlen kiírása")
+        self.assertEqual(windows.text(), "Windows telepítő (NTFS)")
+        for button in (raw, windows):
+            self.assertIsInstance(button, QPushButton)
+            self.assertEqual(QPushButton.text(button), "")  # drawn by the label
+            self.assertEqual(button.label.text(), button.text())
+            self.assertEqual(button.accessibleName(), button.text())
+            self.assertTrue(button.focusPolicy() & Qt.FocusPolicy.TabFocus)
+            self.assertTrue(button.label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+        # A click on the text reaches the button.
+        QTest.mouseClick(windows, Qt.MouseButton.LeftButton, pos=windows.label.geometry().center())
+        self.assertTrue(windows.isChecked())
+        self.assertFalse(raw.isChecked())
+        self.assertEqual(window.selected_worker_mode(), "windows")
+        self.assertEqual(windows.label.font().weight(), QFont.Weight(650))
+        self.assertTrue(windows.label.property("checked"))
+        self.assertEqual(raw.label.font().weight(), QFont.Weight.Normal)
+        # Space on the focused button.
+        raw.setFocus()
+        QTest.keyClick(raw, Qt.Key.Key_Space)
+        self.assertTrue(raw.isChecked())
+        self.assertEqual(window.selected_worker_mode(), "raw")
+        # The label follows the disabled state.
+        raw.setEnabled(False)
+        self.assertFalse(raw.label.isEnabled())
+        raw.setEnabled(True)
+        self.assertTrue(raw.label.isEnabled())
+        self.assertIn('QLabel#buttonLabel:disabled { color: ', window.styleSheet())
+        self.assertIn('QLabel#buttonLabel[checked="true"] { color: ', window.styleSheet())
+
     def test_legacy_boot_mode_passes_windows_bios_and_warns_about_uefi(self):
         window, image = self.windows_iso_window()
         window.boot_mode_combo.setCurrentIndex(1)

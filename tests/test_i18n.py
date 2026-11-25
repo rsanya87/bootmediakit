@@ -204,6 +204,7 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
                         self.settle(window, width, height)
                         self.assert_no_page_scrollbar(window)
                         self.assert_client_size(window, width, height)
+                        self.assertEqual(layout.cut_off_texts(window), [], msg=self.font_context())
                         self.assert_controls_usable(window, must_be_in_viewport=True)
 
 

@@ -295,6 +295,9 @@ QPushButton:focus {{ border: 2px solid {focus}; }}
 QPushButton:disabled {{ color: {disabled_text}; }}
 QPushButton#modeButton {{ text-align: left; padding: 7px 10px; min-height: 32px; }}
 QPushButton#modeButton:checked {{ border: 2px solid {focus}; background: {selected_bg}; color: {selected_text}; font-weight: 650; }}
+QLabel#buttonLabel {{ background: transparent; }}
+QLabel#buttonLabel[checked="true"] {{ color: {selected_text}; }}
+QLabel#buttonLabel:disabled {{ color: {disabled_text}; }}
 QPushButton#primaryButton {{ background: {primary_bg}; color: {primary_text}; font-weight: 700; border: none; padding: 8px 16px; }}
 QPushButton#primaryButton:focus {{ border: 2px solid {focus}; }}
 QPushButton#primaryButton:disabled {{ background: {disabled_bg}; color: {disabled_text}; }}
