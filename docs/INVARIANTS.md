@@ -44,6 +44,8 @@ C2. A worker JSON-eseményeinek meglévő mezői (`message`, `log`, `error`, `pe
 
 C3. Soha nem tűnhet el egy fontos vezérlő (forrásfájl, célmeghajtó, írási mód, indítási mód, ellenőrzési beállítás, indítás/megszakítás, veszélyre figyelmeztető szöveg) a kis ablak miatt.
 
+C4. **A megjelenés egyetlen úton alkalmazódik, és mindig teljesen.** Minden mód- (Automatikus/Világos/Sötét) és rendszerséma-váltáskor a `ThemeController.apply()` előbb visszaállítja a rendszer állapotát (natív stílus, rendszerpaletta), és csak abból dönt: kézi módban natív marad, ha a rendszerpaletta már a kért sémát adja, különben Fusion és saját paletta (`DARK_PALETTE`, `LIGHT_PALETTE`). Utána a stíluslap és minden widget újra-polisholása akkor is megtörténik, ha a szöveg vagy a séma nem változott. A Qt színséma-felülírását (`QStyleHints.setColorScheme`/`unsetColorScheme`) nem használjuk: a gtk3 platformtéma állapotot tart a hívások között, a KDE platformtéma figyelmen kívül hagyja őket. A világos palettát nem szabad a Fusion `standardPalette()`-jére építeni, mert az a Qt színsémáját követi. Minden váltás eredménye pixelre egyezik a friss indításéval ugyanabban a módban és rendszersémában (`tests/test_theme.py`, `ThemeSwitchMatrixTests`).
+
 ## D. Kiadási fegyelem
 
 D1. **A verziószámot csak a kiadási commit emelheti** (`version.py`). Fejlesztés közben a `version.py` az előző kiadás számát mutatja.

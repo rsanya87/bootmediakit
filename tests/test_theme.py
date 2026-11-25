@@ -15,9 +15,9 @@ os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bmk-test-config-")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from PySide6.QtCore import QEvent, QProcess, QSettings
+from PySide6.QtCore import QEvent, QProcess, QSettings, Qt
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from shiboken6 import isValid
 
 import theme
@@ -74,6 +74,12 @@ class QtAppMixin:
         return QSettings(str(self.settings_path), QSettings.Format.IniFormat)
 
     def restore_application(self):
+        # Controllers are children of the application: delete them, or they
+        # stay connected to colorSchemeChanged and react in later tests.
+        for controller in self.qt_app.findChildren(theme.ThemeController):
+            controller.setParent(None)
+            controller.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.qt_app.setStyle(self.native_style)
         self.qt_app.setPalette(QPalette())
         unset = getattr(self.qt_app.styleHints(), "unsetColorScheme", None)
@@ -282,6 +288,282 @@ class LightPaletteTests(QtAppMixin, unittest.TestCase):
                     else:
                         self.assertLess(window, 0.18, msg=f"mode {mode}")
                 self.restore_application()
+
+
+# Simulated system palettes for the switch matrix (test inputs). The light
+# one differs from LIGHT_PALETTE, so native and own palettes look different.
+SYSTEMS = {
+    "light (Adwaita-like)": ("light", lambda: make_palette("#fafafa", "#2e3436", "#ffffff", "#3584e4", "#d6d1cd")),
+    "dark (Breeze-like)": ("dark", lambda: make_palette("#202326", "#fcfcfc", "#141618", "#3daee9", "#4d5257")),
+    # The GNOME case the maintainer saw: gtk3 platform theme, adw-gtk3-dark.
+    "dark (adw-gtk3-dark)": ("dark", lambda: make_palette("#202024", "#ffffff", "#202024", "#3584e4", "#4a4a4e")),
+}
+PALETTE_ROLES = (
+    QPalette.ColorRole.Window,
+    QPalette.ColorRole.WindowText,
+    QPalette.ColorRole.Base,
+    QPalette.ColorRole.Text,
+    QPalette.ColorRole.Button,
+    QPalette.ColorRole.ButtonText,
+    QPalette.ColorRole.Highlight,
+)
+
+
+class ThemeSwitchMatrixTests(QtAppMixin, unittest.TestCase):
+    """Every switch gives the same window as a fresh start in the same mode
+    and system scheme (INVARIANTS C4): one application path, always
+    complete. The native style is "Windows", so own palettes really switch
+    to Fusion and back. Qt's colour scheme override must never be called."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from test_layout import TESTED_FONT_FAMILIES, require_test_fonts
+
+        require_test_fonts()
+        cls.font_families = TESTED_FONT_FAMILIES
+        cls.original_font = cls.qt_app.font()
+
+    def setUp(self):
+        super().setUp()
+        from PySide6.QtGui import QStyleHints
+
+        self.qt_app.setStyle("Windows")
+        self.addCleanup(self.qt_app.setFont, self.original_font)
+        self.system = SYSTEMS["light (Adwaita-like)"]
+        patchers = [
+            patch.object(QProcess, "start"),
+            patch.object(theme, "qt_color_scheme", side_effect=lambda _app: self.system[0]),
+            patch.object(theme, "restore_system_palette", side_effect=lambda app: app.setPalette(self.system[1]())),
+            patch.object(QStyleHints, "setColorScheme"),
+            patch.object(QStyleHints, "unsetColorScheme", create=True),
+        ]
+        mocks = [patcher.start() for patcher in patchers]
+        for patcher in patchers:
+            self.addCleanup(patcher.stop)
+        self.set_scheme_mock, self.unset_scheme_mock = mocks[3], mocks[4]
+
+    def tearDown(self):
+        self.assertEqual(self.set_scheme_mock.call_count, 0, "setColorScheme() was called")
+        self.assertEqual(self.unset_scheme_mock.call_count, 0, "unsetColorScheme() was called")
+
+    def set_font(self, family):
+        from PySide6.QtGui import QFontInfo
+
+        font = self.qt_app.font()
+        font.setFamily(family)
+        font.setPointSizeF(10.0)
+        self.assertEqual(QFontInfo(font).family(), family)
+        self.qt_app.setFont(font)
+
+    def start(self, system, mode):
+        """A fresh start: system palette and native style, then the window."""
+        import app as gui
+
+        self.system = SYSTEMS[system]
+        self.qt_app.setStyle("Windows")
+        self.qt_app.setPalette(self.system[1]())
+        settings = self.settings()
+        settings.setValue(theme.SETTINGS_KEY, mode)
+        controller = theme.ThemeController(self.qt_app, settings)
+        controller.apply()
+        window = gui.MainWindow(controller)
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        window.resize(1000, 700)
+        window.show()
+        for _ in range(5):
+            QApplication.processEvents()
+        return window, controller
+
+    def dispose(self, window, controller):
+        window.close()
+        window.deleteLater()
+        controller.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        QApplication.processEvents()
+
+    def snapshot(self, window):
+        for _ in range(5):
+            QApplication.processEvents()
+        palettes = [
+            (widget.metaObject().className(), widget.objectName(),
+             tuple(widget.palette().color(role).rgba() for role in PALETTE_ROLES))
+            for widget in (window, *window.findChildren(QWidget))
+            # Popup internals (combo box lists) are created lazily.
+            if widget.window() is window
+        ]
+        return {
+            "image": window.grab().toImage(),
+            "palettes": palettes,
+            "state": (window.theme.mode, window.theme.scheme, window.theme.source,
+                      window.theme.uses_own_palette(), self.qt_app.style().name().lower()),
+            "sheet": window.styleSheet(),
+            "tooltip": window.theme_button.toolTip(),
+        }
+
+    def fresh(self, system, mode):
+        key = (system, mode, self.qt_app.font().family())
+        if key not in self._fresh:
+            window, controller = self.start(system, mode)
+            self._fresh[key] = self.snapshot(window)
+            self.dispose(window, controller)
+        return self._fresh[key]
+
+    def assert_same(self, got, expected, context):
+        self.assertEqual(got["state"], expected["state"], context)
+        self.assertEqual(got["sheet"], expected["sheet"], context)
+        self.assertEqual(got["tooltip"], expected["tooltip"], context)
+        for got_widget, expected_widget in zip(got["palettes"], expected["palettes"], strict=True):
+            self.assertEqual(got_widget, expected_widget, f"{context}: widget palette differs")
+        if got["image"] != expected["image"]:
+            a, b = got["image"], expected["image"]
+            differing = sum(
+                1 for y in range(0, min(a.height(), b.height()), 2) for x in range(0, min(a.width(), b.width()), 2)
+                if a.pixel(x, y) != b.pixel(x, y)
+            )
+            self.fail(f"{context}: the window differs from a fresh start ({differing} sampled pixels, "
+                      f"sizes {a.size().toTuple()} / {b.size().toTuple()})")
+
+    def test_every_mode_switch_matches_a_fresh_start(self):
+        self._fresh = {}
+        pairs = (("system", "light"), ("system", "dark"), ("light", "dark"))
+        for family in self.font_families:
+            self.set_font(family)
+            for system in SYSTEMS:
+                for first, second in pairs:
+                    with self.subTest(font=family, system=system, pair=f"{first}<->{second}"):
+                        expected = {mode: self.fresh(system, mode) for mode in (first, second)}
+                        window, controller = self.start(system, first)
+                        try:
+                            self.assert_same(self.snapshot(window), expected[first], f"{system}: start {first}")
+                            for step, mode in enumerate((second, first, second, first)):
+                                controller.set_mode(mode)
+                                self.assert_same(self.snapshot(window), expected[mode],
+                                                 f"[{family}] {system}: switch {step + 1} to {mode}")
+                        finally:
+                            self.dispose(window, controller)
+
+    def test_automatic_dark_and_manual_dark_on_adw_gtk3_dark(self):
+        """The maintainer's case: GNOME, adw-gtk3-dark, automatic mode dark,
+        switching to manual dark and back mixed the colours."""
+        self._fresh = {}
+        system = "dark (adw-gtk3-dark)"
+        for family in self.font_families:
+            self.set_font(family)
+            for first, second in (("system", "dark"), ("dark", "system")):
+                with self.subTest(font=family, direction=f"{first}->{second}"):
+                    expected = {mode: self.fresh(system, mode) for mode in (first, second)}
+                    self.assertFalse(expected["dark"]["state"][3], "manual dark on a dark desktop stays native")
+                    window, controller = self.start(system, first)
+                    try:
+                        for mode in (second, first, second, first, second):
+                            controller.set_mode(mode)
+                            self.assert_same(self.snapshot(window), expected[mode], f"[{family}] to {mode}")
+                    finally:
+                        self.dispose(window, controller)
+
+    def test_every_widget_is_polished_again_also_when_nothing_changed(self):
+        # The pixel matrix cannot show a missing polish offscreen, so the
+        # calls are counted: every widget of the window, on every apply,
+        # also when the mode, the scheme and the style sheet stay the same.
+        self._fresh = {}
+        self.set_font(self.font_families[0])
+        window, controller = self.start("dark (adw-gtk3-dark)", "system")
+        try:
+            style_type = type(window.style())
+            calls = {"unpolish": [], "polish": []}
+            originals = {name: getattr(style_type, name) for name in calls}
+
+            def recorder(name):
+                def record(style, target, *args):
+                    calls[name].append(target)
+                    return originals[name](style, target, *args)
+
+                return record
+
+            for mode in ("dark", "system", "system", "dark"):
+                with self.subTest(mode=mode):
+                    for name in calls:
+                        calls[name].clear()
+                    with patch.object(style_type, "unpolish", recorder("unpolish")), patch.object(
+                        style_type, "polish", recorder("polish")
+                    ):
+                        controller.set_mode(mode)
+                    widgets = [widget for widget in (window, *window.findChildren(QWidget))
+                               if widget.window() is window]
+                    for name, targets in calls.items():
+                        missing = [f"{widget.metaObject().className()}#{widget.objectName()}"
+                                   for widget in widgets if not any(target is widget for target in targets)]
+                        self.assertEqual(missing, [], f"{name} missing after switching to {mode}")
+        finally:
+            self.dispose(window, controller)
+
+    def test_a_system_scheme_change_while_running_matches_a_fresh_start(self):
+        self._fresh = {}
+        self.set_font(self.font_families[0])
+        for mode in theme.THEME_MODES:
+            for before, after in (("light (Adwaita-like)", "dark (adw-gtk3-dark)"),
+                                  ("dark (Breeze-like)", "light (Adwaita-like)")):
+                with self.subTest(mode=mode, change=f"{before} -> {after}"):
+                    expected = self.fresh(after, mode)
+                    window, controller = self.start(before, mode)
+                    try:
+                        # What the platform does: a new system palette (an
+                        # own palette hides it) and colorSchemeChanged.
+                        self.system = SYSTEMS[after]
+                        if not controller.uses_own_palette():
+                            self.qt_app.setPalette(self.system[1]())
+                        self.qt_app.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Dark)
+                        self.assert_same(self.snapshot(window), expected, f"{mode}: {before} -> {after}")
+                    finally:
+                        self.dispose(window, controller)
+
+
+class KdeLikePlatformThemeTests(QtAppMixin, unittest.TestCase):
+    """The KDE platform theme ignores setColorScheme() (measured), so the
+    old path already decided from the system palette alone. The results
+    stay the same: manual dark on a dark desktop is native, manual light
+    gets Fusion with the light palette, "system" is native."""
+
+    def test_results_are_unchanged_on_a_dark_kde_like_desktop(self):
+        system = SYSTEMS["dark (Breeze-like)"][1]
+        with patch.object(theme, "qt_color_scheme", return_value="dark"), patch.object(
+            theme, "restore_system_palette", side_effect=lambda app: app.setPalette(system())
+        ):
+            self.qt_app.setStyle("Windows")
+            self.qt_app.setPalette(system())
+            controller = theme.ThemeController(self.qt_app, self.settings())
+            expected = {
+                "system": ("dark", "system", False, "windows", "#202326"),
+                "dark": ("dark", "manual", False, "windows", "#202326"),
+                "light": ("light", "manual", True, "fusion", "#efefef"),
+            }
+            for mode in ("system", "dark", "light", "system", "light", "dark", "system"):
+                controller.set_mode(mode)
+                window = self.qt_app.palette().color(QPalette.ColorRole.Window).name()
+                self.assertEqual(
+                    (controller.scheme, controller.source, controller.uses_own_palette(),
+                     self.qt_app.style().name().lower(), window),
+                    expected[mode],
+                    mode,
+                )
+
+
+class NoColorSchemeOverrideTests(unittest.TestCase):
+    def test_theme_code_never_calls_the_qt_colour_scheme_override(self):
+        for name in ("theme.py", "app.py"):
+            tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
+            used = sorted(
+                {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+                & {"setColorScheme", "unsetColorScheme"}
+            )
+            strings = sorted(
+                node.value for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and node.value in ("setColorScheme", "unsetColorScheme")
+            )
+            self.assertEqual((used, strings), ([], []), name)
 
 
 class WindowThemeTests(QtAppMixin, unittest.TestCase):

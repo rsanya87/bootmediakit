@@ -10,10 +10,16 @@ Rules (roadmap/0.4.0.md T2, docs/INVARIANTS.md C1):
 * No desktop-specific code: the system scheme comes from Qt
   (``QStyleHints.colorScheme``), else from an unambiguous palette. When the
   scheme cannot be determined, the window starts dark.
-* A forced light/dark appearance first asks Qt
-  (``QStyleHints.setColorScheme``); only if the palette does not follow is
-  the Fusion style with an own palette used. In "system" mode the native
-  style stays.
+* One application path (docs/INVARIANTS.md C4): every mode or system
+  change first restores the system state (native style, system palette),
+  then decides only from that state. A manual light/dark choice keeps the
+  native style and palette when the system palette already has the
+  requested scheme, else the Fusion style with an own palette is used. In
+  "system" mode the native style stays. Qt's colour scheme override
+  (``QStyleHints.setColorScheme`` and its reset) is never used: the gtk3
+  platform theme keeps state between such calls (a later call stops
+  changing the palette and ``colorScheme()`` reports a stale value), the KDE
+  platform theme ignores them (docs/LESSONS.md).
 * The choice ("system", "light", "dark") is stored with QSettings on the
   GUI side only; the root worker never reads user settings.
 
@@ -463,6 +469,11 @@ def open_settings() -> QSettings:
     return QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "BootMediaKit", "BootMediaKit")
 
 
+def restore_system_palette(app: QApplication) -> None:
+    """Drop the own palette, so the platform's palette applies again."""
+    app.setPalette(QPalette())
+
+
 class ThemeController(QObject):
     """Owns the appearance mode and applies it to the QApplication."""
 
@@ -480,8 +491,8 @@ class ThemeController(QObject):
         self.source = "system"
         self._native_style = app.style().name()
         self._own_palette = False
-        self._native_forced = False
         self._applying = False
+        self._applied_palette: QPalette | None = None
         hints = app.styleHints()
         signal = getattr(hints, "colorSchemeChanged", None)
         if signal is not None:
@@ -501,36 +512,47 @@ class ThemeController(QObject):
         self.set_mode("light" if self.scheme == "dark" else "dark")
 
     def apply(self) -> None:
+        """The only way the appearance is applied. Always complete, also when
+        the resulting scheme is the same as before: back to the system state
+        first, then a decision from that state only, so the result is the
+        same as after a fresh start in the same mode."""
         if self._applying:
             return
         self._applying = True
         try:
+            self._release()
             if self.mode == "system":
-                self._release()
                 detected = detect_system_scheme(self.app)
                 if detected is None:
                     self.source = "fallback"
-                    self._force("dark")
+                    self._use_own_palette("dark")
                     self.scheme = "dark"
                 else:
                     self.source = "system"
                     self.scheme = detected
             else:
                 self.source = "manual"
-                self._force(self.mode)
+                # Native when the system palette already has the requested
+                # scheme (for example manual dark on a dark desktop).
+                if classify_palette(self.app.palette()) != self.mode:
+                    self._use_own_palette(self.mode)
                 self.scheme = self.mode
+            self._applied_palette = QPalette(self.app.palette())
         finally:
             self._applying = False
         self.changed.emit()
 
     def palette_changed(self) -> None:
-        """The application palette changed (system theme switch)."""
-        if self._applying or self.mode != "system" or self.source == "fallback":
+        """A palette change event arrived: apply again only when the
+        application palette itself changed since the last apply() (a system
+        theme switch), not for the window's own palette events. An own
+        palette hides the system palette; a system scheme change then
+        arrives through ``colorSchemeChanged``."""
+        if self._applying or self._own_palette:
             return
-        detected = detect_system_scheme(self.app)
-        if detected is not None and detected != self.scheme:
-            self.scheme = detected
-        self.changed.emit()
+        if self._applied_palette is not None and self.app.palette() == self._applied_palette:
+            return
+        self.apply()
 
     def tokens(self) -> dict[str, QColor]:
         return compute_tokens(self.app.palette())
@@ -540,32 +562,19 @@ class ThemeController(QObject):
 
     # -- internals ---------------------------------------------------------
     def _system_scheme_changed(self, *_args) -> None:
-        if self.mode == "system" and not self._applying:
+        if not self._applying:
             self.apply()
 
-    def _force(self, scheme: str) -> None:
-        hints = self.app.styleHints()
-        setter = getattr(hints, "setColorScheme", None)
-        scheme_enum = getattr(Qt, "ColorScheme", None)
-        if setter is not None and scheme_enum is not None and not self._own_palette:
-            setter(scheme_enum.Dark if scheme == "dark" else scheme_enum.Light)
-            self._native_forced = True
-            QCoreApplication.processEvents()
-            if classify_palette(self.app.palette()) == scheme:
-                return
-        # The platform did not follow: Fusion with an own palette.
+    def _use_own_palette(self, scheme: str) -> None:
         if self.app.style().name().lower() != "fusion":
             self.app.setStyle("Fusion")
         self.app.setPalette(dark_palette() if scheme == "dark" else light_palette())
         self._own_palette = True
 
     def _release(self) -> None:
-        if self._native_forced:
-            unset = getattr(self.app.styleHints(), "unsetColorScheme", None)
-            if unset is not None:
-                unset()
-            self._native_forced = False
+        """Back to the system state: the native style and the system palette."""
         if self._own_palette:
-            self.app.setStyle(self._native_style)
-            self.app.setPalette(QPalette())
+            if self.app.style().name() != self._native_style:
+                self.app.setStyle(self._native_style)
+            restore_system_palette(self.app)
             self._own_palette = False

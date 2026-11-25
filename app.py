@@ -461,7 +461,6 @@ class MainWindow(QMainWindow):
             theme_controller.setParent(self)
             theme_controller.apply()
         self.theme = theme_controller
-        self._applied_stylesheet = ""
         self._status_state = "idle"
         self.setWindowTitle(f"{APP_NAME} – bootolható USB készítő")
         self._layout_profile = ""
@@ -1080,12 +1079,21 @@ class MainWindow(QMainWindow):
             self._layout_timer.start()
 
     def apply_style(self) -> None:
-        """Style sheet from palette-derived tokens (theme.py); no fixed colours here."""
+        """Style sheet from palette-derived tokens (theme.py); no fixed colours here.
+
+        Always complete (docs/INVARIANTS.md C4): the style sheet is set and
+        every widget is polished again even when the text is unchanged,
+        because the palette or the style under it may have changed (a
+        switch between manual dark and a dark automatic mode mixed the
+        colours when this step was skipped)."""
         tokens = self.theme.tokens()
         stylesheet = build_stylesheet(tokens)
-        if stylesheet != self._applied_stylesheet:
-            self._applied_stylesheet = stylesheet
-            self.setStyleSheet(stylesheet)
+        self.setStyleSheet(stylesheet)
+        for widget in (self, *self.findChildren(QWidget)):
+            style = widget.style()
+            style.unpolish(widget)
+            style.polish(widget)
+            widget.update()
         self.update_theme_button(tokens)
         self.set_status_state(self._status_state)
 
@@ -1130,8 +1138,9 @@ class MainWindow(QMainWindow):
             # The timer belongs to the window, so it dies with it.
             self._measure_timer.start()
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
-            # A system theme switch while running; apply_style() is a no-op
-            # when the derived style sheet did not change.
+            # A system theme switch while running. The controller applies
+            # again only when the application palette itself changed, so the
+            # palette events caused by apply_style() do not loop.
             self.theme.palette_changed()
         super().changeEvent(event)
 
