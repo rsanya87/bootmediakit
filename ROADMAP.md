@@ -29,6 +29,8 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 
 - **0.8.0:** a worker hibakezelésének azonosítókkal ellátása. A T6 minden `emit()` hívásra `msg_id`-t tett, de a kivételekből jövő `error`-szövegeknek (például „A forrásfájl nem olvasható”) és a diagnosztikai `log`-szövegeknek még nincs azonosítójuk (lásd `docs/MESSAGES.md`). A munka a `raise` helyeket érinti, ezért külön figyelemmel az INVARIANTS A szakaszára (a writerek befagyasztottak) és a writer-ujjlenyomat tesztekre.
 
+- **Később (az ultrareview takarítási javaslata):** az `update_layout_profile` egy átméretezéskor akár háromszor is újraépíti a kártyarácsot (a próbált profilok, majd a választott). A viselkedésen nem változtat, gyenge gépen lassíthatja az átméretezést; a profilok mérése rács-újraépítés nélkül, vagy a választott profil egyszeri alkalmazása lenne a javítás.
+
 ### Fizikai és kézi tesztek (a gazda végzi; csak az ő visszajelzése alapján pipálva)
 
 - [ ] `docs/REGRESSION_CHECKLIST.md` kötelező pontjai a fő gépen (Linux RAW, Windows UEFI, Windows Legacy, saját rendszerbetöltő érintetlen)
