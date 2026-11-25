@@ -79,6 +79,7 @@ A BootMediaKit ekkor MBR partíciós táblát készít egyetlen aktív NTFS part
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
 - A Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítése a tesztelt rendszeren sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot be- és kikapcsolt állapotában is eljutott a partícióválasztó képernyőig; a telepítés további része nem lett igazolva.
 - A fájl-ellenőrzés a másolt fájlok méretét és SHA-256 hashét ellenőrzi. Az ISO eredetiségét vagy kiadói aláírását nem vizsgálja.
+- Az automatikus világos/sötét mód a Qt jelzését követi. GNOME alatt a Qt ezt a GTK-téma nevéből veheti: sötét GTK-témánál (például `adw-gtk3-dark`) az Automatikus mód akkor is sötét, ha a GNOME Beállításokban a világos megjelenés van kiválasztva (GNOME 51.1 alatt mérve). A menü kézi Világos/Sötét módja ezt felülírja.
 
 ## Telepítés Arch-alapú Linuxon
 

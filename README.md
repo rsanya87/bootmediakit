@@ -76,6 +76,7 @@ BootMediaKit then creates an MBR partition table with a single active NTFS parti
 - The current installer targets Arch-based distributions only. Debian/Ubuntu and Fedora support are future work.
 - Physical UEFI installation tests for Windows 10 and Windows 11 IoT Enterprise LTSC x64 completed successfully on the tested system(s). The standard Windows 11 26H2 x64 ISO was also tested with Secure Boot enabled and disabled and reached the Setup disk-selection screen; installation beyond that point was not verified.
 - USB file verification checks file sizes and SHA-256 hashes after copying. It does not validate the Windows ISO publisher signature or the authenticity of the ISO itself.
+- The automatic light/dark mode follows what Qt reports. Under GNOME, Qt may take it from the GTK theme name: with a dark GTK theme (for example `adw-gtk3-dark`) the automatic mode is dark even when GNOME Settings select the light appearance (measured on GNOME 51.1). The manual light or dark mode in the menu overrides it.
 
 ## Install on Arch-based systems
 
