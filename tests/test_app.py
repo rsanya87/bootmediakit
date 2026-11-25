@@ -360,6 +360,80 @@ class BootModeSelectorTests(unittest.TestCase):
         self.assertNotIn("Legacy", details)
         self.assertFalse(window.boot_mode_combo.isEnabled())
 
+    def test_verify_label_click_toggles_the_box_and_reaches_the_worker(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window, image = self.windows_iso_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        self.assertFalse(box.isChecked())  # Windows mode default: off
+        QTest.mouseClick(box.label, Qt.MouseButton.LeftButton)
+        self.assertTrue(box.isChecked())
+        self.assertIs(QApplication.focusWidget(), box)
+        self.start_and_capture(window, image)
+        self.assertEqual(window.process.arguments()[4], "1")
+
+    def test_verify_box_keeps_focus_space_and_accessible_name(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QCheckBox
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        label = box.label
+        self.assertIs(label.buddy(), box)
+        self.assertEqual(label.focusPolicy(), Qt.FocusPolicy.NoFocus)
+        self.assertTrue(box.focusPolicy() & Qt.FocusPolicy.TabFocus)
+        # The QCheckBox draws no text itself; the label shows it in full.
+        self.assertEqual(QCheckBox.text(box), "")
+        for mode, text in (
+            ("raw", "Kiírás utáni teljes visszaolvasás és ellenőrzés"),
+            ("windows", "USB-re másolt fájlok teljes SHA-256 visszaellenőrzése"),
+        ):
+            with self.subTest(mode=mode):
+                window.select_mode(mode)
+                self.assertEqual(box.text(), text)
+                self.assertEqual(label.text(), text)
+                self.assertEqual(box.accessibleName(), text)
+        box.setFocus()
+        QApplication.processEvents()
+        before = box.isChecked()
+        QTest.keyClick(box, Qt.Key.Key_Space)
+        self.assertEqual(box.isChecked(), not before)
+        self.assertIs(QApplication.focusWidget(), box)
+        self.assertTrue(label.property("checkFocus"))
+
+    def test_disabled_verify_label_follows_the_box_and_stays_readable(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        import theme
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        box.setEnabled(False)
+        QApplication.processEvents()
+        self.assertFalse(box.label.isEnabled())
+        before = box.isChecked()
+        QTest.mouseClick(box.label, Qt.MouseButton.LeftButton)
+        self.assertEqual(box.isChecked(), before)
+        self.assertIn("QLabel#checkBoxLabel:disabled { color: ", window.styleSheet())
+        for name, palette in (("light", theme.light_palette()), ("dark", theme.dark_palette())):
+            with self.subTest(palette=name):
+                tokens = theme.compute_tokens(palette)
+                self.assertGreaterEqual(
+                    theme.contrast_ratio(tokens["disabled_text"], tokens["window"]), theme.NON_TEXT_CONTRAST
+                )
+                self.assertNotEqual(tokens["disabled_text"].name(), tokens["text"].name())
+        box.setEnabled(True)
+        self.assertTrue(box.label.isEnabled())
+
     def test_legacy_boot_mode_passes_windows_bios_and_warns_about_uefi(self):
         window, image = self.windows_iso_window()
         window.boot_mode_combo.setCurrentIndex(1)

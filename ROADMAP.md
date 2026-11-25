@@ -15,7 +15,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 - [x] T2. Téma: paletta-tokenek, rendszerkövetés, sötét tartalék, kézi váltó
 - [x] T3. Reszponzív elrendezés, DPI, minimális ablakméret, görgetés csak a naplóban
 - [x] T4. Desktop-integráció és polkit-agent hibajelzés
-- [ ] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt
+- [x] T5. `tr()` az új szövegekre, pseudo-locale-os elrendezésteszt
 - [ ] T6. `msg_id`/`msg_args` az `emit()` hívásokon
 - [ ] T7. Automatizált téma-/elrendezés-/kontrasztteszt, CI
 - [ ] T8. Dokumentáció, függőség- és csomagolási konzisztencia
@@ -23,7 +23,7 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 
 ### Jóváhagyott és dokumentált eltérések a munkaleírástól
 
-Nincs.
+- **T5 pseudo-locale a minimális méreten:** a munkaleírás szerint a pseudo-locale-os szövegekkel a T3 ellenőrzései futnak a minimális méreten. A +40%-os szöveghez 880 px szélességben 596–598 px magasság kell, a 880×550-es minimum (az 1280×800@125% keretében legfeljebb 556 px) ezt nem adja meg. Ezért a minimumon a függőleges tartalék görgetés megengedett, de a teszt ellenőrzi, hogy megmarad a két oszlop, nincs vízszintes görgetősáv, nincs átfedés, és minden fontos vezérlő teljesen elgörgethető a látható részbe. 1024×600-tól fölfelé a teljes T3-ellenőrzés fut (görgetősáv nélkül, a tényleges kliensméreten). A +40% szándékos túlzás; a vezérlő eltűnése rosszabb, mint egy görgetősáv. A gazda jóváhagyta (2026-11-25).
 
 ### Fizikai és kézi tesztek (a gazda végzi; csak az ő visszajelzése alapján pipálva)
 

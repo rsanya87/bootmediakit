@@ -223,6 +223,80 @@ class ElidedLabel(QLabel):
             self._auto_tooltip = False
 
 
+class CheckBoxLabel(QLabel):
+    """Wrapping text of a WrappingCheckBox; a click toggles the check box."""
+
+    def __init__(self, check_box: QCheckBox) -> None:
+        super().__init__()
+        self.setObjectName("checkBoxLabel")
+        self.setTextFormat(Qt.TextFormat.PlainText)
+        self.setWordWrap(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setBuddy(check_box)
+        self.setProperty("checkFocus", False)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        check_box = self.buddy()
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.rect().contains(event.position().toPoint())
+            and check_box is not None
+            and check_box.isEnabled()
+        ):
+            check_box.setFocus(Qt.FocusReason.MouseFocusReason)
+            check_box.click()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class WrappingCheckBox(QCheckBox):
+    """Check box whose text wraps (QCheckBox text never does).
+
+    The QCheckBox itself has no text; ``label`` shows it and must be put next
+    to the box in the layout. ``text()``/``setText()`` keep the QCheckBox API,
+    the accessible name is the full text, focus and the Space key stay on the
+    check box, and the label follows its enabled state (0.4.0 T5).
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = ""
+        self.label = CheckBoxLabel(self)
+        self.setText(text)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt naming
+        self._text = text or ""
+        self.label.setText(self._text)
+        self.setAccessibleName(self._text)
+
+    def text(self) -> str:
+        return self._text
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self.label.setEnabled(self.isEnabled())
+
+    def focusInEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().focusInEvent(event)
+        self._show_focus(True)
+
+    def focusOutEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        super().focusOutEvent(event)
+        self._show_focus(False)
+
+    def _show_focus(self, focused: bool) -> None:
+        # The focus frame of a check box is drawn around its text, which is
+        # now in the label: mark the label instead.
+        self.label.setProperty("checkFocus", focused)
+        self.label.style().unpolish(self.label)
+        self.label.style().polish(self.label)
+        self.label.update()
+
+
 # pkexec(1), polkit 128: 126 = the user dismissed the authentication dialog;
 # 127 = not authorized, no authorization obtained, or an error. Without a
 # registered authentication agent pkexec tries its own textual agent, which
@@ -581,9 +655,13 @@ class MainWindow(QMainWindow):
         self.mode_description.setMinimumWidth(0)
         self.mode_description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Minimum)
         mode_layout.addWidget(self.mode_description)
-        self.verify_checkbox = QCheckBox("Kiírás utáni teljes visszaolvasás és ellenőrzés")
+        self.verify_checkbox = WrappingCheckBox("Kiírás utáni teljes visszaolvasás és ellenőrzés")
         self.verify_checkbox.setChecked(True)
-        mode_layout.addWidget(self.verify_checkbox)
+        verify_row = QHBoxLayout()
+        verify_row.setSpacing(8)
+        verify_row.addWidget(self.verify_checkbox, 0, Qt.AlignmentFlag.AlignTop)
+        verify_row.addWidget(self.verify_checkbox.label, 1)
+        mode_layout.addLayout(verify_row)
         self.mode_card = mode_card
         self.update_boot_mode_controls()
 

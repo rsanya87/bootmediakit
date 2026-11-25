@@ -301,6 +301,8 @@ QPushButton#primaryButton:disabled {{ background: {disabled_bg}; color: {disable
 QProgressBar {{ border: 1px solid {border}; border-radius: 6px; text-align: center; min-height: 18px; }}
 QProgressBar::chunk {{ background: {progress_chunk}; border-radius: 5px; }}
 QCheckBox {{ spacing: 8px; }}
+QLabel#checkBoxLabel:disabled {{ color: {disabled_text}; }}
+QLabel#checkBoxLabel[checkFocus="true"] {{ text-decoration: underline; }}
 """
 
 

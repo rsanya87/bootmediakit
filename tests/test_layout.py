@@ -118,6 +118,10 @@ class LayoutTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         window = gui.MainWindow()
+        # QProcess.start is patched, so lsblk never answers: without this the
+        # 5 s lsblk timeout opens a modal warning in long test runs.
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
         window.show()
 
         def dispose():
