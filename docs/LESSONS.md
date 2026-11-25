@@ -32,6 +32,7 @@ Minden itt szereplő tétel **valóban megtörtént** a projekt fejlesztése vag
 - **A teszt `bootmgr` + QEMU nem bizonyítja a valódi Windows Setup indulását.** A tesztek bizonyító erejét címkézni kell (D6).
 - **Root tulajdonú `__pycache__`.** A `sudo`-val futtatott tesztek root tulajdonú `__pycache__` mappákat hagynak, amitől a következő normál futás `Permission denied` hibát kaphat. Javítás: `sudo rm -rf __pycache__ tests/__pycache__ tests/integration/__pycache__`; megelőzés: `PYTHONDONTWRITEBYTECODE=1` a root futtatásnál.
 - **Sandbox/konténer udev nélkül** nem hoz létre partíciócsomópontokat: a loop-integrációs tesztek valódi gépen vagy CI-runneren futnak. A `os.stat` hívások tesztbeli kiváltása (`fake_dev_stat`) egyszer már hibát okozott; új tesztben ezt a mintát használjuk.
+- **Az elrendezési tesztek csak az alapállapotot nézték.** A 0.4.0 T3 minimális ablakmérete (880×540) a lemezkép módra volt kimérve; Windows módban a hosszabb leírás miatt 548 px kellett, így a minimumon görgetősáv jelent meg. A T5 pseudo-locale tesztje vette észre. Tanulság: az elrendezési tesztek minden látható módra és állapotra fussanak (RAW, Windows UEFI, Windows Legacy, a „Legacy nem elérhető” súgó, a figyelmeztető panel), ne csak az alapértelmezettre.
 - **A mockolt egységteszt és a loop-teszt nem bizonyítja a fizikai hardver viselkedését.** Fizikai tesztet csak a gazda végez eldobható adathordozón.
 
 ## Windows UEFI

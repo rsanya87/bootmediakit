@@ -166,13 +166,17 @@ def mounted_paths(node: dict[str, Any]) -> list[str]:
 
 
 # Minimum logical client size (0.4.0 T3). Measured offscreen with the
-# two-column layout at 880 px width: 586x530 with a 9 pt and 607x529 with a
-# 10 pt system font (11 pt: 584, 12 pt: 612 px high). It fits the work area of
-# a 1280x800 screen at 100 % and 125 % scaling (1280x800 and 1024x640 logical,
-# minus panels and window frame). Larger fonts can need more; the content then
-# scrolls as a last resort. The minimum is never larger than the available area.
+# two-column layout at 880 px width in every visible state (RAW, Windows
+# without ISO, Windows UEFI, Windows Legacy, and both with the "Legacy nem
+# elérhető" hint): 548 px high with a 9 pt and a 10 pt system font (11 pt:
+# 584 px in Windows and 606 px in RAW mode). The first value, 540, was measured
+# in the start-up state only and was 8 px short after a mode change. It fits
+# the work area of a 1280x800 screen at 100 % and 125 % scaling (1280x800 and
+# 1024x640 logical, minus a 44 px panel and a 40 px window frame: at most
+# 556 px). Larger fonts can need more; the content then scrolls as a last
+# resort. The minimum is never larger than the available area.
 MIN_WINDOW_WIDTH = 880
-MIN_WINDOW_HEIGHT = 540
+MIN_WINDOW_HEIGHT = 550
 
 
 class ElidedLabel(QLabel):

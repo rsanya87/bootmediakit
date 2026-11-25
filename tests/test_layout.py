@@ -31,6 +31,48 @@ import ui_helpers
 WORK_AREA = (0, 0, 1366, 728)
 TESTED_SIZES = ((gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT), (1024, 600), (1280, 720), (1366, 700))
 TESTED_FONT_SIZES = (9.0, 10.0)
+# Every visible state of the mode card (and the always shown danger warning):
+# the minimum once failed in Windows mode because only the default state was
+# tested (docs/LESSONS.md).
+UI_STATES = (
+    "raw",
+    "raw-grub-missing",
+    "windows-no-iso",
+    "windows-uefi",
+    "windows-legacy",
+    "windows-legacy-grub-missing",
+)
+_ISO_DIR = tempfile.mkdtemp(prefix="bmk-test-iso-")
+WINDOWS_ISO = Path(_ISO_DIR) / "Win11_25H2_Hungarian_x64.iso"
+WINDOWS_ISO.write_bytes(b"")
+
+
+def apply_ui_state(window, state):
+    """Put the window into one visible state without touching any device."""
+    # Do not depend on whether the test machine has GRUB i386-pc installed.
+    window._bios_grub_available = not state.endswith("grub-missing")
+    window.apply_grub_availability()
+    if state.startswith("raw"):
+        window.select_mode("raw")
+        return
+    if state != "windows-no-iso":
+        window.iso_edit.setText(str(WINDOWS_ISO))
+        window._windows_iso_path = str(WINDOWS_ISO.resolve())
+    window.select_mode("windows")
+    if state == "windows-legacy" or state == "windows-legacy-grub-missing":
+        # With GRUB missing the Legacy item is disabled; the hint is shown
+        # next to the selector, which stays on UEFI.
+        window.boot_mode_combo.setCurrentIndex(1 if window._bios_grub_available else 0)
+    window.update_boot_mode_controls()
+
+
+def describe_state(window):
+    return {
+        "mode": window.selected_worker_mode(),
+        "boot_combo_enabled": window.boot_mode_combo.isEnabled(),
+        "grub_hint": window.grub_hint.text(),
+        "warning": window.findChild(QWidget, "warningPanel").isVisible(),
+    }
 
 
 def key_controls(window):
@@ -97,6 +139,19 @@ class LayoutTestCase(unittest.TestCase):
         window.update_layout_profile()
         QApplication.processEvents()
 
+    def assert_client_size(self, window, width, height):
+        """The real client area, not only the requested size, is width x height."""
+        self.assertEqual((window.geometry().width(), window.geometry().height()), (width, height))
+        central = window.centralWidget()
+        self.assertEqual((central.width(), central.height()), (width, height))
+        # No scrollbar takes room from the page: the viewport is the whole area.
+        frame = window.scroll_area.frameWidth()
+        viewport = window.scroll_area.viewport()
+        self.assertEqual(
+            (viewport.width(), viewport.height()),
+            (window.scroll_area.width() - 2 * frame, window.scroll_area.height() - 2 * frame),
+        )
+
     def window_rect(self, window, widget):
         top_left = widget.mapTo(window, QPoint(0, 0))
         return QRect(top_left, widget.size())
@@ -128,14 +183,38 @@ class LayoutTestCase(unittest.TestCase):
 class ResponsiveLayoutTests(LayoutTestCase):
     def test_tested_sizes_have_no_main_scrollbar_and_keep_every_control(self):
         for font_size in TESTED_FONT_SIZES:
-            for width, height in TESTED_SIZES:
-                with self.subTest(font=font_size, size=(width, height)):
-                    window = self.make_window(font_size=font_size)
-                    self.settle(window, width, height)
-                    self.assertEqual((window.width(), window.height()), (width, height))
-                    self.assertFalse(window.scroll_area.verticalScrollBar().isVisible())
-                    self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible())
-                    self.assert_controls_usable(window, must_be_in_viewport=True)
+            for state in UI_STATES:
+                window = self.make_window(font_size=font_size)
+                apply_ui_state(window, state)
+                for width, height in TESTED_SIZES:
+                    with self.subTest(font=font_size, state=state, size=(width, height)):
+                        self.settle(window, width, height)
+                        self.assert_client_size(window, width, height)
+                        self.assertFalse(window.scroll_area.verticalScrollBar().isVisible())
+                        self.assertFalse(window.scroll_area.horizontalScrollBar().isVisible())
+                        self.assert_controls_usable(window, must_be_in_viewport=True)
+
+    def test_ui_states_are_what_they_claim(self):
+        expected = {
+            "raw": ("raw", False, ""),
+            "raw-grub-missing": ("raw", False, "Legacy nem elérhető: sudo pacman -S grub"),
+            "windows-no-iso": ("windows", False, ""),
+            "windows-uefi": ("windows", True, ""),
+            "windows-legacy": ("windows-bios", True, ""),
+            "windows-legacy-grub-missing": ("windows", True, "Legacy nem elérhető: sudo pacman -S grub"),
+        }
+        self.assertEqual(set(expected), set(UI_STATES))
+        for state in UI_STATES:
+            with self.subTest(state=state):
+                window = self.make_window(font_size=9.0)
+                apply_ui_state(window, state)
+                self.settle(window, gui.MIN_WINDOW_WIDTH, gui.MIN_WINDOW_HEIGHT)
+                described = describe_state(window)
+                self.assertEqual(
+                    (described["mode"], described["boot_combo_enabled"], described["grub_hint"]),
+                    expected[state],
+                )
+                self.assertTrue(described["warning"])
 
     def test_short_windows_use_two_columns_and_tall_ones_one(self):
         window = self.make_window(font_size=9.0)
