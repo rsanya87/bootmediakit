@@ -301,6 +301,65 @@ class TestCommandDocumentationTests(unittest.TestCase):
             self.assertNotIn('"loop"', text)
 
 
+class NoVersionNumberInPythonFilesTests(unittest.TestCase):
+    """INVARIANTS D8 / CLAUDE.md rule 13: no "0.x.y" anywhere in a .py file
+    except version.py, in code, comments and docstrings alike.
+
+    SingleVersionSourceTests only looks for the current version; this guard
+    also catches older and future ones (a comment once named an old release).
+    It uses the same boundaries as that guard, so longer number sequences such
+    as 0.0.0.0 or 10.0.1.0 are not matched.
+    """
+
+    PATTERN = re.compile(r"(?<![\d.])v?0\.\d+\.\d+(?![\d.])")
+    # Justified exceptions only: (path relative to the repository, exact
+    # matched text, reason). The list may only shrink: MAX_EXCEPTIONS is the
+    # length it had when the guard was added, and a stale entry fails.
+    EXCEPTIONS: tuple[tuple[str, str, str], ...] = ()
+    MAX_EXCEPTIONS = 0
+
+    def found(self):
+        hits = []
+        for path in sorted(ROOT.rglob("*.py")):
+            relative = path.relative_to(ROOT).as_posix()
+            if relative == "version.py" or relative.startswith(".git/"):
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                for match in self.PATTERN.finditer(line):
+                    hits.append((relative, number, match.group(0)))
+        return hits
+
+    def test_no_version_number_outside_version_py(self):
+        allowed = {(path, text) for path, text, _reason in self.EXCEPTIONS}
+        offenders = [f"{path}:{line}: {text}" for path, line, text in self.found() if (path, text) not in allowed]
+        self.assertEqual(
+            offenders,
+            [],
+            msg="Verziószám egy .py fájlban a version.py-n kívül (INVARIANTS D8). Hivatkozz feladatszámra "
+            "(pl. T3) vagy a CHANGELOG.md/ROADMAP.md megfelelő részére; a verzióhoz kötött információ ott él. "
+            "Kivétel csak indoklással, a gazda jóváhagyásával kerülhet az EXCEPTIONS listára.",
+        )
+
+    def test_exception_list_only_shrinks_and_has_no_stale_entry(self):
+        self.assertLessEqual(len(self.EXCEPTIONS), self.MAX_EXCEPTIONS, msg="a kivétellista nem bővíthető")
+        present = {(path, text) for path, _line, text in self.found()}
+        for path, text, reason in self.EXCEPTIONS:
+            self.assertTrue(reason.strip(), msg=f"indoklás nélküli kivétel: {path} {text}")
+            self.assertIn((path, text), present, msg=f"elavult kivétel, töröld: {path} {text}")
+
+    def test_pattern_boundaries(self):
+        # Built from parts, so this file holds no version-like text itself.
+        def v(*parts):
+            return ".".join(parts)
+
+        for text in (f"({v('0', '4', '0')} T3)", "v" + v("0", "3", "0"), v("0", "1", "2") + ";",
+                     f"a {v('0', '8', '0')}-tól"):
+            self.assertRegex(text, self.PATTERN)
+        for text in (v("0", "0", "0", "0"), v("10", "0", "1", "0"), v("10", "3", "0"), v("192", "0", "2", "1"),
+                     v("1", "0", "0"), v("0", "3"), "PySide6 " + v("6", "12", "0")):
+            self.assertNotRegex(text, self.PATTERN)
+
+
 class GuiTestCoverageTests(unittest.TestCase):
     """T7: the theme, layout, contrast, pseudo-locale and message tests run in
     CI, offscreen, and cannot drop out silently."""
