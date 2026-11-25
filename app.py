@@ -165,7 +165,7 @@ def mounted_paths(node: dict[str, Any]) -> list[str]:
 
 
 
-# Minimum logical client size (0.4.0 T3). Measured offscreen with the
+# Minimum logical client size (T3, layout work). Measured offscreen with the
 # two-column layout at 880 px width in every visible state (RAW, Windows
 # without ISO, Windows UEFI, Windows Legacy, and both with the "Legacy nem
 # elérhető" hint): 548 px high with a 9 pt and a 10 pt system font (11 pt:
@@ -258,7 +258,7 @@ class WrappingCheckBox(QCheckBox):
     The QCheckBox itself has no text; ``label`` shows it and must be put next
     to the box in the layout. ``text()``/``setText()`` keep the QCheckBox API,
     the accessible name is the full text, focus and the Space key stay on the
-    check box, and the label follows its enabled state (0.4.0 T5).
+    check box, and the label follows its enabled state (T5, pseudo-locale work).
     """
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
@@ -776,7 +776,7 @@ class MainWindow(QMainWindow):
         self.refresh_timer.start()
         self.refresh_devices()
 
-    # -- responsive layout (0.4.0 T3) ---------------------------------------
+    # -- responsive layout (T3, layout work) ---------------------------------
     def available_area(self) -> tuple[int, int, int, int]:
         """Logical work area (x, y, width, height) of the window's screen."""
         screen = self.screen() or QApplication.primaryScreen()

@@ -1,4 +1,4 @@
-"""tr() for the new GUI texts and the pseudo-locale layout check (0.4.0 T5).
+"""tr() for the new GUI texts and the pseudo-locale layout check (T5, see ROADMAP.md).
 
 Proof level: source scan and offscreen Qt. The pseudo-locale is a
 deliberate exaggeration (+40 % length, accented letters); it does not
@@ -32,8 +32,8 @@ from text_scan import text_literals, tr_calls_without_literal
 
 GUI_SOURCES = ("app.py", "theme.py", "ui_helpers.py")
 LEGACY_FILE = TESTS / "fixtures" / "legacy_untranslated_texts.json"
-# Number of texts from before 0.4.0 without tr() when the list was made (T5).
-# The list may only shrink; 0.8.0 converts them.
+# Number of older texts without tr() when the list was made (T5).
+# The list may only shrink; a later release converts them (ROADMAP.md).
 LEGACY_LIMIT = 145
 
 
@@ -58,7 +58,7 @@ class TrSourceTests(unittest.TestCase):
         self.assertEqual(
             new,
             {},
-            msg="Új felhasználói szöveg tr() nélkül. A 0.4.0-tól minden új szöveg "
+            msg="Új felhasználói szöveg tr() nélkül. Minden új szöveg "
             "tr()/QCoreApplication.translate(\"BootMediaKit\", …) hívással készül.",
         )
 
@@ -155,7 +155,7 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
                 self.assertTrue(widget.text().startswith(START), msg=widget.text())
 
     def test_at_the_minimum_the_page_may_scroll_but_no_control_is_lost(self):
-        # Approved deviation (maintainer, 0.4.0 T5): +40 % text needs more
+        # Approved deviation (maintainer, T5; ROADMAP.md): +40 % text needs more
         # height than 880x550 offers; the vertical scroll fallback is allowed
         # there, but no horizontal scrollbar, no overlap and every control must
         # be reachable by scrolling.

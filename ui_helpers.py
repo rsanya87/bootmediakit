@@ -54,7 +54,7 @@ def bios_grub_available(
         return False
 
 
-# -- Responsive layout (0.4.0 T3) ---------------------------------------------
+# -- Responsive layout (T3, layout work) ---------------------------------------
 # All sizes are Qt logical pixels of the window's client area; Qt applies the
 # device pixel ratio itself, so nothing here is multiplied by it.
 

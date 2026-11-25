@@ -1,4 +1,4 @@
-"""Responsive layout, minimum size and scrolling (0.4.0 T3), offscreen.
+"""Responsive layout, minimum size and scrolling (T3, layout work), offscreen.
 
 Proof level: offscreen Qt (logical pixels, fonts of the test machine). It
 does not replace the maintainer's checks on real desktops and screens.

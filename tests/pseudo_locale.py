@@ -1,4 +1,4 @@
-"""Pseudo-locale for layout tests (0.4.0 T5); test helper, not installed.
+"""Pseudo-locale for layout tests (T5); test helper, not installed.
 
 Every user-visible text becomes about 40 % longer, with accented letters,
 so a later translation (English is usually longer than the Hungarian
@@ -6,7 +6,7 @@ source) cannot break the layout unnoticed. Two routes are covered:
 
 * texts that go through ``tr()`` / ``QCoreApplication.translate`` get the
   pseudo text from an installed ``PseudoTranslator``;
-* the older texts that do not use ``tr()`` yet (to be converted in 0.8.0)
+* the older texts that do not use ``tr()`` yet (to be converted later, see ROADMAP.md)
   are replaced on the widgets by ``pseudo_localize_widgets``.
 
 Markup is kept: rich-text tags, ``{placeholders}``, ``&entities;``,

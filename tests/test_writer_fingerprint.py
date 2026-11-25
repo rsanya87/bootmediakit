@@ -1,4 +1,4 @@
-"""Writer fingerprint tests: freeze what the three writers do (0.4.0 T1).
+"""Writer fingerprint tests: freeze what the three writers do (T1).
 
 ``write_raw``, ``write_windows_uefi`` and ``write_windows_bios`` are frozen
 (docs/INVARIANTS.md, A1-A6). These tests run each writer through the real

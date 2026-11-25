@@ -85,7 +85,7 @@ class PrivilegedPackagingTests(unittest.TestCase):
 
     def test_elapsed_timer_cannot_expand_progress_header_vertically(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
-        # 0.4.0 T2: the style sheet moved to theme.py (STYLE_TEMPLATE).
+        # T2 (theme work): the style sheet moved to theme.py (STYLE_TEMPLATE).
         style = app + (ROOT / "theme.py").read_text(encoding="utf-8")
         self.assertIn("self.elapsed_label.setFixedHeight(30)", app)
         self.assertIn("QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed", app)
@@ -98,7 +98,7 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("APP_VERSION = __version__", app)
         self.assertIn("version = QLabel(APP_VERSION)", app)
         self.assertIn('meta_row.addWidget(version', app)
-        # 0.4.0 T2: the fixed #83bde2/#b7c1cb colours became palette-derived
+        # T2 (theme work): the fixed #83bde2/#b7c1cb colours became palette-derived
         # tokens; tests/test_theme.py checks their contrast on light, dark and
         # high-contrast palettes.
         style = (ROOT / "theme.py").read_text(encoding="utf-8")
@@ -112,7 +112,7 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
         self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
         self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
-        # 0.4.0 T3 replaced the 740x900 cap, the screen-height compact flag
+        # T3 (layout work) replaced the 740x900 cap, the screen-height compact flag
         # and the fixed log height with a measured minimum size, layout
         # profiles chosen from the real content size and a log that takes the
         # spare height. tests/test_layout.py checks the behaviour itself (no

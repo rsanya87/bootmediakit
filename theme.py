@@ -1,4 +1,4 @@
-"""Light/dark appearance for the BootMediaKit GUI (0.4.0 T2).
+"""Light/dark appearance for the BootMediaKit GUI (T2, theme work; see CHANGELOG.md).
 
 Rules (roadmap/0.4.0.md T2, docs/INVARIANTS.md C1):
 
@@ -74,7 +74,7 @@ DARK_PALETTE_DISABLED = {
 
 
 def tr(text: str) -> str:
-    """Translatable GUI text; the Hungarian source text is the key (0.4.0 T5)."""
+    """Translatable GUI text; the Hungarian source text is the key (T5)."""
     return QCoreApplication.translate("BootMediaKit", text)
 
 

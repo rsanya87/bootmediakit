@@ -1,4 +1,4 @@
-"""Theme tokens, system detection, dark fallback and the manual switch (0.4.0 T2)."""
+"""Theme tokens, system detection, dark fallback and the manual switch (T2, theme work)."""
 
 import ast
 import os

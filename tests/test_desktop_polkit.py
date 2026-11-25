@@ -1,4 +1,4 @@
-"""Desktop integration and polkit failure handling (0.4.0 T4).
+"""Desktop integration and polkit failure handling (T4, desktop integration work).
 
 Proof level: unit/offscreen GUI. pkexec is never run; its exit codes are
 simulated. Whether the window, taskbar, menu and switcher show the icon, and

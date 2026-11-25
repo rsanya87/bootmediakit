@@ -1,4 +1,4 @@
-"""Find user-visible text literals in the GUI sources (0.4.0 T5 test helper).
+"""Find user-visible text literals in the GUI sources (T5 test helper).
 
 A string literal counts as user text when it has at least two letters and
 a space or a non-ASCII character (Hungarian text practically always has
