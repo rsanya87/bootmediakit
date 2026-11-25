@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QCoreApplication, QObject, QPointF, QRectF, QSettings, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QStyleFactory
+from PySide6.QtWidgets import QApplication
 
 THEME_MODES = ("system", "light", "dark")
 SETTINGS_KEY = "appearance/theme"
@@ -70,6 +70,47 @@ DARK_PALETTE_DISABLED = {
     "ButtonText": "#80878e",
     "Highlight": "#3a4148",
     "HighlightedText": "#a3abb3",
+}
+
+
+# The light palette is a fixed table, not QStyleFactory.create("Fusion")
+# .standardPalette(): in Qt 6 that palette follows Qt's colour scheme, so on
+# a dark desktop (KDE, a dark GTK theme) it is dark and a manual "Világos"
+# stayed dark (docs/LESSONS.md). The values are Fusion's light standard
+# palette as measured offscreen with no colour scheme, so the light look is
+# unchanged; tests compare them. "#80000000" is black at alpha 128 (ARGB).
+LIGHT_PALETTE = {
+    "Window": "#efefef",
+    "WindowText": "#000000",
+    "Base": "#ffffff",
+    "AlternateBase": "#f7f7f7",
+    "ToolTipBase": "#ffffdc",
+    "ToolTipText": "#000000",
+    "PlaceholderText": "#80000000",
+    "Text": "#000000",
+    "Button": "#efefef",
+    "ButtonText": "#000000",
+    "BrightText": "#ffffff",
+    "Light": "#ffffff",
+    "Midlight": "#cacaca",
+    "Mid": "#b8b8b8",
+    "Dark": "#9f9f9f",
+    "Shadow": "#767676",
+    "Highlight": "#308cc6",
+    "HighlightedText": "#ffffff",
+    "Link": "#0000ff",
+    "LinkVisited": "#ff00ff",
+    "Accent": "#308cc6",
+}
+LIGHT_PALETTE_DISABLED = {
+    "WindowText": "#bebebe",
+    "Text": "#bebebe",
+    "ButtonText": "#bebebe",
+    "Base": "#efefef",
+    "Dark": "#bebebe",
+    "Shadow": "#b1b1b1",
+    "Highlight": "#919191",
+    "Accent": "#919191",
 }
 
 
@@ -168,20 +209,31 @@ def detect_system_scheme(app: QApplication) -> str | None:
     return qt_color_scheme(app) or classify_palette(app.palette())
 
 
-def dark_palette() -> QPalette:
+def palette_from_tables(colours: dict[str, str], disabled: dict[str, str]) -> QPalette:
+    """A palette with every listed role set in all groups, then the
+    disabled-group differences. Roles this Qt version lacks are skipped."""
     palette = QPalette()
-    for role_name, value in DARK_PALETTE.items():
-        role = getattr(QPalette.ColorRole, role_name)
-        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
+    groups = (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled)
+    for role_name, value in colours.items():
+        role = getattr(QPalette.ColorRole, role_name, None)
+        if role is None:
+            continue
+        for group in groups:
             palette.setColor(group, role, QColor(value))
-    for role_name, value in DARK_PALETTE_DISABLED.items():
-        palette.setColor(QPalette.ColorGroup.Disabled, getattr(QPalette.ColorRole, role_name), QColor(value))
+    for role_name, value in disabled.items():
+        role = getattr(QPalette.ColorRole, role_name, None)
+        if role is not None:
+            palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(value))
     return palette
 
 
+def dark_palette() -> QPalette:
+    return palette_from_tables(DARK_PALETTE, DARK_PALETTE_DISABLED)
+
+
 def light_palette() -> QPalette:
-    style = QStyleFactory.create("Fusion")
-    return style.standardPalette() if style is not None else QPalette()
+    """Light in every colour scheme (see LIGHT_PALETTE)."""
+    return palette_from_tables(LIGHT_PALETTE, LIGHT_PALETTE_DISABLED)
 
 
 # -- tokens and style sheet ------------------------------------------------

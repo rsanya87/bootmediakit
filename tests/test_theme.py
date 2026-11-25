@@ -212,6 +212,78 @@ class ThemeControllerTests(QtAppMixin, unittest.TestCase):
             controller.set_mode("sepia")
 
 
+# Measured: Qt 6 Fusion's standardPalette() on a desktop where Qt reports a
+# dark colour scheme (KDE platform theme, gtk3 with adw-gtk3-dark). Test input.
+QT_DARK_FUSION_STANDARD = lambda: make_palette("#323232", "#f0f0f0", "#242424", "#308cc6", "#4a4a4a")  # noqa: E731
+DARK_DESKTOPS = {
+    # The KDE platform theme ignores setColorScheme().
+    "KDE-like (Breeze Dark)": lambda: make_palette("#202326", "#fcfcfc", "#141618", "#3daee9", "#4d5257"),
+    # gtk3 platform theme with adw-gtk3-dark; after one override and its
+    # reset, setColorScheme() no longer changes the palette (measured).
+    "GNOME-like (gtk3, adw-gtk3-dark)": lambda: make_palette("#202024", "#ffffff", "#202024", "#3584e4", "#4a4a4e"),
+}
+
+
+def fake_fusion_style():
+    class DarkFusion:
+        def standardPalette(self):  # noqa: N802 - Qt naming
+            return QT_DARK_FUSION_STANDARD()
+
+    return DarkFusion()
+
+
+class LightPaletteTests(QtAppMixin, unittest.TestCase):
+    def test_light_palette_is_fusions_light_standard_palette(self):
+        # Offscreen Qt has no colour scheme, so Fusion gives its light
+        # palette: the fixed table must match it role by role, so the light
+        # look did not change.
+        from PySide6.QtWidgets import QStyleFactory
+
+        self.assertNotEqual(theme.qt_color_scheme(self.qt_app), "dark")
+        fusion = QStyleFactory.create("Fusion").standardPalette()
+        table = theme.light_palette()
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
+            for role in QPalette.ColorRole:
+                if role.name in ("NoRole", "NColorRoles"):
+                    continue
+                with self.subTest(group=group.name, role=role.name):
+                    self.assertEqual(table.color(group, role).rgba(), fusion.color(group, role).rgba())
+
+    def test_light_palette_does_not_follow_a_dark_colour_scheme(self):
+        with patch("PySide6.QtWidgets.QStyleFactory.create", lambda *_args: fake_fusion_style()):
+            self.assertEqual(theme.classify_palette(theme.light_palette()), "light")
+
+    def test_manual_light_is_light_on_a_dark_desktop(self):
+        from PySide6.QtGui import QStyleHints
+
+        for desktop, system_palette in DARK_DESKTOPS.items():
+            with self.subTest(desktop=desktop), patch.object(
+                theme, "qt_color_scheme", return_value="dark"
+            ), patch("PySide6.QtWidgets.QStyleFactory.create", lambda *_args: fake_fusion_style()), patch.object(
+                QStyleHints, "setColorScheme"
+            ), patch.object(QStyleHints, "unsetColorScheme", create=True):
+                self.qt_app.setPalette(system_palette())
+                settings = self.settings()
+                settings.setValue(theme.SETTINGS_KEY, "system")
+                controller = theme.ThemeController(self.qt_app, settings)
+                controller.apply()
+                self.assertEqual(controller.scheme, "dark")
+                # Back to "system" is covered by the switch matrix (the offscreen
+                # platform cannot keep a simulated system palette over a reset).
+                for mode in ("light", "dark", "light"):
+                    controller.set_mode(mode)
+                    expected = mode
+                    self.assertEqual(controller.scheme, expected)
+                    self.assertEqual(theme.classify_palette(self.qt_app.palette()), expected, msg=f"mode {mode}")
+                    tokens = controller.tokens()
+                    window = theme.relative_luminance(tokens["window"])
+                    if expected == "light":
+                        self.assertGreater(window, 0.45, msg=f"mode {mode}")
+                    else:
+                        self.assertLess(window, 0.18, msg=f"mode {mode}")
+                self.restore_application()
+
+
 class WindowThemeTests(QtAppMixin, unittest.TestCase):
     def make_window(self, controller):
         import app as gui
@@ -371,7 +443,16 @@ class FixedColourTests(unittest.TestCase):
 
     def test_fixed_colours_in_theme_py_are_only_the_allowed_exceptions(self):
         tree = ast.parse((ROOT / "theme.py").read_text(encoding="utf-8"))
-        allowed_names = {"STATUS_HUES", "DARK_PALETTE", "DARK_PALETTE_DISABLED"}
+        # LIGHT_PALETTE(_DISABLED): Fusion's standardPalette() follows Qt's
+        # colour scheme in Qt 6 (dark on a dark desktop), so the manual light
+        # mode needs a fixed table like the dark fallback (docs/LESSONS.md).
+        allowed_names = {
+            "STATUS_HUES",
+            "DARK_PALETTE",
+            "DARK_PALETTE_DISABLED",
+            "LIGHT_PALETTE",
+            "LIGHT_PALETTE_DISABLED",
+        }
         allowed_nodes = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and any(
