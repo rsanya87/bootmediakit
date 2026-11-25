@@ -78,7 +78,9 @@ class TrSourceTests(unittest.TestCase):
         literals = {item.text: item.in_tr for name in GUI_SOURCES
                     for item in text_literals((ROOT / name).read_text(encoding="utf-8"))}
         for text in ("Rendszer / Automatikus", "Megjelenés váltása", "A hitelesítés nem sikerült",
-                     "Állapot: készen áll", "Forrás lemezkép"):
+                     "Állapot: készen áll", "Forrás lemezkép",
+                     # Fallback of describe_privilege_failure (review finding).
+                     "A jogosultságkérés vagy a worker indítása nem sikerült.", "A művelet nem indult el"):
             with self.subTest(text=text):
                 self.assertIs(literals.get(text), True)
 

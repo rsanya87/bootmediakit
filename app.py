@@ -432,10 +432,12 @@ def describe_privilege_failure(exit_code: int) -> tuple[str, str, str]:
             ),
         )
     return (
-        "A jogosultságkérés vagy a worker indítása nem sikerült.",
-        "A művelet nem indult el",
-        "A rendszergazdai jogosultságkérés megszakadt/megtagadásra került, "
-        "vagy a biztonságos worker nem indult el. A célmeghajtóhoz nem nyúltunk.",
+        tr("A jogosultságkérés vagy a worker indítása nem sikerült."),
+        tr("A művelet nem indult el"),
+        tr(
+            "A rendszergazdai jogosultságkérés megszakadt/megtagadásra került, "
+            "vagy a biztonságos worker nem indult el. A célmeghajtóhoz nem nyúltunk."
+        ),
     )
 
 
