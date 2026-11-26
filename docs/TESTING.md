@@ -184,6 +184,14 @@ Reported by the maintainer on 2026-11-25, GNOME 51.1, Wayland, CachyOS in Virtua
 - To be re-tested after the fixes: both GTK themes, automatic mode with `color-scheme` default, prefer-dark and prefer-light, every manual/automatic switch pair, and the scale change while running.
 - Fixes since then, not yet re-tested on GNOME (finding B stays open until the maintainer reports): the manual light mode is light under a dark Qt colour scheme (`20a7d98`), and the appearance is applied one way and completely on every switch, without Qt's colour scheme override (`a031391`). Finding A is kept as a documented limitation (READMEs). Finding C: the diagnostic log showed that every signal arrives, but Qt reports the whole 1020×576 output as the work area on Wayland; fixed by the Wayland reserve (see above), not yet re-tested on GNOME or KDE.
 
+Reported by the maintainer on 2026-11-26, KDE Plasma, Wayland, CachyOS (main computer), `dev/0.4.0` (commit not recorded), at 1440p, 1080p, 1280×960 and 1280×720, each at 100 % and 120 % scale:
+
+- Switching the system theme between Breeze and Breeze Dark while the program runs: in automatic mode the window follows at once.
+- Manual switches inside the program: no mixed colours and no drawing errors.
+- In a manual mode a system theme change recolours only the window frame (drawn by the desktop); the program stays in the manual mode. This is the expected behaviour.
+- Finding: at 1280×720 with 120 % (about 1067×600 logical) the bottom of the window is slightly cut off; the buttons are visible and clickable, no page scrollbar appeared. The maintainer considers it cosmetic because the buttons are usable; at 1280×800 it is correct. Analysis open (`ROADMAP.md`).
+- Not reported separately: each switch direction (for example manual "Világos" on the dark desktop, then back to automatic and dark), a scale change while the program runs, the Plasma, Qt and PySide6 versions and the system font.
+
 ### Loop-device integration tests
 
 `tests/integration/` runs the real `worker.write_raw`, `worker.write_windows_uefi` and `worker.write_windows_bios` functions against a loop device backed by a disk image file. No physical drive is touched; all test files live on a private tmpfs that is unmounted afterwards.

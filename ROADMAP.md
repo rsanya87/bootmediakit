@@ -43,7 +43,8 @@ A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); 
 - [ ] Kijelzőváltás futás közben (az ablak átvitele kisebb monitorra, laptop leválasztása a dokkolóról, felbontás- vagy skálaváltás): az ablak a képernyőn belül marad, az „USB elkészítése” és a „Megszakítás” gomb elérhető
 - [ ] Polkit-agent nélküli munkamenet: érthető hiba jelenik meg
 - [ ] A gyorsváltó és a rendszerkövetés visszaállítása működik
-- [ ] Főgép (KDE Plasma, sötét rendszertéma): a kézi Világos mód valóban világos; utána vissza Automatikusra és Sötétre, minden irányban (a Fusion világos palettája korábban sötét Qt-séma mellett sötét volt)
+- [ ] Főgép (KDE Plasma, sötét rendszertéma): a kézi Világos mód valóban világos; utána vissza Automatikusra és Sötétre, minden irányban (a Fusion világos palettája korábban sötét Qt-séma mellett sötét volt). Részeredmény (a gazda, 2026-11-26): Breeze ↔ Breeze Dark váltáskor az Automatikus mód azonnal követ; a kézi váltásnál nincs színkeveredés; kézi módban a rendszertéma-váltás csak az ablakkeretet színezi át (várt viselkedés). Az egyes irányokat külön nem jelentette; lásd `docs/TESTING.md`.
+- [ ] KDE Plasma (Wayland) 1280×720, 120% (kb. 1067×600 logikai): az ablak alja kicsit hiányzik (a gazda jelentése, 2026-11-26; a gombok látszanak és kattinthatók, görgetősáv nincs; 1280×800-on jó); az elemzés és a döntés nyitott
 - [ ] GNOME (Wayland) 1360×768: futás közben 100% → 133% váltás, az ablak alja és a gombsor a képernyőn belül marad; majd újraindítás 133%-on
 - [ ] KDE Plasma (Wayland): ugyanez a skálaváltás; a ráhagyás itt is életbe lép, mert a Qt itt sem vonja le a panelt (a gép mérése szerint)
 - [ ] GNOME, `adw-gtk3-dark`: a kézi Sötét ↔ Automatikus váltás mindkét irányban nem keveri a színeket (a javítás után újratesztelendő; a pontos tünet offscreen nem reprodukálódott pixelre)
