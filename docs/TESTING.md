@@ -201,6 +201,10 @@ Diagnostic logs of the maintainer, 2026-11-26, same machine (a diagnostic script
 
 Re-tested by the maintainer on 2026-11-26 after the size guard (`741d0d4`): on KDE Plasma (Wayland) the resolution and scale change while the program runs (2560×1440 → 1280×720, then 100 % → 120 %) and on GNOME (Wayland, 1360×768, 100 % → 133 % while running, then a restart) the window is correct; on KDE only the few pixels coming from the reserve are missing at the bottom. The maintainer approved raising the reserve to 60 px, accepting a page scrollbar on GNOME at 133 % with a window frame.
 
+Reported by the maintainer on 2026-11-26 after raising the reserve to 60 px (`33f7bc5`): on KDE Plasma (Wayland) at 1280×720 with 120 % the bottom of the window is fully visible in every case, at start-up and after a change while the program runs.
+
+Reported by the maintainer on 2026-11-26, GNOME in the VM, after the one-way appearance fix (`a031391`): switching the colour modes no longer mixes the colours in any case; finding B is closed. Not reported separately: which GTK themes and `color-scheme` settings were used.
+
 ### Loop-device integration tests
 
 `tests/integration/` runs the real `worker.write_raw`, `worker.write_windows_uefi` and `worker.write_windows_bios` functions against a loop device backed by a disk image file. No physical drive is touched; all test files live on a private tmpfs that is unmounted afterwards.
