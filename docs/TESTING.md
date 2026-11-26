@@ -167,7 +167,8 @@ What to check: colours and automatic light/dark following, the sun/moon switch a
 | GNOME, GTK theme `Adwaita` | automatic (`color-scheme` default / prefer-dark / prefer-light), manual light and dark | Wayland only (the GNOME in the VM has no X11 session) | reported: automatic mode with `color-scheme` default, prefer-dark and prefer-light as expected, manual and automatic switching in every pair, the runtime scale change at 1360×768 (100 % → 133 %); pending: the cancel with the correct password with the graphical agent, the polkit dialog, file dialog and icon check |
 | XFCE | light and dark | X11 | not tested (pending) |
 | Cinnamon | light and dark | X11 | not tested (pending) |
-| MATE or LXQt | at least one | available one | not tested (pending) |
+| LXQt | system default | not recorded | reported (the maintainer's test table, 2026-11-26): start and polkit password prompt, light and dark system theme with automatic mode, manual light/dark and back to automatic, file dialog and icons, 1280×800 and 1366×768 at 100 % and 125 % without a page scrollbar, resolution change while running; recorded: system font DejaVu LGC Sans 12 pt, Qt work area 1920×1048 |
+| MATE | light and dark | X11 | not tested (pending) |
 | Openbox, no polkit agent (VM, via SDDM) | system default | X11 | reported: clear error dialogs, the cancel and close texts during the password prompt, Ctrl+C handled without a crash (exit code not measured); pkexec's textual agent fails with the correct password (upstream polkit, see below) |
 
 Reported by the maintainer on 2026-11-25, KDE Plasma, Wayland, CachyOS, `dev/0.4.0` before the T5 changes:
