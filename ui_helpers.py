@@ -133,10 +133,12 @@ def clamp_minimum_size(minimum: tuple[int, int], available: tuple[int, int]) -> 
 # Height kept free on Wayland when Qt reports the whole output as the work
 # area (docs/TESTING.md, ROADMAP.md approved deviations). Wayland gives Qt no
 # work area: QScreen.availableGeometry() equals QScreen.geometry() even with
-# panels (measured on GNOME 51.1 and on KDE Plasma). An estimate, not a
-# measurement of the panel: KDE Plasma's default panel is 44 logical px, plus
-# 4 px; it also covers GNOME's top bar (about 32 px in the maintainer's log).
-WAYLAND_PANEL_RESERVE = 48
+# panels (measured on GNOME 51.1 and on KDE Plasma). Measured on the
+# maintainer's KDE Plasma: KWin's configure_bounds keep 58 logical px free
+# (panel and title bar), sent only at start-up; 60 px covers that and GNOME's
+# top bar (about 32 px in the maintainer's log). Still an estimate for other
+# desktops and panel sizes (docs/TESTING.md).
+WAYLAND_PANEL_RESERVE = 60
 
 
 def usable_work_area(

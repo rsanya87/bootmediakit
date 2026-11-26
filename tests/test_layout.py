@@ -686,7 +686,8 @@ class WaylandScaleChangeTests(LayoutTestCase):
     def test_restart_at_the_new_scale_uses_the_same_area(self):
         window = self.screen_window((0, 0, 1020, 576), wayland=True)
         self.assertEqual(window.available_area(), (0, 0, 1020, 576 - ui_helpers.WAYLAND_PANEL_RESERVE))
-        self.assertTrue(QRect(window.available_area()[0], 0, 1020, 528).contains(window.frameGeometry()))
+        usable_height = 576 - ui_helpers.WAYLAND_PANEL_RESERVE
+        self.assertTrue(QRect(window.available_area()[0], 0, 1020, usable_height).contains(window.frameGeometry()))
 
     def test_large_screens_are_unchanged(self):
         # Reference: the earlier code, which used the available area as it is.
@@ -856,7 +857,7 @@ class UsableWorkAreaTests(unittest.TestCase):
     def test_usable_work_area(self):
         usable = ui_helpers.usable_work_area
         reserve = ui_helpers.WAYLAND_PANEL_RESERVE
-        self.assertEqual(reserve, 48)
+        self.assertEqual(reserve, 60)
         cases = [
             # (geometry, available, wayland) -> expected
             (((0, 0, 1020, 576), (0, 0, 1020, 576), True), (0, 0, 1020, 576 - reserve)),  # GNOME 133 %
