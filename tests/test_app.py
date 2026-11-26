@@ -513,5 +513,45 @@ class BootModeSelectorTests(unittest.TestCase):
         self.assertEqual(window.selected_worker_mode(), "windows-bios")
 
 
+
+class CancelBeforeAuthenticationTests(unittest.TestCase):
+    """Megszakítás while pkexec still authenticates: the user is told when it
+    takes effect; the cancel protocol (a cancel line on stdin) is unchanged."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def make_window(self, worker_started):
+        from unittest.mock import MagicMock
+
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        window.process = MagicMock()
+        window._worker_started = worker_started
+        self.addCleanup(setattr, window, "process", None)
+        return window
+
+    def test_before_the_worker_started(self):
+        window = self.make_window(False)
+        window._send_cancel_request()
+        self.assertEqual(window.status_label.text(), gui.gui_text("gui.cancel.pending_authentication"))
+        self.assertIn(gui.gui_text("gui.cancel.before_authentication"), window.log.toPlainText())
+        window.process.write.assert_called_once_with(b"cancel\n")
+        window.process.closeWriteChannel.assert_called_once_with()
+
+    def test_after_the_worker_started_unchanged(self):
+        window = self.make_window(True)
+        window._send_cancel_request()
+        self.assertEqual(window.status_label.text(), "Biztonságos megszakítás kérése…")
+        self.assertNotIn(gui.gui_text("gui.cancel.before_authentication"), window.log.toPlainText())
+        window.process.write.assert_called_once_with(b"cancel\n")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -425,6 +425,11 @@ def gui_text(msg_id: str) -> str:
             "A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. "
             "A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra."
         ),
+        "gui.cancel.pending_authentication": tr("Megszakítás kérve; a hitelesítés után érvényesül."),
+        "gui.cancel.before_authentication": tr(
+            "A megszakítás a hitelesítés után azonnal érvényesül, a lemezhez nem nyúlunk. "
+            "A hitelesítő ablakban a Mégse gombbal most is kiléphetsz."
+        ),
         "gui.interrupt.untouched": tr(
             "BootMediaKit: megszakítva (Ctrl+C). A háttérfolyamat nem indult el, a célmeghajtóhoz nem nyúltunk."
         ),
@@ -1841,7 +1846,13 @@ class MainWindow(QMainWindow):
             return
         self.cancel_button.setEnabled(False)
         self.cancel_button.setText("Megszakítás folyamatban…")
-        self.status_label.setText("Biztonságos megszakítás kérése…")
+        if self._worker_started:
+            self.status_label.setText("Biztonságos megszakítás kérése…")
+        else:
+            # pkexec is still authenticating: the cancel line waits in the
+            # pipe and the worker reads it before it changes anything.
+            self.status_label.setText(gui_text("gui.cancel.pending_authentication"))
+            self.append_log(gui_text("gui.cancel.before_authentication"))
         self.process.write(b"cancel\n")
         self.process.closeWriteChannel()
 
