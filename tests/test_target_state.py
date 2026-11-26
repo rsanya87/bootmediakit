@@ -175,7 +175,8 @@ class GuiTextIdentifierTests(unittest.TestCase):
         self.assertEqual(self.used(), set(table))
         for msg_id, text in table.items():
             with self.subTest(msg_id=msg_id):
-                self.assertEqual(gui.gui_text(msg_id), text)
+                # The table keeps a text on one line; line breaks count as spaces.
+                self.assertEqual(" ".join(gui.gui_text(msg_id).split()), text)
 
 
 if __name__ == "__main__":

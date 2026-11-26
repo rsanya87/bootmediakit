@@ -433,8 +433,23 @@ def gui_text(msg_id: str) -> str:
         "gui.button.continue": tr("Folytatás"),
         "gui.cancel.pending_authentication": tr("Megszakítás kérve; a hitelesítés után érvényesül."),
         "gui.cancel.before_authentication": tr(
-            "A megszakítás a hitelesítés után azonnal érvényesül, a lemezhez nem nyúlunk. "
-            "A hitelesítő ablakban a Mégse gombbal most is kiléphetsz."
+            "A megszakítás a hitelesítés után érvényesül, várhatóan a lemez módosítása előtt "
+            "(ez nem szigorúan garantált). A hitelesítő ablak Mégse gombjával a művelet nem indul el, "
+            "és a lemezhez nem nyúlunk."
+        ),
+        "gui.close.before_start": tr(
+            "A jelszókérés még folyamatban van, a pendrive írása még nem kezdődött el. "
+            "A hitelesítő ablak Mégse gombjával a művelet nem indul el, és a lemezhez nem nyúlunk. "
+            "Ha itt szakítod meg, a megszakítás a hitelesítés után érvényesül, várhatóan a lemez módosítása előtt; "
+            "ezt nem garantáljuk szigorúan, a célmeghajtó részleges állapotban maradhat.\n\n"
+            "Megszakítod és bezárod?"
+        ),
+        "gui.cancel.confirm_before_start": tr(
+            "A jelszókérés még folyamatban van, a pendrive írása még nem kezdődött el. "
+            "A hitelesítő ablak Mégse gombjával a művelet nem indul el, és a lemezhez nem nyúlunk. "
+            "Ha itt szakítod meg, a megszakítás a hitelesítés után érvényesül, várhatóan a lemez módosítása előtt; "
+            "ezt nem garantáljuk szigorúan, a célmeghajtó részleges állapotban maradhat.\n\n"
+            "Biztosan megszakítod?"
         ),
         "gui.interrupt.untouched": tr(
             "BootMediaKit: megszakítva (Ctrl+C). A háttérfolyamat nem indult el, a célmeghajtóhoz nem nyúltunk."
@@ -1861,10 +1876,16 @@ class MainWindow(QMainWindow):
     def cancel_operation(self) -> None:
         if not self.process:
             return
+        if self._worker_started:
+            text = (
+                "A műveletet biztonságos írási határon állítjuk le. A pendrive részleges állapotban maradhat, "
+                "ha a törlés vagy írás már elkezdődött.\n\nBiztosan megszakítod?"
+            )
+        else:
+            text = gui_text("gui.cancel.confirm_before_start")
         if self.confirm(
             "Művelet megszakítása",
-            "A műveletet biztonságos írási határon állítjuk le. A pendrive részleges állapotban maradhat, "
-            "ha a törlés vagy írás már elkezdődött.\n\nBiztosan megszakítod?",
+            text,
             gui_text("gui.button.stop"),
             gui_text("gui.button.continue"),
         ):
@@ -1874,10 +1895,16 @@ class MainWindow(QMainWindow):
         if self.process is None:
             event.accept()
             return
+        if self._worker_started:
+            text = (
+                "Bezárás előtt biztonságosan megszakítjuk a pendrive készítését. "
+                "A célmeghajtó részleges állapotban maradhat.\n\nMegszakítod és bezárod?"
+            )
+        else:
+            text = gui_text("gui.close.before_start")
         if self.confirm(
             "A BootMediaKit művelete még fut",
-            "Bezárás előtt biztonságosan megszakítjuk a pendrive készítését. "
-            "A célmeghajtó részleges állapotban maradhat.\n\nMegszakítod és bezárod?",
+            text,
             gui_text("gui.button.stop_and_close"),
             gui_text("gui.button.continue"),
         ):

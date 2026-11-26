@@ -617,5 +617,62 @@ class HungarianConfirmationButtonsTests(unittest.TestCase):
         self.assertNotIn("StandardButton.Yes", source)
 
 
+
+class ConfirmationTextByStateTests(unittest.TestCase):
+    """Before the worker started (pkexec still authenticates) the close and
+    Megszakítás confirmations say what is certain and what is not; after it
+    started the earlier conservative texts stay."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def texts(self, worker_started):
+        from unittest.mock import MagicMock
+
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        window.process = MagicMock()
+        window._worker_started = worker_started
+        self.addCleanup(setattr, window, "process", None)
+        with patch.object(gui.MainWindow, "confirm", return_value=False) as confirm:
+            window.cancel_operation()
+            window.close()
+        window.process.write.assert_not_called()
+        return [call.args[1] for call in confirm.call_args_list]
+
+    def test_before_the_worker_started(self):
+        cancel, close = self.texts(False)
+        self.assertEqual(cancel, gui.gui_text("gui.cancel.confirm_before_start"))
+        self.assertEqual(close, gui.gui_text("gui.close.before_start"))
+        for text in (cancel, close):
+            self.assertIn("a pendrive írása még nem kezdődött el", text)
+            # Certain only for the Mégse of the authentication dialog.
+            self.assertIn("Mégse gombjával a művelet nem indul el, és a lemezhez nem nyúlunk", text)
+            # The cancel itself: expected, not promised (worker reader thread).
+            self.assertIn("várhatóan a lemez módosítása előtt", text)
+            self.assertIn("nem garantáljuk szigorúan", text)
+            self.assertNotIn("azonnal", text)
+        self.assertTrue(close.endswith("Megszakítod és bezárod?"))
+        self.assertTrue(cancel.endswith("Biztosan megszakítod?"))
+
+    def test_after_the_worker_started_unchanged(self):
+        cancel, close = self.texts(True)
+        self.assertTrue(cancel.startswith("A műveletet biztonságos írási határon állítjuk le."))
+        self.assertTrue(close.startswith("Bezárás előtt biztonságosan megszakítjuk a pendrive készítését."))
+
+    def test_status_and_log_promise_nothing_more(self):
+        status = gui.gui_text("gui.cancel.pending_authentication")
+        log = gui.gui_text("gui.cancel.before_authentication")
+        self.assertEqual(status, "Megszakítás kérve; a hitelesítés után érvényesül.")
+        self.assertNotIn("azonnal", log)
+        self.assertIn("nem szigorúan garantált", log)
+
+
 if __name__ == "__main__":
     unittest.main()
