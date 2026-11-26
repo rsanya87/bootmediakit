@@ -207,6 +207,13 @@ Reported by the maintainer on 2026-11-26 after raising the reserve to 60 px (`33
 
 Reported by the maintainer on 2026-11-26, GNOME in the VM, after the one-way appearance fix (`a031391`): switching the colour modes no longer mixes the colours in any case; finding B is closed. Not reported separately: which GTK themes and `color-scheme` settings were used.
 
+Reported by the maintainer on 2026-11-26, Openbox in the VM (no polkit agent; pkexec's own textual agent asks in the terminal), program started from a terminal:
+
+- Ctrl+C at the password prompt: no crash; the terminal line appeared. The exit code was not measured.
+- Megszakítás button and the window's X during the password prompt: the status line "Megszakítás kérve; a hitelesítés után érvényesül." and the button text "Megszakítás folyamatban…" appear; the window stays open until the password step ends (the approved plan A).
+- Wrong password without a pending cancel: the dialog "A hitelesítés nem sikerült" (pkexec 127, the target was not changed) appears; the program does not quit silently.
+- Open finding: with a pending cancel (Megszakítás button, or the X and the confirmation), the correct password gave "==== AUTHENTICATION FAILED ====". With the X the program quit without a dialog (closing had been confirmed), with the button it showed the error dialog. The USB drive stayed unchanged (`lsblk -f`: `sdb1` still the earlier Linux Mint ISO, `iso9660`). The polkit log for these attempts shows `polkit-agent-helper-1: error response to PolicyKit daemon: ... No session for cookie` (TTY=unknown), not a `pam_unix` failure; a real wrong password shows a `pam_unix` authentication failure; there is no `pam_faillock` line. The program's close and cancel paths only write the `cancel` line to pkexec's standard input and close it (checked with the real window and a shell in place of pkexec: no terminate, kill or signal). Whether pkexec's textual agent stops when its standard input gets the line or the end of file is being checked by the maintainer with pkexec itself; analysis open.
+
 ### Loop-device integration tests
 
 `tests/integration/` runs the real `worker.write_raw`, `worker.write_windows_uefi` and `worker.write_windows_bios` functions against a loop device backed by a disk image file. No physical drive is touched; all test files live on a private tmpfs that is unmounted afterwards.
