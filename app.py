@@ -11,6 +11,7 @@ import html
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -192,6 +193,15 @@ MIN_WINDOW_HEIGHT = 550
 # for a slow or busy machine (a VM) and is restarted after each correction.
 COMPOSITOR_RESIZE_GUARD_MS = 2000
 COMPOSITOR_RESIZE_CORRECTIONS = 2
+
+# Ctrl+C in the terminal reaches the GUI and pkexec (one process group). With
+# Python's default handler the pending KeyboardInterrupt crashed PySide when
+# the QProcess.finished slot ran (SIGSEGV, docs/LESSONS.md). The GUI's own
+# handler only sets a flag; this timer lets Python run it while the Qt loop
+# idles and does the work on the approved close path. A handler, not SIG_IGN:
+# children get the default action back on exec, so pkexec still stops.
+TERMINAL_INTERRUPT_POLL_MS = 200
+EXIT_INTERRUPTED = 130
 
 
 class ElidedLabel(QLabel):
@@ -872,6 +882,8 @@ class MainWindow(QMainWindow):
         self._measure_timer.timeout.connect(self.measure_layout_profiles)
         self.measure_layout_profiles()
         self._own_resize = False
+        self._interrupt_requested = False
+        self._interrupt_handled = False
         self._size_guard_corrections = 0
         self._size_guard_timer = QTimer(self)
         self._size_guard_timer.setSingleShot(True)
@@ -1837,9 +1849,26 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Cancel,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._close_after_operation = True
-            self._send_cancel_request()
+            self.close_after_cancel()
         event.ignore()
+
+    def close_after_cancel(self) -> None:
+        """Cancel cooperatively and close when the worker has finished.
+
+        The path of a confirmed window close; Ctrl+C in the terminal uses it too.
+        """
+        if self._close_after_operation:
+            return
+        self._close_after_operation = True
+        self._send_cancel_request()
+
+    def poll_terminal_interrupt(self) -> None:
+        if self._interrupt_requested and not self._interrupt_handled:
+            self._interrupt_handled = True
+            if self.process is None:
+                self.close()
+            else:
+                self.close_after_cancel()
 
     def read_stdout(self) -> None:
         if not self.process:
@@ -1904,7 +1933,10 @@ class MainWindow(QMainWindow):
             self.output_buffer = ""
         self.stop_operation_clock()
         self.set_busy(False)
-        was_closing = self._close_after_operation
+        # Ctrl+C may have stopped pkexec before the poll timer ran: no dialog then.
+        was_closing = self._close_after_operation or self._interrupt_requested
+        if self._interrupt_requested:
+            self._interrupt_handled = True
 
         if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
             self.progress.setValue(100)
@@ -1999,6 +2031,20 @@ def shutdown_window(window: MainWindow) -> None:
     QCoreApplication.processEvents()
 
 
+def install_terminal_interrupt_handler(window: MainWindow) -> QTimer:
+    """SIGINT only sets a flag; the window acts on it from a Qt timer."""
+
+    def on_sigint(_signum, _frame) -> None:
+        window._interrupt_requested = True
+
+    signal.signal(signal.SIGINT, on_sigint)
+    timer = QTimer(window)
+    timer.setInterval(TERMINAL_INTERRUPT_POLL_MS)
+    timer.timeout.connect(window.poll_terminal_interrupt)
+    timer.start()
+    return timer
+
+
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
@@ -2010,9 +2056,12 @@ def main() -> int:
     if APP_ICON.is_file():
         app.setWindowIcon(QIcon(str(APP_ICON)))
     window = MainWindow(theme_controller)
+    install_terminal_interrupt_handler(window)
     window.show()
     QTimer.singleShot(0, window.fit_window_to_screen)
     exit_code = app.exec()
+    if window._interrupt_requested:
+        exit_code = EXIT_INTERRUPTED
 
     # Explicitly destroy all widgets and child QObjects while QApplication is
     # still alive. This avoids leaving QObject wrappers for PySide's atexit

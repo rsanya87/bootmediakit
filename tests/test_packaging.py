@@ -376,6 +376,7 @@ class GuiTestCoverageTests(unittest.TestCase):
         "test_messages": ("MessageSourceTests", "EmitTests", "WriterMessageTests", "GuiIgnoresIdentifierTests"),
         "test_writer_fingerprint": ("WriterFingerprintTests", "CancellationBoundaryTests", "RawByteExactnessTests"),
         "test_desktop_polkit": (),
+        "test_terminal_interrupt": ("TerminalInterruptTests", "TerminalInterruptPathTests"),
     }
 
     def discovered(self):
