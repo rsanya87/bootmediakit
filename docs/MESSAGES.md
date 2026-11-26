@@ -73,3 +73,11 @@ Rules:
 | `worker.raw.verify_progress` | Ellenőrzés… {done_bytes} / {total_bytes} bájt | `done_bytes` (int): bytes compared so far; `total_bytes` (int): image size | with verification |
 | `worker.raw.done_verified` | A lemezkép sikeresen kiírva és ellenőrizve. | none | success with verification |
 | `worker.raw.done` | A lemezkép sikeresen kiírva. | none | success without verification |
+
+## GUI texts (`app.py`)
+
+Texts the GUI writes itself, with an identifier, through `gui_text()` in `app.py`; the text is translated by `tr()`, the identifier names it in the documentation and the tests. `tests/test_target_state.py` checks that this table and `gui_text()` list the same identifiers with the same texts.
+
+| `msg_id` | Text (Hungarian) | Where |
+|---|---|---|
+| `gui.result.target_unknown` | A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra. | log and failure dialog: the worker started, then ended without a closing event or abnormally (killed, crashed); fail-closed, INVARIANTS B3 |

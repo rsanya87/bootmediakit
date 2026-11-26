@@ -418,6 +418,17 @@ PKEXEC_DISMISSED = 126
 PKEXEC_NOT_AUTHORIZED = 127
 
 
+def gui_text(msg_id: str) -> str:
+    """A user text of the GUI by its identifier (docs/MESSAGES.md, GUI texts)."""
+    texts = {
+        "gui.result.target_unknown": tr(
+            "A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. "
+            "A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra."
+        ),
+    }
+    return texts[msg_id]
+
+
 def describe_privilege_failure(exit_code: int) -> tuple[str, str, str]:
     """(status line, dialog title, dialog text) for a worker that never started.
 
@@ -495,6 +506,7 @@ class MainWindow(QMainWindow):
         self._worker_started = False
         self._target_modified = False
         self._operation_cancelled = False
+        self._final_event_received = False
         self._close_after_operation = False
         self.current_device: dict[str, Any] | None = None
         self._selected_mode = "raw"
@@ -884,6 +896,7 @@ class MainWindow(QMainWindow):
         self._own_resize = False
         self._interrupt_requested = False
         self._interrupt_handled = False
+        self._last_target_state = ""
         self._size_guard_corrections = 0
         self._size_guard_timer = QTimer(self)
         self._size_guard_timer.setSingleShot(True)
@@ -1798,6 +1811,7 @@ class MainWindow(QMainWindow):
         self._worker_started = False
         self._target_modified = False
         self._operation_cancelled = False
+        self._final_event_received = False
         self._close_after_operation = False
         self.cancel_button.setText("Megszakítás")
         self.elapsed_timer.stop()
@@ -1903,6 +1917,10 @@ class MainWindow(QMainWindow):
             self._target_modified = bool(event.get("target_modified"))
         if event.get("cancelled"):
             self._operation_cancelled = True
+        # The worker's closing events (cancelled, failed and the early errors)
+        # carry "error"; only they report the target state at the end.
+        if event.get("error") or event.get("cancelled"):
+            self._final_event_received = True
         message = str(event.get("message", ""))
         if message:
             self.status_label.setText(message)
@@ -1938,7 +1956,8 @@ class MainWindow(QMainWindow):
         if self._interrupt_requested:
             self._interrupt_handled = True
 
-        if exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0:
+        state = self.target_state(exit_code, exit_status)
+        if state == "complete":
             self.progress.setValue(100)
             self.status_label.setText("Sikeres befejezés.")
             self.set_status_state("success")
@@ -1948,11 +1967,14 @@ class MainWindow(QMainWindow):
         elif self._operation_cancelled or exit_code == 130:
             self.status_label.setText("A művelet biztonságosan megszakítva.")
             self.set_status_state("warning")
-            self.append_log(
-                "A célmeghajtó részleges állapotban maradhat."
-                if self._target_modified
-                else "A megszakítás a célmeghajtó módosítása előtt történt; a lemez tartalmához nem nyúltunk."
-            )
+            if state == "unknown":
+                self.append_log(gui_text("gui.result.target_unknown"))
+            else:
+                self.append_log(
+                    "A célmeghajtó részleges állapotban maradhat."
+                    if self._target_modified
+                    else "A megszakítás a célmeghajtó módosítása előtt történt; a lemez tartalmához nem nyúltunk."
+                )
         elif not self._worker_started:
             # pkexec 126/127 and failures before the worker's first structured
             # event cannot have touched the target disk.
@@ -1969,23 +1991,46 @@ class MainWindow(QMainWindow):
             self.status_label.setText("A művelet nem fejeződött be.")
             self.set_status_state("error")
             self.append_log(f"A háttérfolyamat kilépési kódja: {exit_code}")
+            if state == "unknown":
+                self.append_log(gui_text("gui.result.target_unknown"))
             if not was_closing:
+                if state == "unknown":
+                    target_text = gui_text("gui.result.target_unknown")
+                elif self._target_modified:
+                    target_text = "A célmeghajtó állapota részleges lehet; újrahasználat előtt készítsd el újra."
+                else:
+                    target_text = "A célmeghajtó tartalmát a worker nem módosította."
                 QMessageBox.critical(
                     self,
                     "Sikertelen művelet",
-                    "A művelet nem fejeződött be. A naplóban látható a hiba oka. "
-                    + (
-                        "A célmeghajtó állapota részleges lehet; újrahasználat előtt készítsd el újra."
-                        if self._target_modified
-                        else "A célmeghajtó tartalmát a worker nem módosította."
-                    ),
+                    "A művelet nem fejeződött be. A naplóban látható a hiba oka. " + target_text,
                 )
+        self._last_target_state = state
         self.process = None
         self.cancel_button.setEnabled(False)
         self.cancel_button.setText("Megszakítás")
         self.refresh_devices(preserve_selection=True, quiet=True)
         if was_closing:
             self.close()
+
+    def target_state(self, exit_code: int, exit_status: QProcess.ExitStatus) -> str:
+        """What the GUI may say about the target after the worker ended.
+
+        "complete": success. "untouched": the worker never started (it changes
+        nothing before its first event). "not_modified" or "modified": the
+        worker reported its end with a closing event and exited normally, so
+        its target_modified field is final. "unknown": any other end (killed,
+        crashed, no closing event); fail-closed (docs/INVARIANTS.md B3), the
+        last target_modified is not proof that nothing was changed.
+        """
+        normal = exit_status == QProcess.ExitStatus.NormalExit
+        if normal and exit_code == 0:
+            return "complete"
+        if not self._worker_started:
+            return "untouched"
+        if normal and self._final_event_received:
+            return "modified" if self._target_modified else "not_modified"
+        return "unknown"
 
     def set_busy(self, busy: bool) -> None:
         if busy and self._lsblk_request_active:
