@@ -711,6 +711,147 @@ class WaylandScaleChangeTests(LayoutTestCase):
         self.assertEqual(window.available_area(), (0, 0, 1366, 724))
 
 
+class CompositorRestoresSizeTests(LayoutTestCase):
+    """KDE Plasma on Wayland (maintainer's WAYLAND_DEBUG log): on a resolution
+    or scale change KWin sends xdg_toplevel.configure with the window's old
+    size (880x900 from 2560x1440) in the same batch, and Qt applies it after
+    our fitting resize, so the window stayed 900 px high on a 720 or 600 px
+    output. The compositor is simulated by a resize that does not come from
+    our code (window.resize), after the real screen signals."""
+
+    START = (0, 0, 2560, 1440)
+    TARGETS = ((0, 0, 1280, 720), (0, 0, 1067, 600))
+
+    def setUp(self):
+        self.program_resizes = []
+        original = gui.MainWindow.resize_by_program
+
+        def spy(window, width, height):
+            self.program_resizes.append((width, height))
+            original(window, width, height)
+
+        patcher = patch.object(gui.MainWindow, "resize_by_program", spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def pump(self):
+        for _ in range(5):
+            QApplication.processEvents()
+
+    def changed_window(self, target, *, wayland=True, family="DejaVu Sans"):
+        """A window started at 2560x1440, then the output changes to target."""
+        window = WaylandScaleChangeTests.screen_window(self, self.START, wayland=wayland, family=family)
+        self.old_size = window.size().toTuple()
+        WaylandScaleChangeTests.change_scale(self, window, target)
+        self.program_resizes.clear()
+        return window
+
+    def compositor_sends(self, window, size):
+        window.resize(*size)  # not through resize_by_program: from outside
+        self.pump()
+
+    def usable(self, target):
+        return ui_helpers.usable_work_area(target, target, wayland=True)
+
+    def assert_inside(self, window, area):
+        frame = window.frameGeometry()
+        self.assertTrue(QRect(*area).contains(frame), msg=f"{frame} kilóg a munkaterületből: {area}")
+
+    def test_old_size_from_the_compositor_is_undone(self):
+        for family in TESTED_FONT_FAMILIES:
+            for target in self.TARGETS:
+                with self.subTest(font=family, target=target):
+                    window = self.changed_window(target, family=family)
+                    self.assertGreater(self.old_size[1], target[3])
+                    self.compositor_sends(window, self.old_size)
+                    self.assert_inside(window, self.usable(target))
+                    self.assertEqual(len(self.program_resizes), 1)
+                    for state in UI_STATES:
+                        apply_ui_state(window, state)
+                        window.update_layout_profile()
+                        self.pump()
+                        context = f"{state} {self.font_context()}"
+                        self.assert_no_page_scrollbar(window)
+                        self.assertEqual(cut_off_texts(window), [], msg=context)
+                        viewport = window.scroll_area.viewport()
+                        for button in (window.start_button, window.cancel_button):
+                            mapped = QRect(button.mapTo(viewport, QPoint(0, 0)), button.size())
+                            self.assertTrue(viewport.rect().contains(mapped), msg=f"{button.text()} {context}")
+                    window.close()
+
+    def test_at_most_two_corrections_per_change(self):
+        target = self.TARGETS[0]
+        window = self.changed_window(target)
+        for _ in range(4):
+            self.compositor_sends(window, self.old_size)
+        self.assertEqual(len(self.program_resizes), gui.COMPOSITOR_RESIZE_CORRECTIONS)
+        self.assertFalse(window.size_guard_active())
+        # A compositor that insists keeps its size; no loop.
+        self.assertEqual(window.size().toTuple(), self.old_size)
+
+    def test_late_resize_within_the_limit(self):
+        from PySide6.QtTest import QTest
+
+        target = self.TARGETS[1]
+        window = self.changed_window(target)
+        QTest.qWait(300)
+        self.compositor_sends(window, self.old_size)
+        self.assert_inside(window, self.usable(target))
+        self.assertEqual(len(self.program_resizes), 1)
+
+    def test_resize_after_the_limit_is_left_alone(self):
+        # Also a resize by the user outside the watching window.
+        from PySide6.QtTest import QTest
+
+        with patch.object(gui, "COMPOSITOR_RESIZE_GUARD_MS", 100):
+            window = self.changed_window(self.TARGETS[0])
+            QTest.qWait(200)
+            self.assertFalse(window.size_guard_active())
+            self.compositor_sends(window, self.old_size)
+        self.assertEqual(self.program_resizes, [])
+        self.assertEqual(window.size().toTuple(), self.old_size)
+
+    def test_no_extra_resize_with_a_compositor_that_keeps_the_size(self):
+        # GNOME (mutter) kept the fitted size: nothing more happens.
+        from PySide6.QtTest import QTest
+
+        with patch.object(gui, "COMPOSITOR_RESIZE_GUARD_MS", 100):
+            for target in self.TARGETS:
+                with self.subTest(target=target):
+                    window = self.changed_window(target)
+                    fitted = window.size().toTuple()
+                    QTest.qWait(200)
+                    self.assertEqual(self.program_resizes, [])
+                    self.assertEqual(window.size().toTuple(), fitted)
+                    self.assert_inside(window, self.usable(target))
+                    window.close()
+
+    def test_a_fitting_answer_ends_the_watch(self):
+        target = self.TARGETS[0]
+        window = self.changed_window(target)
+        self.assertTrue(window.size_guard_active())
+        self.compositor_sends(window, (880, 600))
+        self.assertFalse(window.size_guard_active())
+        self.compositor_sends(window, self.old_size)
+        self.assertEqual(self.program_resizes, [])
+
+    def test_maximized_window_is_left_alone(self):
+        window = self.changed_window(self.TARGETS[0])
+        window.setWindowState(Qt.WindowState.WindowMaximized)
+        self.pump()
+        self.program_resizes.clear()
+        self.compositor_sends(window, self.old_size)
+        self.assertEqual(self.program_resizes, [])
+        self.assertFalse(window.size_guard_active())
+
+    def test_x11_is_unchanged(self):
+        window = self.changed_window(self.TARGETS[0], wayland=False)
+        self.assertFalse(window.size_guard_active())
+        self.compositor_sends(window, self.old_size)
+        self.assertEqual(self.program_resizes, [])
+        self.assertEqual(window.size().toTuple(), self.old_size)
+
+
 class UsableWorkAreaTests(unittest.TestCase):
     def test_usable_work_area(self):
         usable = ui_helpers.usable_work_area

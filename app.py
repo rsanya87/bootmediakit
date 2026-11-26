@@ -182,6 +182,17 @@ def mounted_paths(node: dict[str, Any]) -> list[str]:
 MIN_WINDOW_WIDTH = 880
 MIN_WINDOW_HEIGHT = 550
 
+# After a work-area change on Wayland the compositor may answer the window's
+# new size with its old one: KWin sends xdg_toplevel.configure with the size
+# from before the output change in the same batch, and Qt applies it after our
+# resize (docs/LESSONS.md, docs/TESTING.md). For this long after fitting the
+# window, a resize from outside that is larger than the work area is undone,
+# at most COMPOSITOR_RESIZE_CORRECTIONS times per change. Measured on KDE
+# Plasma: the old size arrived 1 ms after our resize; the limit leaves room
+# for a slow or busy machine (a VM) and is restarted after each correction.
+COMPOSITOR_RESIZE_GUARD_MS = 2000
+COMPOSITOR_RESIZE_CORRECTIONS = 2
+
 
 class ElidedLabel(QLabel):
     """One-line label that shortens long text with "…" instead of clipping."""
@@ -860,6 +871,11 @@ class MainWindow(QMainWindow):
         self._measure_timer.setInterval(0)
         self._measure_timer.timeout.connect(self.measure_layout_profiles)
         self.measure_layout_profiles()
+        self._own_resize = False
+        self._size_guard_corrections = 0
+        self._size_guard_timer = QTimer(self)
+        self._size_guard_timer.setSingleShot(True)
+        self._size_guard_timer.timeout.connect(self.stop_size_guard)
         self.setup_initial_geometry()
         self._watched_screen = None
         self.refresh_timer = QTimer(self)
@@ -909,7 +925,7 @@ class MainWindow(QMainWindow):
         initial_width, initial_height = initial_window_size(
             width, height, self._single_column_height, (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         )
-        self.resize(max(initial_width, self.minimumWidth()), max(initial_height, self.minimumHeight()))
+        self.resize_by_program(max(initial_width, self.minimumWidth()), max(initial_height, self.minimumHeight()))
         self.move(
             x + max(0, (width - self.width()) // 2),
             y + max(0, (height - self.height()) // 2),
@@ -923,7 +939,7 @@ class MainWindow(QMainWindow):
         initial_width, initial_height = initial_window_size(
             width, height, self._single_column_height, (MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         )
-        self.resize(
+        self.resize_by_program(
             max(self.minimumWidth(), initial_width - frame_width),
             max(self.minimumHeight(), initial_height - frame_height),
         )
@@ -961,7 +977,70 @@ class MainWindow(QMainWindow):
         x, y, width, height = fit_rect_into_area(current, self.available_area())
         if (width, height) != current[2:]:
             frame_width, frame_height = self.frame_extra()
-            self.resize(width - frame_width, height - frame_height)
+            self.resize_by_program(width - frame_width, height - frame_height)
+        if (x, y) != current[:2]:
+            self.move(x, y)
+        self.request_relayout()
+        if self.on_wayland():
+            self.start_size_guard()
+
+    def resize_by_program(self, width: int, height: int) -> None:
+        """Resize from our own code; the size guard only judges other resizes."""
+        self._own_resize = True
+        try:
+            self.resize(width, height)
+        finally:
+            self._own_resize = False
+
+    def start_size_guard(self) -> None:
+        """Watch for the compositor's answer to the fitted size (Wayland only)."""
+        self._size_guard_corrections = COMPOSITOR_RESIZE_CORRECTIONS
+        self._size_guard_timer.start(COMPOSITOR_RESIZE_GUARD_MS)
+
+    def stop_size_guard(self) -> None:
+        self._size_guard_timer.stop()
+        self._size_guard_corrections = 0
+
+    def size_guard_active(self) -> bool:
+        return self._size_guard_timer.isActive()
+
+    def exceeds_work_area(self) -> bool:
+        frame = self.frameGeometry()
+        _x, _y, width, height = self.available_area()
+        return frame.width() > width or frame.height() > height
+
+    def check_outside_resize(self) -> None:
+        """A resize not made by our code arrived while the guard watches.
+
+        Larger than the work area: the compositor restored an old size, undo
+        it (limited, so a compositor that insists cannot cause a loop). Fits:
+        the compositor's answer has arrived, stop watching.
+        """
+        if not self.size_guard_active():
+            return
+        states = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+        if self.windowState() & states or not self.exceeds_work_area():
+            self.stop_size_guard()
+            return
+        if self._size_guard_corrections <= 0:
+            self.stop_size_guard()
+            return
+        # Later, not inside the resize event the compositor's size came with.
+        QTimer.singleShot(0, self.correct_outside_resize)
+
+    def correct_outside_resize(self) -> None:
+        if not self.size_guard_active() or self._size_guard_corrections <= 0:
+            return
+        states = Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen
+        if self.windowState() & states or not self.exceeds_work_area():
+            return
+        self._size_guard_corrections -= 1
+        self._size_guard_timer.start(COMPOSITOR_RESIZE_GUARD_MS)
+        frame = self.frameGeometry()
+        current = (frame.x(), frame.y(), frame.width(), frame.height())
+        x, y, width, height = fit_rect_into_area(current, self.available_area())
+        frame_width, frame_height = self.frame_extra()
+        self.resize_by_program(width - frame_width, height - frame_height)
         if (x, y) != current[:2]:
             self.move(x, y)
         self.request_relayout()
@@ -1089,6 +1168,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
         super().resizeEvent(event)
+        if hasattr(self, "_size_guard_timer") and not self._own_resize:
+            self.check_outside_resize()
         if hasattr(self, "_layout_timer"):
             self._layout_timer.start()
 
