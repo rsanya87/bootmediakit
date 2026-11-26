@@ -39,6 +39,7 @@ SCRIPT = textwrap.dedent(
     QMessageBox.information = staticmethod(lambda *a, **k: print("DIALOG information", flush=True))
     QMessageBox.critical = staticmethod(lambda *a, **k: print("DIALOG critical", flush=True))
     QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    gui.MainWindow.confirm = lambda self, *a, **k: True
     if case == "unprotected":  # only to show the crash without the handler
         gui.install_terminal_interrupt_handler = lambda window: None
 

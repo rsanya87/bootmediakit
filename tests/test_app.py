@@ -333,14 +333,18 @@ class BootModeSelectorTests(unittest.TestCase):
             "wwn": "", "tran": "usb", "rm": True, "maj_min": "8:240", "diskseq": "9",
             "by_id": "/dev/disk/by-id/usb-Test_S1-0:0", "partitions": [], "mounts": [],
         }
-        yes = gui.QMessageBox.StandardButton.Yes
+        # The confirmations go through MainWindow.confirm (Hungarian buttons);
+        # plain warnings (e.g. missing GRUB) still through QMessageBox.warning.
         with patch.object(gui, "PRIVILEGED_WRAPPER", wrapper), patch.object(
             gui.shutil, "which", return_value="/usr/bin/pkexec"
         ), patch.object(gui, "bios_grub_available", return_value=grub_available), patch.object(
             gui, "is_windows_install_iso", return_value=True
-        ), patch.object(gui.QMessageBox, "warning", return_value=yes) as warning:
+        ), patch.object(gui.MainWindow, "confirm", return_value=True) as confirm, patch.object(
+            gui.QMessageBox, "warning"
+        ) as warning:
             window.start_operation()
-        return warning
+        confirm.warning = warning
+        return confirm
 
     def windows_iso_window(self):
         window = self.make_window()
@@ -355,7 +359,7 @@ class BootModeSelectorTests(unittest.TestCase):
         args = window.process.arguments()
         self.assertEqual(args[1:4], ["windows", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0"])
         self.assertEqual(args[4], "0")
-        details = warning.call_args_list[0].args[2]
+        details = warning.call_args_list[0].args[1]
         self.assertIn("indítási mód: UEFI (GPT)", details)
         self.assertNotIn("Legacy", details)
         self.assertFalse(window.boot_mode_combo.isEnabled())
@@ -481,7 +485,7 @@ class BootModeSelectorTests(unittest.TestCase):
         warning = self.start_and_capture(window, image)
         args = window.process.arguments()
         self.assertEqual(args[1:5], ["windows-bios", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0", "1"])
-        details = warning.call_args_list[0].args[2]
+        details = warning.call_args_list[0].args[1]
         self.assertIn("indítási mód: Legacy BIOS (MBR)", details)
         self.assertIn("Legacy BIOS / CSM indításhoz készül", details)
         self.assertIn("csak NTFS-t olvasó firmware-en indulhat", details)
@@ -491,7 +495,7 @@ class BootModeSelectorTests(unittest.TestCase):
     def test_legacy_start_is_refused_when_grub_disappeared(self):
         window, image = self.windows_iso_window()
         window.boot_mode_combo.setCurrentIndex(1)
-        warning = self.start_and_capture(window, image, grub_available=False)
+        warning = self.start_and_capture(window, image, grub_available=False).warning
         self.assertIsNone(window.process)
         self.assertEqual(warning.call_args.args[1], "Hiányzó GRUB")
         self.assertIn("sudo pacman -S grub", warning.call_args.args[2])
@@ -551,6 +555,66 @@ class CancelBeforeAuthenticationTests(unittest.TestCase):
         self.assertEqual(window.status_label.text(), "Biztonságos megszakítás kérése…")
         self.assertNotIn(gui.gui_text("gui.cancel.before_authentication"), window.log.toPlainText())
         window.process.write.assert_called_once_with(b"cancel\n")
+
+
+
+class HungarianConfirmationButtonsTests(unittest.TestCase):
+    """The four confirmations had Qt's English Yes/Cancel (no Qt catalogue is
+    loaded); they now have tr() labels, and the safe choice is the default."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def make_window(self):
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        return window
+
+    def test_buttons_are_hungarian_and_the_safe_one_is_default(self):
+        window = self.make_window()
+        box = window.confirmation_box("Cím", "Szöveg", gui.gui_text("gui.button.stop_and_close"),
+                                      gui.gui_text("gui.button.continue"))
+        self.addCleanup(box.deleteLater)
+        labels = sorted(button.text().replace("&", "") for button in box.buttons())
+        self.assertEqual(labels, ["Folytatás", "Megszakítás és bezárás"])
+        self.assertNotIn("Yes", labels)
+        self.assertEqual(box.defaultButton().text(), "Folytatás")
+        self.assertIs(box.escapeButton(), box.defaultButton())
+        self.assertEqual(box.buttonRole(box.defaultButton()), gui.QMessageBox.ButtonRole.RejectRole)
+
+    def test_confirm_returns_true_only_for_the_accept_button(self):
+        window = self.make_window()
+        for role, expected in ((gui.QMessageBox.ButtonRole.AcceptRole, True),
+                               (gui.QMessageBox.ButtonRole.RejectRole, False)):
+            with self.subTest(role=role):
+                def exec_and_click(box, role=role):
+                    for button in box.buttons():
+                        if box.buttonRole(button) == role:
+                            button.click()
+                    return 0
+                with patch.object(gui.QMessageBox, "exec", exec_and_click):
+                    self.assertIs(window.confirm("Cím", "Szöveg", "Igen", "Mégse"), expected)
+
+    def test_every_confirmation_uses_hungarian_buttons(self):
+        window = self.make_window()
+        from unittest.mock import MagicMock
+
+        window.process = MagicMock()
+        self.addCleanup(setattr, window, "process", None)
+        with patch.object(gui.MainWindow, "confirm", return_value=False) as confirm:
+            window.cancel_operation()
+            window.close()
+        buttons = [call.args[2:] for call in confirm.call_args_list]
+        self.assertEqual(buttons, [("Megszakítás", "Folytatás"), ("Megszakítás és bezárás", "Folytatás")])
+        window.process.write.assert_not_called()  # rejected: nothing sent
+        source = Path(gui.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("StandardButton.Yes", source)
 
 
 if __name__ == "__main__":

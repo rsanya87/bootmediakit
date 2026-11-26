@@ -425,6 +425,12 @@ def gui_text(msg_id: str) -> str:
             "A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. "
             "A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra."
         ),
+        "gui.button.erase_and_write": tr("Törlés és írás"),
+        "gui.button.erase_this_drive": tr("Igen, ezt a meghajtót törlöm"),
+        "gui.button.cancel": tr("Mégse"),
+        "gui.button.stop": tr("Megszakítás"),
+        "gui.button.stop_and_close": tr("Megszakítás és bezárás"),
+        "gui.button.continue": tr("Folytatás"),
         "gui.cancel.pending_authentication": tr("Megszakítás kérve; a hitelesítés után érvényesül."),
         "gui.cancel.before_authentication": tr(
             "A megszakítás a hitelesítés után azonnal érvényesül, a lemezhez nem nyúlunk. "
@@ -1749,27 +1755,23 @@ class MainWindow(QMainWindow):
                 "NTFS-t olvasó firmware-en indulhat, erre ne számíts: UEFI-s géphez az "
                 "UEFI (GPT) indítási módot használd."
             )
-        reply = QMessageBox.warning(
-            self,
+        if not self.confirm(
             "Végleges megerősítés szükséges",
             details,
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            gui_text("gui.button.erase_and_write"),
+            gui_text("gui.button.cancel"),
+        ):
             return
 
         if large_or_nonremovable:
-            second = QMessageBox.warning(
-                self,
+            if not self.confirm(
                 "Második megerősítés – nagy vagy nem-removable meghajtó",
                 f"Ez egy {human_size(device['size'])} méretű vagy nem-removable USB-eszköz.\n\n"
                 f"Valóban ezt a teljes fizikai meghajtót akarod törölni?\n\n{device['path']} — "
                 f"{device.get('model') or 'ismeretlen modell'}",
-                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if second != QMessageBox.StandardButton.Yes:
+                gui_text("gui.button.erase_this_drive"),
+                gui_text("gui.button.cancel"),
+            ):
                 return
 
         if not PRIVILEGED_WRAPPER.is_file():
@@ -1859,32 +1861,50 @@ class MainWindow(QMainWindow):
     def cancel_operation(self) -> None:
         if not self.process:
             return
-        reply = QMessageBox.warning(
-            self,
+        if self.confirm(
             "Művelet megszakítása",
             "A műveletet biztonságos írási határon állítjuk le. A pendrive részleges állapotban maradhat, "
             "ha a törlés vagy írás már elkezdődött.\n\nBiztosan megszakítod?",
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+            gui_text("gui.button.stop"),
+            gui_text("gui.button.continue"),
+        ):
             self._send_cancel_request()
 
     def closeEvent(self, event) -> None:
         if self.process is None:
             event.accept()
             return
-        reply = QMessageBox.warning(
-            self,
+        if self.confirm(
             "A BootMediaKit művelete még fut",
             "Bezárás előtt biztonságosan megszakítjuk a pendrive készítését. "
             "A célmeghajtó részleges állapotban maradhat.\n\nMegszakítod és bezárod?",
-            QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+            gui_text("gui.button.stop_and_close"),
+            gui_text("gui.button.continue"),
+        ):
             self.close_after_cancel()
         event.ignore()
+
+    def confirmation_box(self, title: str, text: str, accept_text: str, reject_text: str) -> QMessageBox:
+        """A warning with two buttons labelled in Hungarian (tr()).
+
+        Qt's standard Yes/Cancel take their labels from Qt's own catalogue,
+        which the program does not load, so they were English. The safe
+        choice (reject) is the default button and the Escape answer.
+        """
+        box = QMessageBox(QMessageBox.Icon.Warning, title, text, QMessageBox.StandardButton.NoButton, self)
+        box.addButton(accept_text, QMessageBox.ButtonRole.AcceptRole)
+        reject = box.addButton(reject_text, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(reject)
+        box.setEscapeButton(reject)
+        return box
+
+    def confirm(self, title: str, text: str, accept_text: str, reject_text: str) -> bool:
+        box = self.confirmation_box(title, text, accept_text, reject_text)
+        box.exec()
+        clicked = box.clickedButton()
+        accepted = clicked is not None and box.buttonRole(clicked) == QMessageBox.ButtonRole.AcceptRole
+        box.deleteLater()
+        return accepted
 
     def terminal_interrupt_summary(self) -> str | None:
         """One line for the terminal after Ctrl+C, only if an operation ran.

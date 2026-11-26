@@ -87,3 +87,9 @@ Texts the GUI writes itself, with an identifier, through `gui_text()` in `app.py
 | `gui.interrupt.partial` | BootMediaKit: megszakítva (Ctrl+C). A célmeghajtó részleges állapotban maradhat. | terminal after Ctrl+C in every other case (target changed or state unknown); nothing is printed when no operation ran |
 | `gui.cancel.pending_authentication` | Megszakítás kérve; a hitelesítés után érvényesül. | status line: Megszakítás (or Ctrl+C) while pkexec still authenticates, before the worker started |
 | `gui.cancel.before_authentication` | A megszakítás a hitelesítés után azonnal érvényesül, a lemezhez nem nyúlunk. A hitelesítő ablakban a Mégse gombbal most is kiléphetsz. | log, same moment; the cancel line waits in the pipe and the worker reads it at its first cancel check, before it changes the target |
+| `gui.button.erase_and_write` | Törlés és írás | accept button of the final confirmation before writing (was Qt's Yes) |
+| `gui.button.erase_this_drive` | Igen, ezt a meghajtót törlöm | accept button of the second confirmation for a large or non-removable drive |
+| `gui.button.cancel` | Mégse | reject (default, Escape) button of both write confirmations (was Qt's Cancel) |
+| `gui.button.stop` | Megszakítás | accept button of the Megszakítás confirmation |
+| `gui.button.stop_and_close` | Megszakítás és bezárás | accept button of the close confirmation while an operation runs |
+| `gui.button.continue` | Folytatás | reject (default, Escape) button of the Megszakítás and close confirmations |
