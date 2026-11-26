@@ -162,8 +162,11 @@ class GuiTextIdentifierTests(unittest.TestCase):
         return table
 
     def used(self):
+        """Identifiers referred to in app.py outside gui_text() itself."""
         source = (ROOT / "app.py").read_text(encoding="utf-8")
-        return set(re.findall(r'gui_text\("([a-z0-9_.]+)"\)', source))
+        start = source.index("def gui_text(")
+        end = source.index("\ndef ", start + 1)
+        return set(re.findall(r'"(gui\.[a-z0-9_.]+)"', source[:start] + source[end:]))
 
     def test_table_and_code_match(self):
         QApplication.instance() or QApplication([])

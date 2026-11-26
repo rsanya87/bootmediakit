@@ -425,6 +425,14 @@ def gui_text(msg_id: str) -> str:
             "A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. "
             "A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra."
         ),
+        "gui.interrupt.untouched": tr(
+            "BootMediaKit: megszakítva (Ctrl+C). A háttérfolyamat nem indult el, a célmeghajtóhoz nem nyúltunk."
+        ),
+        "gui.interrupt.not_modified": tr(
+            "BootMediaKit: megszakítva (Ctrl+C). A worker jelezte, hogy a célmeghajtót nem módosította."
+        ),
+        "gui.interrupt.complete": tr("BootMediaKit: megszakítva (Ctrl+C). A művelet előtte sikeresen befejeződött."),
+        "gui.interrupt.partial": tr("BootMediaKit: megszakítva (Ctrl+C). A célmeghajtó részleges állapotban maradhat."),
     }
     return texts[msg_id]
 
@@ -897,6 +905,7 @@ class MainWindow(QMainWindow):
         self._interrupt_requested = False
         self._interrupt_handled = False
         self._last_target_state = ""
+        self._interrupted_operation = False
         self._size_guard_corrections = 0
         self._size_guard_timer = QTimer(self)
         self._size_guard_timer.setSingleShot(True)
@@ -1866,6 +1875,21 @@ class MainWindow(QMainWindow):
             self.close_after_cancel()
         event.ignore()
 
+    def terminal_interrupt_summary(self) -> str | None:
+        """One line for the terminal after Ctrl+C, only if an operation ran.
+
+        It says no more than the GUI knows (target_state): anything not
+        reported by the worker is "may be partial".
+        """
+        if not self._interrupted_operation:
+            return None
+        msg_id = {
+            "untouched": "gui.interrupt.untouched",
+            "not_modified": "gui.interrupt.not_modified",
+            "complete": "gui.interrupt.complete",
+        }.get(self._last_target_state, "gui.interrupt.partial")
+        return gui_text(msg_id)
+
     def close_after_cancel(self) -> None:
         """Cancel cooperatively and close when the worker has finished.
 
@@ -1879,6 +1903,7 @@ class MainWindow(QMainWindow):
     def poll_terminal_interrupt(self) -> None:
         if self._interrupt_requested and not self._interrupt_handled:
             self._interrupt_handled = True
+            self._interrupted_operation = self.process is not None
             if self.process is None:
                 self.close()
             else:
@@ -1955,6 +1980,7 @@ class MainWindow(QMainWindow):
         was_closing = self._close_after_operation or self._interrupt_requested
         if self._interrupt_requested:
             self._interrupt_handled = True
+            self._interrupted_operation = True
 
         state = self.target_state(exit_code, exit_status)
         if state == "complete":
@@ -2107,6 +2133,9 @@ def main() -> int:
     exit_code = app.exec()
     if window._interrupt_requested:
         exit_code = EXIT_INTERRUPTED
+        summary = window.terminal_interrupt_summary()
+        if summary:
+            print(summary, file=sys.stderr, flush=True)
 
     # Explicitly destroy all widgets and child QObjects while QApplication is
     # still alive. This avoids leaving QObject wrappers for PySide's atexit

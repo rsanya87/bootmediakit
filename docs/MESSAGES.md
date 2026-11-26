@@ -81,3 +81,7 @@ Texts the GUI writes itself, with an identifier, through `gui_text()` in `app.py
 | `msg_id` | Text (Hungarian) | Where |
 |---|---|---|
 | `gui.result.target_unknown` | A háttérfolyamat záró jelzés nélkül állt le, ezért nem tudjuk, módosult-e a célmeghajtó. A célmeghajtó részleges állapotban maradhat; újrahasználat előtt készítsd el újra. | log and failure dialog: the worker started, then ended without a closing event or abnormally (killed, crashed); fail-closed, INVARIANTS B3 |
+| `gui.interrupt.untouched` | BootMediaKit: megszakítva (Ctrl+C). A háttérfolyamat nem indult el, a célmeghajtóhoz nem nyúltunk. | terminal (stderr) after Ctrl+C during an operation; the worker never started (for example at the pkexec password prompt) |
+| `gui.interrupt.not_modified` | BootMediaKit: megszakítva (Ctrl+C). A worker jelezte, hogy a célmeghajtót nem módosította. | terminal after Ctrl+C; the worker's closing event reported the target unchanged and it exited normally |
+| `gui.interrupt.complete` | BootMediaKit: megszakítva (Ctrl+C). A művelet előtte sikeresen befejeződött. | terminal after Ctrl+C; the operation had already succeeded |
+| `gui.interrupt.partial` | BootMediaKit: megszakítva (Ctrl+C). A célmeghajtó részleges állapotban maradhat. | terminal after Ctrl+C in every other case (target changed or state unknown); nothing is printed when no operation ran |

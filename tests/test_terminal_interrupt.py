@@ -47,7 +47,9 @@ SCRIPT = textwrap.dedent(
         window.set_busy(True)
         window.process = QProcess(window)
         window.process.setProgram("sh")
-        window.process.setArguments(["-c", "echo 'Password:' >&2; sleep 0.5; "
+        started = ("echo '{\"message\": \"x\", \"percent\": 0, \"target_modified\": false, "
+                   "\"worker_started\": true}'; ") if case == "worker-started" else ""
+        window.process.setArguments(["-c", started + "echo 'Password:' >&2; sleep 0.5; "
                                      "kill -INT $PPID; kill -INT $$; sleep 5"])
         window.process.readyReadStandardOutput.connect(window.read_stdout)
         window.process.readyReadStandardError.connect(window.read_stderr)
@@ -96,6 +98,16 @@ class TerminalInterruptTests(unittest.TestCase):
         # The finished slot ran, pkexec stopped on SIGINT, no dialog opened.
         self.assertIn(f"FINISHED {int(signal.SIGINT)} CrashExit", output)
         self.assertNotIn("DIALOG", output)
+        # The worker never started: the terminal line may say so.
+        self.assertIn("A háttérfolyamat nem indult el, a célmeghajtóhoz nem nyúltunk.", output)
+
+    def test_ctrl_c_after_the_worker_started(self):
+        code, output = self.run_case("worker-started")
+        self.assert_clean_interrupt(code, output)
+        # No closing event: fail-closed, never "not changed".
+        self.assertIn("BootMediaKit: megszakítva (Ctrl+C). A célmeghajtó részleges állapotban maradhat.", output)
+        self.assertNotIn("nem nyúltunk", output)
+        self.assertNotIn("nem módosította", output)
 
     def test_ctrl_c_and_closing_the_window_together(self):
         code, output = self.run_case("close-too")
@@ -105,6 +117,7 @@ class TerminalInterruptTests(unittest.TestCase):
     def test_ctrl_c_without_an_operation(self):
         code, output = self.run_case("idle")
         self.assert_clean_interrupt(code, output)
+        self.assertNotIn("megszakítva (Ctrl+C)", output)  # no line without an operation
 
 
 class TerminalInterruptPathTests(unittest.TestCase):
@@ -148,6 +161,23 @@ class TerminalInterruptPathTests(unittest.TestCase):
         self.assertEqual(calls, ["cancel"])
         self.assertTrue(window._close_after_operation)
         window.process = None
+
+    def test_terminal_line_says_no_more_than_the_state(self):
+        gui, window = self.make_window()
+        self.assertIsNone(window.terminal_interrupt_summary())
+        window._interrupted_operation = True
+        expected = {
+            "untouched": "gui.interrupt.untouched",
+            "not_modified": "gui.interrupt.not_modified",
+            "complete": "gui.interrupt.complete",
+            "modified": "gui.interrupt.partial",
+            "unknown": "gui.interrupt.partial",
+            "": "gui.interrupt.partial",
+        }
+        for state, msg_id in expected.items():
+            with self.subTest(state=state):
+                window._last_target_state = state
+                self.assertEqual(window.terminal_interrupt_summary(), gui.gui_text(msg_id))
 
     def test_the_handler_only_sets_the_flag(self):
         gui, window = self.make_window()
