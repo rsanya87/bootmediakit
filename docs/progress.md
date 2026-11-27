@@ -4,7 +4,7 @@ Ez a fájl a fejlesztés belső állapotkövetője: az aktuális verzió feladat
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
-## 0.4.0 — Fejlesztés alatt: DE-független, reszponzív GUI; writer-ujjlenyomat; worker-eseményazonosítók
+## 0.4.0 — Stabil kiadás (2026-11-27): DE-független, reszponzív GUI; writer-ujjlenyomat; worker-eseményazonosítók
 
 A kötelező szabályok: [docs/INVARIANTS.md](INVARIANTS.md), a korábbi hibák: [docs/LESSONS.md](LESSONS.md), a kiadás előtti fizikai ellenőrzőlista: [docs/REGRESSION_CHECKLIST.md](REGRESSION_CHECKLIST.md).
 
@@ -21,7 +21,7 @@ A kötelező szabályok: [docs/INVARIANTS.md](INVARIANTS.md), a korábbi hibák:
 - [x] T6. `msg_id`/`msg_args` az `emit()` hívásokon
 - [x] T7. Automatizált téma-/elrendezés-/kontrasztteszt, CI
 - [x] T8. Dokumentáció, függőség- és csomagolási konzisztencia
-- [ ] T9. Kiadási commit (a zöld CI és a gazda visszajelzése után)
+- [x] T9. Kiadási commit (a zöld CI és a gazda visszajelzése után)
 
 ### Jóváhagyott és dokumentált eltérések a munkaleírástól
 

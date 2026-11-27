@@ -10,20 +10,21 @@ Ez az áttekintés az irányt mutatja, nem ígéret: a terv a tesztek eredménye
 - **0.2.1 (2026-11-05):** a 0.2.x sor első stabil kiadása: biztonságosabb lemezírás, megbízhatóbb hiba- és megszakításkezelés, stabilabb felület, bővebb regressziós tesztek.
 - **0.2.2 (2026-11-10):** karbantartó kiadás új funkció nélkül: pontosabb forrás-fájlrendszer-ellenőrzés, egyetlen verziószám-forrás, shell-ellenőrzés a CI-ben, és loop-eszközös integrációs tesztek a valódi írókkal.
 - **0.3.0 (2026-11-24):** új Windows Legacy BIOS/MBR mód: egyetlen aktív NTFS partíció a gépre telepített GNU GRUB (i386-pc) láncbetöltőjével. A Linux RAW és a Windows UEFI mód nem változott.
+- **0.4.0 (2026-11-27):** asztali környezettől független, reszponzív felület: a rendszer világos/sötét beállításának követése sötét tartalékkal és kézi váltóval, dokumentált 880×550-es minimális ablakméret, érthető hiba hitelesítési ügynök nélkül. A három lemezíró viselkedését ujjlenyomat-tesztek rögzítik; nem változott. Fizikailag KDE Plasma, GNOME, XFCE, Cinnamon, MATE és LXQt alatt ellenőrizve.
 
 A lezárt verziók részletes fejlesztési naplója: [docs/history/](docs/history/).
 
 ## Hol tartunk
 
-**0.4.0 – fejlesztés alatt.** Cél: a felület ugyanúgy működjön a gyakori asztali környezetekben (KDE Plasma, GNOME, XFCE, Cinnamon, MATE, LXQt), kövesse a rendszer világos/sötét beállítását, és kis kijelzőn is használható legyen; a három lemezíró viselkedését tesztek rögzítik, ez a verzió nem változtat rajta. Állapot: a fejlesztési feladatok elkészültek, az asztali környezetek és a kiadás előtti fizikai tesztek folyamatban vannak.
+**A 0.4.0 elkészült (2026-11-27).** Következik a **0.5.0**: a Windows 7 (csak Legacy) és a Windows 8/8.1 (Legacy és UEFI) ellenőrzése; a támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni.
 
-Részletes állapot: [docs/progress.md](docs/progress.md).
+A fejlesztés részletes állapota: [docs/progress.md](docs/progress.md).
 
 ## Verziók
 
 | Verzió | Cél | Állapot |
 |---|---|---|
-| 0.4.0 | Asztali környezettől független, reszponzív felület világos/sötét témával; a lemezírók viselkedésének tesztes rögzítése; azonosítók a worker üzenetein | fejlesztés alatt |
+| 0.4.0 | Asztali környezettől független, reszponzív felület világos/sötét témával; a lemezírók viselkedésének tesztes rögzítése; azonosítók a worker üzenetein | kész |
 | 0.5.0 | Windows 7 (csak Legacy) és Windows 8/8.1 (Legacy és UEFI) ellenőrzése | tervezett |
 | 0.6.0 | Megbízhatósági regressziózárás a csomagolás előtt: nyitott fizikai tesztek, telepítés, frissítés, eltávolítás | tervezett |
 | 0.7.0 | Közös telepítési szerződés: fájllista, függőségleltár, a csomagban csak a futáshoz szükséges fájlok | tervezett |

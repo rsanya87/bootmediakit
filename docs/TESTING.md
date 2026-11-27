@@ -1,5 +1,41 @@
 # Testing
 
+## BootMediaKit 0.4.0 — Stable release (2026-11-27)
+
+0.4.0 makes the GUI independent of the desktop environment (appearance, layout, DPI, polkit agent errors) and adds message identifiers to the worker events. The three writers are unchanged: the writer fingerprint tests, generated with the 0.3.0 code before any other change, pass unmodified on the release.
+
+### Automated checks
+
+The GitHub Actions suite passed on the last commit before the release commit whose program files are identical to the release: [run 46055903239](https://github.com/rsanya87/bootmediakit/actions/runs/46055903239) (`0054196`). The commits after it change only documentation and the version number. The workflow runs:
+
+- 384 unit, packaging, offscreen GUI, theme, layout, pseudo-locale, message identifier, target state, terminal interrupt and writer fingerprint tests (213 in 0.3.0); the layout tests with both DejaVu Sans and Noto Sans; a skipped test fails the step.
+- The ten loop-device integration tests as root with `BMK_INTEGRATION_REQUIRED=1` and `BMK_QEMU=1`, unchanged from 0.3.0.
+
+The same unit/GUI tests (384) and the root integration tests (10, none skipped) passed on the maintainer's CachyOS system on 2026-11-27, with program files identical to the release.
+
+### Physical validation confirmed for 0.4.0
+
+Reported by the maintainer on 2026-11-25, 2026-11-26 and 2026-11-27; the details, environments and measured values are in [Desktop test matrix (0.4.0)](#desktop-test-matrix-040) below.
+
+- **Desktops:** KDE Plasma 6.8 (Wayland, main computer, two monitors) and, in virtual machines, GNOME 51.1 (Wayland; GTK themes `adw-gtk3-dark` and `Adwaita`), XFCE 4.20, Cinnamon 6.8 and MATE 1.28 (X11) and LXQt (session type not recorded): start and polkit password prompt, light, dark and automatic appearance and the manual switch without mixed colours, file dialog and icons, 1280×800 and 1366×768 at 100 % and 125 % without a page scrollbar, resolution changes while running. KDE Plasma also: 150 % and 200 % with a larger font, a scale change while running, moving the window to the smaller monitor and unplugging the monitor the window was on.
+- **Minimum window 880×550:** XFCE at 1024×640 logical (1280×800 at 125 %): fits with its frame, 29 px to spare, no scrollbar. KDE Plasma: the monitor offers no 1280×800, checked at the stricter 1280×720 with 125 %: fits, no scrollbar.
+- **Without a polkit agent** (Openbox): a clear error dialog; the cancel and close texts during the password prompt; Ctrl+C at the password prompt: no crash, exit code 130, the terminal line about the untouched target.
+- **Cancel during authentication with a graphical agent** (XFCE, polkit-gnome): Mégse gives pkexec 126 and the "nothing started, target not touched" message; Megszakítás and then the correct password left the disk unchanged (a single measurement, not a guarantee). Under GNOME the polkit dialog is modal, so this check does not apply there (approved).
+- **Write regression on the main computer** (`docs/REGRESSION_CHECKLIST.md`, installed release program files): Linux Mint 22.3 XFCE DD/RAW with read-back (boots in UEFI and Legacy BIOS mode); Windows 11 26H2 UEFI and Legacy media with verification (the UEFI drive boots; the Legacy drive boots in Legacy/CSM mode and, on the main computer's NTFS-reading firmware, also in UEFI mode); a faulty drive in RAW mode: the write succeeds and the read-back reports an error; the main computer starts normally afterwards; without the `grub` package the Legacy option is disabled with its hint.
+
+### Release acceptance record
+
+- Writer fingerprints unchanged; no fixed `Noto Sans`, no double scaling; `msg_id`/`msg_args` documented and tested: passed (CI).
+- Light/dark readable in every matrix desktop, manual switch and restoring the automatic mode: passed (physical). The dark fallback for a palette that cannot be classified: offscreen tests only, it did not occur physically.
+- Minimum window size on 1280×800/1366×768 work areas without a page scrollbar: passed (XFCE measured at 1024×640, KDE Plasma at the stricter 1024×576).
+- Missing polkit agent gives a clear error; wrapper and polkit action unchanged: passed.
+- Unit, GUI, packaging, loop and QEMU tests in CI and on the maintainer's machine: passed.
+- Write regression (RAW, Windows UEFI, Windows Legacy, host boot loader untouched; without GRUB): passed.
+- Approved deviations from the work description and the deferred items: see [docs/progress.md](progress.md).
+- Not tested or not recorded: closing the window at the same moment as Ctrl+C; the exit code and the worker's closing message after the cancel with the correct password (XFCE); the Qt work area and frame at the minimum on KDE Plasma; the exact pixels left by the Wayland reserve on KDE Plasma and GNOME; a KDE Plasma X11 session (not installed) and GNOME on X11 (not available in the VM); a high-contrast system theme on a real desktop; two monitors with different scale factors; a real laptop screen; the `sfdisk -d`, `wipefs` and `lsblk` output of this release's writes and how far Windows Setup got; the physical items left open in 0.2.2 and 0.3.0 ([docs/history/](history/)).
+
+Do not treat mocked unit tests or loop-device tests as proof of physical hardware behavior. Destructive tests must use disposable media only. Never use a drive containing the source ISO or user data as a test target.
+
 ## BootMediaKit 0.3.0 — Stable release (2026-11-24)
 
 0.3.0 adds the Windows Legacy BIOS/MBR mode. The Linux DD/RAW write sequence and the Windows UEFI GPT layout are unchanged from 0.2.2; their existing unit and integration tests pass unmodified.
