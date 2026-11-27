@@ -6,7 +6,7 @@ BootMediaKit is an early-stage project. Reliability and data safety take priorit
 
 Read these first (Hungarian): [`docs/INVARIANTS.md`](docs/INVARIANTS.md) lists the rules no change may break (the three writers are frozen), [`docs/LESSONS.md`](docs/LESSONS.md) the mistakes that already happened, and [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md) the physical checks the maintainer runs before every release. A new worker message needs a `msg_id` listed in [`docs/MESSAGES.md`](docs/MESSAGES.md).
 
-1. Check `ROADMAP.md` and existing issues for an already-known problem.
+1. Check `ROADMAP.md`, `docs/progress.md` and existing issues for an already-known problem.
 2. Keep the graphical frontend unprivileged. Privileged operations must remain in the narrowly scoped worker and be invoked only after explicit confirmation.
 3. Revalidate the target block device immediately before any destructive operation. Never weaken the system-disk protection checks for convenience.
 4. Add or update automated tests for every bug fix.
@@ -45,4 +45,4 @@ Do not claim that a physical-device or Windows Setup issue is fixed based only o
 - Explain the problem and expected behavior.
 - Include test results and the test level.
 - Include relevant logs with personal paths, serial numbers, and unrelated identifiers removed.
-- Update `CHANGELOG.md` and `ROADMAP.md` when appropriate.
+- Update `CHANGELOG.md` and `docs/progress.md` when appropriate.

@@ -14,7 +14,7 @@ Eszközök: egy eldobható pendrive (vagy külső SSD, a LESSONS ellenőrzései 
 
 ## Ha a kiadás GUI-t érint
 
-6. Indítás a tesztmátrix szerinti asztali környezetekben (lásd az adott roadmap-fájlt), polkit-jelszókérés megjelenik; a fő felület használható a támogatott minimális méreten.
+6. Indítás a tesztmátrix szerinti asztali környezetekben (lásd a `docs/progress.md`-t), polkit-jelszókérés megjelenik; a fő felület használható a támogatott minimális méreten.
 
 ## Jegyzőkönyv
 

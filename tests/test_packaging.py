@@ -336,7 +336,7 @@ class NoVersionNumberInPythonFilesTests(unittest.TestCase):
             offenders,
             [],
             msg="Verziószám egy .py fájlban a version.py-n kívül (INVARIANTS D8). Hivatkozz feladatszámra "
-            "(pl. T3) vagy a CHANGELOG.md/ROADMAP.md megfelelő részére; a verzióhoz kötött információ ott él. "
+            "(pl. T3) vagy a CHANGELOG.md/docs/progress.md megfelelő részére; a verzióhoz kötött információ ott él. "
             "Kivétel csak indoklással, a gazda jóváhagyásával kerülhet az EXCEPTIONS listára.",
         )
 
@@ -563,6 +563,136 @@ class ProjectRuleDocumentTests(unittest.TestCase):
             self.assertIn(writer, text)
         self.assertIn("wipefs --all --force", text)
         self.assertIn("130-as kilépési kóddal", text)
+
+
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def markdown_lines_outside_code(text: str) -> list[str]:
+    """The lines of a Markdown text outside fenced code blocks."""
+    lines, fenced = [], False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            lines.append(line)
+    return lines
+
+
+def github_heading_anchors(text: str) -> set[str]:
+    """Anchors GitHub generates for the headings of a Markdown text: lower
+    case, punctuation removed (letters with accents stay), spaces become
+    hyphens; a repeated heading gets -1, -2, ..."""
+    anchors: set[str] = set()
+    seen: dict[str, int] = {}
+    for line in markdown_lines_outside_code(text):
+        match = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
+        if not match:
+            continue
+        heading = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", match.group(1))
+        slug = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+        count = seen.get(slug, 0)
+        seen[slug] = count + 1
+        anchors.add(slug if count == 0 else f"{slug}-{count}")
+    return anchors
+
+
+def broken_markdown_links(path: Path) -> list[str]:
+    """Relative links and anchors in a Markdown file that do not resolve.
+    External links (any URI scheme, e.g. https) are not checked, so this
+    needs no network."""
+    text = path.read_text(encoding="utf-8")
+    broken = []
+    for line in markdown_lines_outside_code(text):
+        for target in MARKDOWN_LINK.findall(line):
+            if URI_SCHEME.match(target):
+                continue
+            file_part, _, anchor = target.partition("#")
+            linked = (path.parent / file_part) if file_part else path
+            if not linked.exists():
+                broken.append(target)
+                continue
+            if anchor and linked.is_file() and linked.suffix == ".md":
+                if anchor not in github_heading_anchors(linked.read_text(encoding="utf-8")):
+                    broken.append(target)
+    return broken
+
+
+class RoadmapDocumentTests(unittest.TestCase):
+    """The public ROADMAP.md, the internal docs/progress.md and the closed
+    release sections in docs/history/ (document reorganisation; the old
+    ROADMAP.md became docs/progress.md)."""
+
+    def markdown_files(self) -> list[Path]:
+        return sorted(ROOT.glob("*.md")) + sorted((ROOT / "docs").rglob("*.md"))
+
+    def history_files(self) -> list[Path]:
+        return sorted((ROOT / "docs" / "history").glob("*.md"))
+
+    def test_roadmap_progress_and_history_exist(self):
+        for relative in ("ROADMAP.md", "docs/progress.md"):
+            path = ROOT / relative
+            self.assertTrue(path.is_file(), msg=f"hiányzik: {relative}")
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
+        history = self.history_files()
+        self.assertTrue(history, msg="a docs/history/ üres vagy hiányzik")
+        for path in history:
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {path.relative_to(ROOT)}")
+
+    def test_history_files_are_released_versions(self):
+        # Version numbers are not written into .py files (INVARIANTS D8); the
+        # released versions come from the CHANGELOG headings instead.
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = set(re.findall(r"(?m)^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}$", changelog))
+        self.assertTrue(released)
+        for path in self.history_files():
+            self.assertIn(path.stem, released, msg=f"nem kiadott verzió: {path.relative_to(ROOT)}")
+
+    def test_roadmap_and_progress_name_no_file_outside_the_repository(self):
+        # The per-version work descriptions (roadmap/<version>.md) are not in
+        # the repository; a reader of these documents must not meet a dead
+        # reference.
+        for relative in ("ROADMAP.md", "docs/progress.md"):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("roadmap/", text, msg=f"{relative} a repón kívüli roadmap/ fájlra hivatkozik")
+
+    def test_roadmap_links_progress_history_and_changelog(self):
+        text = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
+        for target in ("(docs/progress.md)", "(docs/history/)", "(CHANGELOG.md)", "(CONTRIBUTING.md)"):
+            self.assertIn(target, text)
+
+    def test_relative_markdown_links_and_anchors_resolve(self):
+        files = self.markdown_files()
+        for required in ("ROADMAP.md", "docs/progress.md", "CHANGELOG.md", "README.md"):
+            self.assertIn(ROOT / required, files)
+        for path in self.history_files():
+            self.assertIn(path, files)
+        for path in files:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertEqual(broken_markdown_links(path), [], msg="érvénytelen relatív hivatkozás vagy horgony")
+
+    def test_link_check_finds_broken_links_and_anchors(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "sub").mkdir()
+            (base / "sub" / "other.md").write_text("# Címsor – ékezettel?\n\n## Kettő\n## Kettő\n", encoding="utf-8")
+            page = base / "page.md"
+            page.write_text(
+                "# Saját\n"
+                "[ok](sub/other.md) [ok](sub/other.md#címsor--ékezettel) [ok](sub/other.md#kettő-1) "
+                "[ok](#saját) [ok](sub/) [ext](https://example.invalid/nothing)\n"
+                "[rossz](missing.md) [rossz](sub/other.md#nincs) [rossz](#nincs-ilyen)\n"
+                "```\n[kódban](not-checked.md)\n# nem címsor\n```\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                broken_markdown_links(page),
+                ["missing.md", "sub/other.md#nincs", "#nincs-ilyen"],
+            )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""tr() for the new GUI texts and the pseudo-locale layout check (T5, see ROADMAP.md).
+"""tr() for the new GUI texts and the pseudo-locale layout check (T5, see docs/progress.md).
 
 Proof level: source scan and offscreen Qt. The pseudo-locale is a
 deliberate exaggeration (+40 % length, accented letters); it does not
@@ -157,7 +157,7 @@ class PseudoLocaleLayoutTests(layout.LayoutTestCase):
                 self.assertTrue(widget.text().startswith(START), msg=widget.text())
 
     def test_at_the_minimum_the_page_may_scroll_but_no_control_is_lost(self):
-        # Approved deviation (maintainer, T5; ROADMAP.md): +40 % text needs more
+        # Approved deviation (maintainer, T5; docs/progress.md): +40 % text needs more
         # height than 880x550 offers; the vertical scroll fallback is allowed
         # there, but no horizontal scrollbar, no overlap and every control must
         # be reachable by scrolling.

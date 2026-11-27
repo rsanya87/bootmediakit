@@ -2,7 +2,7 @@
 
 Ezek a szabályok **minden** fejlesztési szakaszra érvényesek (0.4.0-tól 1.0.0-ig és utána is). Ha egy feladat csak egy invariáns megsértésével oldható meg, a munka megáll, és a projektgazda dönt. Az invariánsokat tesztek őrzik; a tesztet nem lehet törölni vagy gyengíteni.
 
-Ez a fájl a repóban él (`docs/INVARIANTS.md`), verziózva. A munkaleírások (`roadmap/*.md`) erre hivatkoznak.
+Ez a fájl a repóban él (`docs/INVARIANTS.md`), verziózva. A verziónkénti munkaleírások erre hivatkoznak.
 
 ## A. Lemezíró folyamatok (befagyasztva)
 
@@ -54,7 +54,7 @@ D2. **Meglévő tesztet nem törlünk és nem gyengítünk.** Ha egy teszt a vá
 
 D3. **A CI nem lehet zöld úgy, hogy a kötelező integrációs tesztek kihagyódtak** (`BMK_INTEGRATION_REQUIRED=1`, `BMK_QEMU=1`: a hiányzó QEMU hiba, nem kihagyás).
 
-D4. **Fizikai tesztet csak a gazda végez** eldobható adathordozón, és csak az ő kifejezett visszajelzése alapján kerül pipa a ROADMAP-ba. Ami nincs visszajelezve, az „nem tesztelt".
+D4. **Fizikai tesztet csak a gazda végez** eldobható adathordozón, és csak az ő kifejezett visszajelzése alapján kerül pipa a `docs/progress.md`-be. Ami nincs visszajelezve, az „nem tesztelt".
 
 D5. **Új futási függőség** csak az `install.sh` és mindkét README egyidejű frissítésével kerülhet be; a függőségi dokumentáció (README-k, `CONTRIBUTING.md`, `docs/TESTING.md`, `install.sh`) egyezik.
 
@@ -62,4 +62,4 @@ D6. **Nem állítunk olyat, amit nem ellenőriztünk.** A dokumentáció csak t�
 
 D7. **A végfelhasználói csomag csak futásidőben szükséges fájlokat tartalmaz** (explicit telepítési manifestből); a teljes tesztinfrastruktúra a forrásrepóban és a CI-ben marad.
 
-D8. **A verziószám csak a `version.py`-ban szerepelhet** a `.py` fájlok közül; kódkommentben, docstringben és kódszövegben nem. A hivatkozás feladatszámra (pl. T3) vagy a `CHANGELOG.md`/`ROADMAP.md` megfelelő részére mutat. A `tests/test_packaging.py` verziószám-őre minden `.py` fájl teljes szövegét vizsgálja; az őr nem lazítható.
+D8. **A verziószám csak a `version.py`-ban szerepelhet** a `.py` fájlok közül; kódkommentben, docstringben és kódszövegben nem. A hivatkozás feladatszámra (pl. T3) vagy a `CHANGELOG.md`/`docs/progress.md` megfelelő részére mutat. A `tests/test_packaging.py` verziószám-őre minden `.py` fájl teljes szövegét vizsgálja; az őr nem lazítható.
