@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Docs: the closed 0.4.0 section of `docs/progress.md` moved letter for letter to `docs/history/0.4.0.md`; references to the 0.4.0 deviations and deferred items point there. `docs/progress.md` starts the 0.5.0 section.
+
 ## 0.4.0 — 2026-11-27
 
 0.4.0 makes the GUI independent of the desktop environment (system light/dark following with a dark fallback and a manual switch, responsive layout with a documented 880×550 minimum, a clear error without a polkit agent), pins the three frozen writers with fingerprint tests, and adds stable message identifiers to the worker events. The write sequences and layouts of the RAW, Windows UEFI and Windows Legacy modes are unchanged (writer fingerprint tests). The project documents are reorganised: a short public `ROADMAP.md`, the detailed development status in `docs/progress.md`, and the closed releases in `docs/history/`.
