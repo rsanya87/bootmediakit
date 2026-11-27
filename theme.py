@@ -1,6 +1,6 @@
 """Light/dark appearance for the BootMediaKit GUI (T2, theme work; see CHANGELOG.md).
 
-Rules (T2 in docs/progress.md, docs/INVARIANTS.md C1):
+Rules (T2 in docs/history/0.4.0.md, docs/INVARIANTS.md C1):
 
 * Colours in the style sheet are semantic tokens computed from the active
   QPalette, so a light, dark or high-contrast system palette is followed.
