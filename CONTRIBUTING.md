@@ -1,3 +1,5 @@
+English | [Magyar](CONTRIBUTING.hu.md)
+
 # Contributing
 
 BootMediaKit is an early-stage project. Reliability and data safety take priority over feature count.
@@ -11,6 +13,16 @@ Read these first (Hungarian): [`docs/INVARIANTS.md`](docs/INVARIANTS.md) lists t
 3. Revalidate the target block device immediately before any destructive operation. Never weaken the system-disk protection checks for convenience.
 4. Add or update automated tests for every bug fix.
 5. Document whether a test is mocked, unit-level, hardware-level, firmware-level, or a real Windows Setup test.
+
+## Maintainer documents
+
+The maintainer documents exist in one language only, so that each change is made once:
+
+- In Hungarian: [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md), [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md), [docs/progress.md](docs/progress.md) and the closed release records in [docs/history/](docs/history/).
+- [docs/MESSAGES.md](docs/MESSAGES.md) describes the message identifiers in English; the interface texts in it are the program's Hungarian source texts.
+- [CHANGELOG.md](CHANGELOG.md), the release notes and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) are in English only.
+
+The user and contributor documents exist in English (the original file name) and in Hungarian (the same name with `.hu.md`): README, CONTRIBUTING, ROADMAP and `docs/TESTING`. A change to one of them updates both languages.
 
 ## Development environment
 
