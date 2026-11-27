@@ -223,10 +223,10 @@ Reported by the maintainer on 2026-11-27, the `docs/REGRESSION_CHECKLIST.md` wri
 - Linux RAW, Linux Mint 22.3 XFCE ISO: the read-back verification completed; the drive boots in UEFI and in Legacy BIOS mode.
 - Windows UEFI (GPT), Windows 11 26H2 ISO: the verification completed; the drive boots.
 - Windows Legacy (MBR/BIOS), the same ISO: the verification completed; the drive boots in Legacy/CSM mode, and on the maintainer's computer also in UEFI mode (known and documented since 0.3.0: firmware that reads NTFS).
-- On a faulty USB drive the write succeeds and the verification reports an error, which is the correct behaviour.
+- On a faulty USB drive, in Linux RAW mode with the Linux Mint ISO, the write succeeds and the read-back verification reports an error, which is the correct behaviour.
 - The main computer starts normally after the tests (its own boot loader is untouched).
 - Without the `grub` package the Legacy value is disabled with its hint, and it can be chosen again after reinstalling `grub` (item 5).
-- Not recorded: the `sfdisk -d`, `wipefs` and `lsblk` output, how far Windows Setup got, on which computer or firmware each drive booted (apart from the Legacy drive in UEFI mode), and the mode of the faulty-drive check.
+- Not recorded: the `sfdisk -d`, `wipefs` and `lsblk` output, how far Windows Setup got, and on which computer or firmware each drive booted (apart from the Legacy drive in UEFI mode).
 
 Reported by the maintainer on 2026-11-27, KDE Plasma (Wayland), main computer, installed program `6f83a86` (checked against the repository):
 
