@@ -1,82 +1,84 @@
+English | [Magyar](ROADMAP.hu.md)
+
 # Roadmap
 
-A BootMediaKit grafikus, nyílt forráskódú USB-készítő Linuxra: lemezképeket ír ki nyersen (DD/RAW), és Windows telepítő pendrive-ot készít UEFI (GPT) vagy Legacy BIOS (MBR) indításhoz. Jelenleg az Arch Linux családot támogatja (elsőként a CachyOS-t).
+BootMediaKit is a graphical, open-source USB creator for Linux: it writes disk images raw (DD/RAW) and makes Windows installation USB drives for UEFI (GPT) or Legacy BIOS (MBR) boot. It currently supports the Arch Linux family (CachyOS first).
 
-Ez az áttekintés az irányt mutatja, nem ígéret: a terv a tesztek eredményei szerint változhat, és dátumot nem vállal. A megjelent változásokat a [CHANGELOG.md](CHANGELOG.md) rögzíti.
+This overview shows the direction; it is not a promise: the plan can change with the test results, and it gives no dates. Released changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
-## Honnan indultunk
+## Where we started
 
-- **0.1.3 (2026-11-03):** az első stabil Arch/CachyOS kiadás. Linux lemezképek nyers (DD/RAW) írása; Windows x64 UEFI telepítő GPT-n, egy nagy NTFS partícióval és egy UEFI:NTFS segédpartícióval; saját polkit-akció és root tulajdonú worker, a grafikus felület jogosultság nélkül fut.
-- **0.2.1 (2026-11-05):** a 0.2.x sor első stabil kiadása: biztonságosabb lemezírás, megbízhatóbb hiba- és megszakításkezelés, stabilabb felület, bővebb regressziós tesztek.
-- **0.2.2 (2026-11-10):** karbantartó kiadás új funkció nélkül: pontosabb forrás-fájlrendszer-ellenőrzés, egyetlen verziószám-forrás, shell-ellenőrzés a CI-ben, és loop-eszközös integrációs tesztek a valódi írókkal.
-- **0.3.0 (2026-11-24):** új Windows Legacy BIOS/MBR mód: egyetlen aktív NTFS partíció a gépre telepített GNU GRUB (i386-pc) láncbetöltőjével. A Linux RAW és a Windows UEFI mód nem változott.
-- **0.4.0 (2026-11-27):** asztali környezettől független, reszponzív felület: a rendszer világos/sötét beállításának követése sötét tartalékkal és kézi váltóval, dokumentált 880×550-es minimális ablakméret, érthető hiba hitelesítési ügynök nélkül. A három lemezíró viselkedését ujjlenyomat-tesztek rögzítik; nem változott. Fizikailag KDE Plasma, GNOME, XFCE, Cinnamon, MATE és LXQt alatt ellenőrizve.
+- **0.1.3 (2026-11-03):** the first stable Arch/CachyOS release. Raw (DD/RAW) writing of Linux disk images; Windows x64 UEFI installer on GPT with one large NTFS partition and one UEFI:NTFS helper partition; its own polkit action and a root-owned worker; the graphical interface runs without privileges.
+- **0.2.1 (2026-11-05):** the first stable release of the 0.2.x line: safer disk writing, more reliable error and cancel handling, a more stable interface, broader regression tests.
+- **0.2.2 (2026-11-10):** a maintenance release without new features: a more precise source file system check, a single version source, shell checks in CI, and loop-device integration tests with the real writers.
+- **0.3.0 (2026-11-24):** a new Windows Legacy BIOS/MBR mode: one active NTFS partition with the GNU GRUB (i386-pc) chainloader installed on the computer. The Linux RAW and the Windows UEFI modes did not change.
+- **0.4.0 (2026-11-27):** a responsive interface independent of the desktop environment: it follows the system's light/dark setting with a dark fallback and a manual switch, has a documented 880×550 minimum window size, and gives a clear error without an authentication agent. Fingerprint tests pin the behaviour of the three disk writers; it did not change. Physically checked under KDE Plasma, GNOME, XFCE, Cinnamon, MATE and LXQt.
 
-A lezárt verziók részletes fejlesztési naplója: [docs/history/](docs/history/).
+The detailed development records of the closed versions: [docs/history/](docs/history/).
 
-## Hol tartunk
+## Where we are
 
-**A 0.4.0 elkészült (2026-11-27).** Következik a **0.5.0**: a Windows 7 (csak Legacy) és a Windows 8/8.1 (Legacy és UEFI) ellenőrzése; a támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni.
+**0.4.0 is done (2026-11-27).** Next is **0.5.0**: checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI); support will cover only the versions actually tried.
 
-A fejlesztés részletes állapota: [docs/progress.md](docs/progress.md).
+The detailed development status: [docs/progress.md](docs/progress.md).
 
-## Verziók
+## Versions
 
-| Verzió | Cél | Állapot |
+| Version | Goal | Status |
 |---|---|---|
-| 0.4.0 | Asztali környezettől független, reszponzív felület világos/sötét témával; a lemezírók viselkedésének tesztes rögzítése; azonosítók a worker üzenetein | kész |
-| 0.5.0 | Windows 7 (csak Legacy) és Windows 8/8.1 (Legacy és UEFI) ellenőrzése | tervezett |
-| 0.6.0 | Megbízhatósági regressziózárás a csomagolás előtt: nyitott fizikai tesztek, telepítés, frissítés, eltávolítás | tervezett |
-| 0.7.0 | Közös telepítési szerződés: fájllista, függőségleltár, a csomagban csak a futáshoz szükséges fájlok | tervezett |
-| 0.8.0 | Magyar nyelvi katalógus és fordítási infrastruktúra | tervezett |
-| 0.8.1 | Angol nyelv és nyelvválasztó („HU / EN”) | tervezett |
-| 0.8.2 | További nyelvek befogadása kódmódosítás nélkül | tervezett |
-| 0.9.0 | Disztribúciófüggetlen futásidejű képességréteg | tervezett |
-| 0.9.1 | Arch/CachyOS natív csomag (PKGBUILD) | tervezett |
-| 0.9.2 | Debian/Ubuntu DEB csomag | tervezett |
-| 0.9.3 | Dokumentáció és közzétételi csomag, magyarul és angolul | tervezett |
-| 1.0.0 | Végleges, terjeszthető kiadás | tervezett |
+| 0.4.0 | Responsive interface independent of the desktop environment, with a light/dark theme; the disk writers' behaviour pinned by tests; identifiers on the worker messages | done |
+| 0.5.0 | Checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI) | planned |
+| 0.6.0 | Reliability regression closure before packaging: open physical tests, installation, upgrade, removal | planned |
+| 0.7.0 | Common installation contract: file list, dependency inventory, only the files needed at run time in the package | planned |
+| 0.8.0 | Hungarian language catalogue and translation infrastructure | planned |
+| 0.8.1 | English language and a language selector ("HU / EN") | planned |
+| 0.8.2 | Room for more languages without code changes | planned |
+| 0.9.0 | Distribution-independent runtime capability layer | planned |
+| 0.9.1 | Native Arch/CachyOS package (PKGBUILD) | planned |
+| 0.9.2 | Debian/Ubuntu DEB package | planned |
+| 0.9.3 | Documentation and publication package, in Hungarian and English | planned |
+| 1.0.0 | Final, distributable release | planned |
 
-Köztes javítóverzió (például 0.5.1) csak valós, külön javítandó hiba esetén készül.
+An intermediate fix version (for example 0.5.1) is made only for a real bug that needs a separate fix.
 
-## Meghozott döntések
+## Decisions made
 
-- **Windows 7:** csak Legacy BIOS (MBR) módban. A hivatalos Windows 7 SP1 ISO-n nincs UEFI-s rendszertöltő (`efi\boot\bootx64.efi`), a telepítőkép módosítása pedig nem cél.
-- **Windows 8 és 8.1:** Legacy és UEFI módban is. A támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni.
-- **Disztribúciók az 1.0.0-ban:** Arch/CachyOS és Debian/Ubuntu, natív csomaggal. A projekt egyszerre egy disztribúciócsaládot vesz fel, és csak az előző stabilizálása után bővít.
-- **Fedora (RPM):** nem része az 1.0.0-nak; egy hibamentes 1.0.0 után újra mérlegeljük.
-- **AppImage:** nincs tervben.
-- **Flatpak:** nem cél, mert a program közvetlenül a blokkeszközökkel dolgozik.
-- A grafikus felület és a lemezírási logika disztribúciófüggetlen marad; a csomagtelepítés, a függőségek felismerése, az asztali integráció és a polkit-beállítás külön, disztribúciónkénti rétegbe kerül.
+- **Windows 7:** only in Legacy BIOS (MBR) mode. The official Windows 7 SP1 ISO has no UEFI boot loader (`efi\boot\bootx64.efi`), and changing the installer image is not a goal.
+- **Windows 8 and 8.1:** in both Legacy and UEFI mode. Support will cover only the versions actually tried.
+- **Distributions in 1.0.0:** Arch/CachyOS and Debian/Ubuntu, with native packages. The project adds one distribution family at a time and extends only after the previous one is stable.
+- **Fedora (RPM):** not part of 1.0.0; it will be considered again after a bug-free 1.0.0.
+- **AppImage:** not planned.
+- **Flatpak:** not a goal, because the program works directly with block devices.
+- The graphical interface and the disk-writing logic stay distribution-independent; package installation, dependency detection, desktop integration and polkit setup go into a separate, per-distribution layer.
 
-## Tudatosan nem része az 1.0.0-nak
+## Deliberately not part of 1.0.0
 
 - Linux persistence
 - Windows To Go
-- ISO-letöltés és ISO-katalógus
-- Több pendrive párhuzamos írása
-- Kombinált BIOS+UEFI Windows-pendrive
-- A Windows telepítő testreszabása vagy a WIM/ESD átalakítása
-- 32 bites UEFI
-- Windows 7 UEFI módban
+- ISO download and ISO catalogue
+- Writing several USB drives in parallel
+- Combined BIOS+UEFI Windows USB drive
+- Customising the Windows installer or converting WIM/ESD
+- 32-bit UEFI
+- Windows 7 in UEFI mode
 - Fedora RPM, AppImage, Flatpak
-- Minden asztali környezet és disztribúció általános támogatásának ígérete
+- A promise of general support for every desktop environment and distribution
 
-## Hosszabb távú ötletek
+## Longer-term ideas
 
-Az 1.0.0 után kerülhetnek sorra; egyik sem vállalás.
+They may come after 1.0.0; none of them is a commitment.
 
-- Kombinált BIOS+UEFI Windows-pendrive egyetlen MBR-rel
-- Windows To Go és FreeDOS
+- Combined BIOS+UEFI Windows USB drive with a single MBR
+- Windows To Go and FreeDOS
 - Linux persistence
-- USB-meghajtók állapot- és kapacitástesztje
-- Lemezkép-ellenőrzőösszegek és kiadói aláírás ellenőrzése
-- Opcionális ISO-letöltés és ISO-katalógus
-- Rugalmasabb formázási lehetőségek
+- Health and capacity tests of USB drives
+- Checking disk image checksums and publisher signatures
+- Optional ISO download and ISO catalogue
+- More flexible formatting options
 
-## További dokumentumok
+## More documents
 
-- [CHANGELOG.md](CHANGELOG.md): a kiadások változásai
-- [docs/progress.md](docs/progress.md): az aktuális verzió részletes fejlesztési állapota
-- [docs/history/](docs/history/): a lezárt verziók fejlesztési naplója
-- [CONTRIBUTING.md](CONTRIBUTING.md): közreműködés
+- [CHANGELOG.md](CHANGELOG.md): the changes of each release
+- [docs/progress.md](docs/progress.md): the detailed development status of the current version
+- [docs/history/](docs/history/): the development records of the closed versions
+- [CONTRIBUTING.md](CONTRIBUTING.md): contributing
