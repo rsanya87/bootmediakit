@@ -127,7 +127,7 @@ They are skipped without `BMK_INTEGRATION=1`, root and the required tools; see [
 
 ## Development direction
 
-The immediate priority is to make the Arch/CachyOS implementation reliable before adding other distributions. Debian/Ubuntu and Fedora are planned only after the Arch-family workflow is validated. See [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), and [CONTRIBUTING.md](CONTRIBUTING.md). Rules every change must keep, lessons from earlier mistakes and the pre-release physical checklist are in [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md) and [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md) (in Hungarian).
+The immediate priority is to make the Arch/CachyOS implementation reliable before adding other distributions. Debian/Ubuntu packages are planned after the Arch-family workflow is validated; Fedora is not part of 1.0.0. See [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), and [CONTRIBUTING.md](CONTRIBUTING.md). Rules every change must keep, lessons from earlier mistakes and the pre-release physical checklist are in [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md) and [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md) (in Hungarian).
 
 ## Windows Setup with multiple internal drives
 
