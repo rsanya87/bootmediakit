@@ -1,3 +1,5 @@
+[English](README.md) | Magyar
+
 # BootMediaKit
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
@@ -17,7 +19,7 @@
 - Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
 
 
-- Reszponzív PySide6 felület, amely a rendszer betűtípusát és a Qt saját nagy DPI-s méretezését használja: magas képernyőn egy oszlop, alacsonyon két oszlop tömörebb térközökkel. A legkisebb ablakméret 880×550 logikai képpont (XFCE alatt elfér 1024×640 logikai képponton – ennyi egy 1280×800-as kijelző 125%-on – ablakkerettel és panellel, KDE Plasma alatt 1280×720-on 125%-on; valódi laptopkijelzőn nincs ellenőrizve); ekkora vagy nagyobb ablakban a felületen nincs görgetősáv, csak a napló görgethető a saját dobozában. Ennél kisebb méretnél (például nagyon nagy rendszer-betűméretnél) a felület görgethető, de egyetlen vezérlő sem tűnik el. Ezt offscreen tesztek ellenőrzik két betűtípussal. Valódi asztali környezetben KDE Plasma alatt (Wayland, CachyOS), virtuális gépben GNOME (Wayland), XFCE, Cinnamon és MATE (X11), valamint LXQt alatt ellenőriztük (lásd [docs/history/0.4.0.md](docs/history/0.4.0.md) és [docs/TESTING.md](docs/TESTING.md)).
+- Reszponzív PySide6 felület, amely a rendszer betűtípusát és a Qt saját nagy DPI-s méretezését használja: magas képernyőn egy oszlop, alacsonyon két oszlop tömörebb térközökkel. A legkisebb ablakméret 880×550 logikai képpont (XFCE alatt elfér 1024×640 logikai képponton – ennyi egy 1280×800-as kijelző 125%-on – ablakkerettel és panellel, KDE Plasma alatt 1280×720-on 125%-on; valódi laptopkijelzőn nincs ellenőrizve); ekkora vagy nagyobb ablakban a felületen nincs görgetősáv, csak a napló görgethető a saját dobozában. Ennél kisebb méretnél (például nagyon nagy rendszer-betűméretnél) a felület görgethető, de egyetlen vezérlő sem tűnik el. Ezt offscreen tesztek ellenőrzik két betűtípussal. Valódi asztali környezetben KDE Plasma alatt (Wayland, CachyOS), virtuális gépben GNOME (Wayland), XFCE, Cinnamon és MATE (X11), valamint LXQt alatt ellenőriztük (lásd [docs/history/0.4.0.md](docs/history/0.4.0.md) és [docs/TESTING.hu.md](docs/TESTING.hu.md)).
 - Világos/sötét megjelenés, amely a rendszert követi (ha az nem állapítható meg, sötét), jobb felül nap/hold gyorsváltóval; a gomb menüje visszaállítja a rendszer szerinti módot.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
 - Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
@@ -126,11 +128,11 @@ Az egységtesztek ellenőrzik a célmeghajtó-védelmet, a forrás/cél ütköz�
 sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests/integration -v
 ```
 
-`BMK_INTEGRATION=1`, root jog és a szükséges programok nélkül ezek kimaradnak; részletek: [docs/TESTING.md](docs/TESTING.md). Egyik szint sem helyettesíti a valódi USB-s, firmware-es és Windows Telepítő tesztet.
+`BMK_INTEGRATION=1`, root jog és a szükséges programok nélkül ezek kimaradnak; részletek: [docs/TESTING.hu.md](docs/TESTING.hu.md). Egyik szint sem helyettesíti a valódi USB-s, firmware-es és Windows Telepítő tesztet.
 
 ## Fejlesztési irány
 
-Elsőként az Arch/CachyOS változatot stabilizáljuk. A Debian/Ubuntu csomag ezután következik; a Fedora nem része az 1.0.0-nak. Részletek: [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md). A minden változtatásnál kötelező szabályok, a korábbi hibák tanulságai és a kiadás előtti fizikai ellenőrzőlista: [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md), [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md).
+Elsőként az Arch/CachyOS változatot stabilizáljuk. A Debian/Ubuntu csomag ezután következik; a Fedora nem része az 1.0.0-nak. Részletek: [ROADMAP.hu.md](ROADMAP.hu.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.hu.md](CONTRIBUTING.hu.md). A minden változtatásnál kötelező szabályok, a korábbi hibák tanulságai és a kiadás előtti fizikai ellenőrzőlista: [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md), [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md).
 
 ## Windows Telepítő több belső meghajtó esetén
 
