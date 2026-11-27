@@ -1,10 +1,12 @@
-# Roadmap
+# Fejlesztési állapot (belső)
+
+Ez a fájl a fejlesztés belső állapotkövetője: az aktuális verzió feladatai, a jóváhagyott eltérések a munkaleírástól, a halasztott tételek és a fizikai tesztek. A nyilvános áttekintés: [ROADMAP.md](../ROADMAP.md); a lezárt kiadások szakaszai: [history/](history/).
 
 A feladat akkor tekinthető késznek, ha az automatizált ellenőrzések és a hozzájuk tartozó valós eszközös tesztek eredménye is rögzítve van.
 
 ## 0.4.0 — Fejlesztés alatt: DE-független, reszponzív GUI; writer-ujjlenyomat; worker-eseményazonosítók
 
-A részletes munkaleírás a projekt munkaterületén van (`roadmap/0.4.0.md`); a kötelező szabályok: [docs/INVARIANTS.md](docs/INVARIANTS.md), a korábbi hibák: [docs/LESSONS.md](docs/LESSONS.md), a kiadás előtti fizikai ellenőrzőlista: [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md).
+A kötelező szabályok: [docs/INVARIANTS.md](INVARIANTS.md), a korábbi hibák: [docs/LESSONS.md](LESSONS.md), a kiadás előtti fizikai ellenőrzőlista: [docs/REGRESSION_CHECKLIST.md](REGRESSION_CHECKLIST.md).
 
 **Cél:** ugyanaz a funkcionalitás és biztonsági modell KDE Plasma, GNOME, XFCE, Cinnamon, MATE, LXQt és más Qt-kompatibilis munkamenetek alatt; a rendszer világos/sötét beállításának követése, sötét tartalék, kézi váltó; kis laptopkijelzőn is használható, dokumentált minimális ablakmérettel; érthető hiba hitelesítési ügynök nélkül; stabil `msg_id` a worker eseményein. **Nem cél:** distrofüggetlenítés, új írási funkció, fordítás, a három writer módosítása.
 
