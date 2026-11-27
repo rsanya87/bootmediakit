@@ -181,6 +181,7 @@ class SingleVersionSourceTests(unittest.TestCase):
         # topmost released section must then match the current version.
         self.assertIn(current, self.first_heading("CHANGELOG.md", skip=("Unreleased",)))
         self.assertIn(current, self.first_heading("docs/TESTING.md"))
+        self.assertIn(current, self.first_heading("docs/TESTING.hu.md"))
 
     def test_no_other_python_file_hardcodes_the_version(self):
         current = version.__version__
@@ -210,7 +211,10 @@ class TestCommandDocumentationTests(unittest.TestCase):
         'BMK_UEFI_NTFS_IMAGE="$RUNNER_TEMP/uefi-ntfs.img" '
     )
     CI_INTEGRATION = CI_ROOT_ENV + INTEGRATION.removeprefix("sudo -E env ")
-    DOCUMENTS = ("README.md", "README.hu.md", "CONTRIBUTING.md", "docs/TESTING.md")
+    DOCUMENTS = (
+        "README.md", "README.hu.md", "CONTRIBUTING.md", "CONTRIBUTING.hu.md",
+        "docs/TESTING.md", "docs/TESTING.hu.md",
+    )
 
     def test_documented_test_commands_match_ci(self):
         workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
@@ -231,7 +235,7 @@ class TestCommandDocumentationTests(unittest.TestCase):
     def test_qemu_integration_command_is_documented_and_matches_ci(self):
         qemu_command = self.INTEGRATION.replace("BMK_INTEGRATION=1 ", "BMK_INTEGRATION=1 BMK_QEMU=1 ", 1)
         self.assertIn("BMK_QEMU=1", self.CI_ROOT_ENV)
-        for document in ("CONTRIBUTING.md", "docs/TESTING.md"):
+        for document in ("CONTRIBUTING.md", "CONTRIBUTING.hu.md", "docs/TESTING.md", "docs/TESTING.hu.md"):
             text = (ROOT / document).read_text(encoding="utf-8")
             self.assertIn(qemu_command, text, msg=f"{document}: hiányzik: {qemu_command}")
 
@@ -249,6 +253,23 @@ class TestCommandDocumentationTests(unittest.TestCase):
         self.assertIn(':r /dev/sdX', acl_lines[0])
         self.assertIn('setfacl -x u:"$USER" /dev/sdX', testing)
         self.assertIn("`disk` group", testing)
+        for line in device_lines:
+            self.assertNotRegex(line, r"\b(dd|wipefs|mkfs|sfdisk|parted|grub-install)\b", msg=line)
+
+    def test_manual_qemu_check_in_the_hungarian_guide_never_writes_to_the_usb_drive(self):
+        testing = (ROOT / "docs/TESTING.hu.md").read_text(encoding="utf-8")
+        self.assertIn("### Egy kész pendrive kézi QEMU-indítási próbája", testing)
+        device_lines = [line for line in testing.splitlines() if "/dev/sdX" in line]
+        qemu_lines = [line for line in device_lines if "qemu-system" in line]
+        self.assertTrue(qemu_lines)
+        for line in qemu_lines:
+            self.assertIn("snapshot=on", line)
+            self.assertNotIn("sudo", line, msg="a kézi QEMU-próba ne fusson rootként")
+        acl_lines = [line for line in device_lines if "setfacl -m" in line]
+        self.assertEqual(len(acl_lines), 1)
+        self.assertIn(':r /dev/sdX', acl_lines[0])
+        self.assertIn('setfacl -x u:"$USER" /dev/sdX', testing)
+        self.assertIn("`disk` csoport", testing)
         for line in device_lines:
             self.assertNotRegex(line, r"\b(dd|wipefs|mkfs|sfdisk|parted|grub-install)\b", msg=line)
 
@@ -418,9 +439,10 @@ class GuiTestCoverageTests(unittest.TestCase):
                         workflow.index("- name: Run unit and offscreen GUI tests"))
 
     def test_every_test_module_is_described_in_testing_md(self):
-        testing = (ROOT / "docs/TESTING.md").read_text(encoding="utf-8")
-        for path in sorted((ROOT / "tests").glob("test_*.py")) + sorted((ROOT / "tests/integration").glob("test_*.py")):
-            self.assertTrue(path.name in testing, msg=f"docs/TESTING.md nem írja le: {path.relative_to(ROOT)}")
+        for guide in ("docs/TESTING.md", "docs/TESTING.hu.md"):
+            testing = (ROOT / guide).read_text(encoding="utf-8")
+            for path in sorted((ROOT / "tests").glob("test_*.py")) + sorted((ROOT / "tests/integration").glob("test_*.py")):
+                self.assertTrue(path.name in testing, msg=f"{guide} nem írja le: {path.relative_to(ROOT)}")
 
     def test_installer_installs_every_local_gui_module_and_no_test_helper(self):
         installer = (ROOT / "install.sh").read_text(encoding="utf-8")
@@ -462,18 +484,21 @@ class DependencyDocumentationTests(unittest.TestCase):
 
     def test_contributing_and_testing_name_every_runtime_package(self):
         packages = self.installed_packages()
-        for document in ("CONTRIBUTING.md", "docs/TESTING.md"):
+        for document in ("CONTRIBUTING.md", "CONTRIBUTING.hu.md", "docs/TESTING.md", "docs/TESTING.hu.md"):
             text = (ROOT / document).read_text(encoding="utf-8")
             for package in packages:
                 self.assertIn(f"`{package}`", text, msg=f"{document}: hiányzik: {package}")
 
     def test_wimlib_is_not_a_dependency(self):
         # Removed together with the WIM splitting (see CHANGELOG.md); CONTRIBUTING.md says so.
-        for name in ("install.sh", "README.md", "README.hu.md", "docs/TESTING.md"):
+        for name in ("install.sh", "README.md", "README.hu.md", "docs/TESTING.md", "docs/TESTING.hu.md"):
             self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"), msg=name)
         contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
         self.assertEqual(contributing.count("wimlib"), 1)
         self.assertIn("`wimlib` is not used", contributing)
+        contributing_hu = (ROOT / "CONTRIBUTING.hu.md").read_text(encoding="utf-8")
+        self.assertEqual(contributing_hu.count("wimlib"), 1)
+        self.assertIn("óta nincs használatban (nincs WIM-darabolás)", contributing_hu)
         for name in ("worker.py", "app.py", "iso_utils.py"):
             self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"))
 
@@ -552,7 +577,7 @@ class ProjectRuleDocumentTests(unittest.TestCase):
             self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
 
     def test_contributing_and_readmes_link_the_rule_documents(self):
-        for document in ("CONTRIBUTING.md", "README.md", "README.hu.md"):
+        for document in ("CONTRIBUTING.md", "CONTRIBUTING.hu.md", "README.md", "README.hu.md"):
             text = (ROOT / document).read_text(encoding="utf-8")
             for relative in self.DOCUMENTS:
                 self.assertIn(f"({relative})", text, msg=f"{document} nem hivatkozik rá: {relative}")
@@ -632,7 +657,7 @@ class RoadmapDocumentTests(unittest.TestCase):
         return sorted((ROOT / "docs" / "history").glob("*.md"))
 
     def test_roadmap_progress_and_history_exist(self):
-        for relative in ("ROADMAP.md", "docs/progress.md"):
+        for relative in ("ROADMAP.md", "ROADMAP.hu.md", "docs/progress.md"):
             path = ROOT / relative
             self.assertTrue(path.is_file(), msg=f"hiányzik: {relative}")
             self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
@@ -654,7 +679,7 @@ class RoadmapDocumentTests(unittest.TestCase):
         # The per-version work descriptions (roadmap/<version>.md) are not in
         # the repository; a reader of these documents must not meet a dead
         # reference.
-        for relative in ("ROADMAP.md", "docs/progress.md"):
+        for relative in ("ROADMAP.md", "ROADMAP.hu.md", "docs/progress.md"):
             text = (ROOT / relative).read_text(encoding="utf-8")
             self.assertNotIn("roadmap/", text, msg=f"{relative} a repón kívüli roadmap/ fájlra hivatkozik")
 
@@ -662,6 +687,9 @@ class RoadmapDocumentTests(unittest.TestCase):
         text = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
         for target in ("(docs/progress.md)", "(docs/history/)", "(CHANGELOG.md)", "(CONTRIBUTING.md)"):
             self.assertIn(target, text)
+        text_hu = (ROOT / "ROADMAP.hu.md").read_text(encoding="utf-8")
+        for target in ("(docs/progress.md)", "(docs/history/)", "(CHANGELOG.md)", "(CONTRIBUTING.hu.md)"):
+            self.assertIn(target, text_hu)
 
     def test_relative_markdown_links_and_anchors_resolve(self):
         files = self.markdown_files()
@@ -694,6 +722,84 @@ class RoadmapDocumentTests(unittest.TestCase):
                 ["missing.md", "sub/other.md#nincs", "#nincs-ilyen"],
             )
 
+
+
+def markdown_structure(text: str) -> tuple[list[int], list[str], list[str]]:
+    """Heading levels, fenced code block contents and relative link targets
+    (file part only, without anchors and external links) of a Markdown text."""
+    levels, blocks, links, fenced, block = [], [], [], False, []
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            if fenced:
+                blocks.append("\n".join(block))
+                block = []
+            fenced = not fenced
+            continue
+        if fenced:
+            block.append(line)
+            continue
+        heading = re.match(r"^(#{1,6})\s", line)
+        if heading:
+            levels.append(len(heading.group(1)))
+        for target in MARKDOWN_LINK.findall(line):
+            if URI_SCHEME.match(target) or target.startswith("#"):
+                continue
+            links.append(target.partition("#")[0])
+    return levels, blocks, links
+
+
+class BilingualDocumentTests(unittest.TestCase):
+    """User and contributor documents exist in English (the original name)
+    and Hungarian (".hu.md") with the same structure (CONTRIBUTING.md,
+    "Maintainer documents")."""
+
+    PAIRS = (
+        ("README.md", "README.hu.md"),
+        ("CONTRIBUTING.md", "CONTRIBUTING.hu.md"),
+        ("ROADMAP.md", "ROADMAP.hu.md"),
+        ("docs/TESTING.md", "docs/TESTING.hu.md"),
+    )
+
+    def read(self, relative: str) -> str:
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    def test_both_language_versions_exist(self):
+        for english, hungarian in self.PAIRS:
+            for relative in (english, hungarian):
+                self.assertTrue((ROOT / relative).is_file(), msg=f"hiányzik: {relative}")
+
+    def test_each_version_starts_with_a_language_line(self):
+        for english, hungarian in self.PAIRS:
+            en_name, hu_name = Path(english).name, Path(hungarian).name
+            self.assertEqual(self.read(english).splitlines()[0], f"English | [Magyar]({hu_name})", msg=english)
+            self.assertEqual(self.read(hungarian).splitlines()[0], f"[English]({en_name}) | Magyar", msg=hungarian)
+
+    def test_headings_code_blocks_and_link_targets_match(self):
+        for english, hungarian in self.PAIRS:
+            with self.subTest(pair=english):
+                en_levels, en_blocks, en_links = markdown_structure(self.read(english))
+                hu_levels, hu_blocks, hu_links = markdown_structure(self.read(hungarian))
+                self.assertEqual(en_levels, hu_levels, msg="a fejlécek száma vagy szintje eltér")
+                self.assertEqual(en_blocks, hu_blocks, msg="a kódblokkok eltérnek")
+                self.assertEqual(
+                    sorted(link.replace(".hu.md", ".md") for link in en_links),
+                    sorted(link.replace(".hu.md", ".md") for link in hu_links),
+                    msg="a relatív hivatkozások célpontjai eltérnek (a .hu jelzőt figyelmen kívül hagyva)",
+                )
+
+    def test_hungarian_versions_link_the_hungarian_pairs(self):
+        english_documents = {(ROOT / english).resolve() for english, _ in self.PAIRS}
+        for _, hungarian in self.PAIRS:
+            path = ROOT / hungarian
+            body = "\n".join(self.read(hungarian).splitlines()[1:])  # without the language line
+            for link in markdown_structure(body)[2]:
+                target = (path.parent / link).resolve()
+                self.assertNotIn(target, english_documents, msg=f"{hungarian}: a magyar pár helyett az angolra mutat: {link}")
+
+    def test_link_check_covers_the_hungarian_versions(self):
+        files = RoadmapDocumentTests().markdown_files()
+        for _, hungarian in self.PAIRS:
+            self.assertIn(ROOT / hungarian, files)
 
 if __name__ == "__main__":
     unittest.main()

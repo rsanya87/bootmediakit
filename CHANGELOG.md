@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Docs: the closed 0.4.0 section of `docs/progress.md` moved letter for letter to `docs/history/0.4.0.md`; references to the 0.4.0 deviations and deferred items point there. `docs/progress.md` starts the 0.5.0 section.
+- Docs: the user and contributor documents exist in English (the original name) and in Hungarian (`.hu.md`): `README`, `CONTRIBUTING` (new `CONTRIBUTING.hu.md`), `ROADMAP` (the Hungarian text moved to `ROADMAP.hu.md`, `ROADMAP.md` is the English translation) and `docs/TESTING` (new full translation `docs/TESTING.hu.md`). Each starts with a language line; the Hungarian versions link the Hungarian pairs. `CONTRIBUTING` names the maintainer documents, which stay in one language (Hungarian: INVARIANTS, LESSONS, REGRESSION_CHECKLIST, progress, history; MESSAGES in English with the Hungarian interface texts); `CHANGELOG.md`, the release notes and `THIRD_PARTY_NOTICES.md` stay in English. New tests (`BilingualDocumentTests`): both versions exist, the language line, the same heading levels, code blocks and link targets, and Hungarian links to the Hungarian pairs; the existing document checks (test commands, runtime packages, `wimlib`, test modules, the minimum size, the manual QEMU check, the version) also cover the Hungarian versions.
 
 ## 0.4.0 — 2026-11-27
 

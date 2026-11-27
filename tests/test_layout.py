@@ -522,9 +522,10 @@ class MeasuredMinimumTests(unittest.TestCase):
         self.assertLessEqual(gui.MIN_WINDOW_HEIGHT, 640 - 44 - 40)
 
     def test_minimum_is_documented(self):
-        testing = (ROOT / "docs" / "TESTING.md").read_text(encoding="utf-8")
         size = f"{gui.MIN_WINDOW_WIDTH}×{gui.MIN_WINDOW_HEIGHT}"
-        self.assertTrue(size in testing, msg=f"docs/TESTING.md nem említi: {size}")
+        for guide in ("TESTING.md", "TESTING.hu.md"):
+            testing = (ROOT / "docs" / guide).read_text(encoding="utf-8")
+            self.assertTrue(size in testing, msg=f"docs/{guide} nem említi: {size}")
         for readme in ("README.md", "README.hu.md"):
             text = (ROOT / readme).read_text(encoding="utf-8")
             self.assertTrue(size in text, msg=f"{readme} nem említi: {size}")
