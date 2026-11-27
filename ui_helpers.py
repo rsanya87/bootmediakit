@@ -131,7 +131,7 @@ def clamp_minimum_size(minimum: tuple[int, int], available: tuple[int, int]) -> 
 
 
 # Height kept free on Wayland when Qt reports the whole output as the work
-# area (docs/TESTING.md, ROADMAP.md approved deviations). Wayland gives Qt no
+# area (docs/TESTING.md, docs/progress.md approved deviations). Wayland gives Qt no
 # work area: QScreen.availableGeometry() equals QScreen.geometry() even with
 # panels (measured on GNOME 51.1 and on KDE Plasma). Measured on the
 # maintainer's KDE Plasma: KWin's configure_bounds keep 58 logical px free
