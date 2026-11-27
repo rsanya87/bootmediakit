@@ -1,3 +1,5 @@
+English | [Magyar](TESTING.hu.md)
+
 # Testing
 
 ## BootMediaKit 0.4.0 — Stable release (2026-11-27)
