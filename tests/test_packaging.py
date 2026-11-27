@@ -85,10 +85,12 @@ class PrivilegedPackagingTests(unittest.TestCase):
 
     def test_elapsed_timer_cannot_expand_progress_header_vertically(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
+        # T2 (theme work): the style sheet moved to theme.py (STYLE_TEMPLATE).
+        style = app + (ROOT / "theme.py").read_text(encoding="utf-8")
         self.assertIn("self.elapsed_label.setFixedHeight(30)", app)
         self.assertIn("QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed", app)
-        self.assertIn("QLabel#elapsed", app)
-        self.assertIn("QToolButton#infoButton", app)
+        self.assertIn("QLabel#elapsed", style)
+        self.assertIn("QToolButton#infoButton", style)
 
     def test_gui_displays_safety_version_under_title_with_readable_secondary_text(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
@@ -96,8 +98,13 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("APP_VERSION = __version__", app)
         self.assertIn("version = QLabel(APP_VERSION)", app)
         self.assertIn('meta_row.addWidget(version', app)
-        self.assertIn('QLabel#version { color: #83bde2;', app)
-        self.assertIn('QLabel#muted { color: #b7c1cb; }', app)
+        # T2 (theme work): the fixed #83bde2/#b7c1cb colours became palette-derived
+        # tokens; tests/test_theme.py checks their contrast on light, dark and
+        # high-contrast palettes.
+        style = (ROOT / "theme.py").read_text(encoding="utf-8")
+        self.assertIn("QLabel#version {{ color: {accent_text};", style)
+        self.assertIn("QLabel#muted {{ color: {secondary_text}; }}", style)
+        self.assertIn("build_stylesheet(tokens)", app)
 
     def test_gui_disables_horizontal_scrollbar_and_wraps_long_iso_metadata(self):
         app = (ROOT / "app.py").read_text(encoding="utf-8")
@@ -105,12 +112,17 @@ class PrivilegedPackagingTests(unittest.TestCase):
         self.assertIn("self.file_info.setSizePolicy(QSizePolicy.Policy.Ignored", app)
         self.assertIn("Qt.ScrollBarPolicy.ScrollBarAlwaysOff", app)
         self.assertIn("root.setSizePolicy(QSizePolicy.Policy.Ignored", app)
-        self.assertIn("calculate_window_profile(", app)
-        self.assertIn("self._compact_ui = available_height < 850", app)
-        self.assertIn("self.setMaximumSize(740, 900)", app)
+        # T3 (layout work) replaced the 740x900 cap, the screen-height compact flag
+        # and the fixed log height with a measured minimum size, layout
+        # profiles chosen from the real content size and a log that takes the
+        # spare height. tests/test_layout.py checks the behaviour itself (no
+        # scrollbar at the tested sizes, no lost or overlapping control).
+        self.assertIn("initial_window_size(", app)
+        self.assertIn("MIN_WINDOW_WIDTH = ", app)
+        self.assertIn("def update_layout_profile(self)", app)
         self.assertIn("def fit_window_to_screen(self)", app)
         self.assertIn("QTimer.singleShot(0, window.fit_window_to_screen)", app)
-        self.assertIn("self.log.setMaximumHeight(56 if self._compact_ui else 76)", app)
+        self.assertIn("self.log = LogView()", app)
         self.assertIn("self.file_info.setWordWrap(False)", app)
 
 
@@ -182,7 +194,7 @@ class SingleVersionSourceTests(unittest.TestCase):
 
 
 class TestCommandDocumentationTests(unittest.TestCase):
-    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py"
+    COMPILE = "-m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py"
     SHELL_SYNTAX = "bash -n install.sh uninstall.sh bootmediakit-worker"
     UNIT = "QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v"
     SHELLCHECK = "shellcheck -S warning install.sh uninstall.sh bootmediakit-worker"
@@ -289,6 +301,183 @@ class TestCommandDocumentationTests(unittest.TestCase):
             self.assertNotIn('"loop"', text)
 
 
+class NoVersionNumberInPythonFilesTests(unittest.TestCase):
+    """INVARIANTS D8 / CLAUDE.md rule 13: no "0.x.y" anywhere in a .py file
+    except version.py, in code, comments and docstrings alike.
+
+    SingleVersionSourceTests only looks for the current version; this guard
+    also catches older and future ones (a comment once named an old release).
+    It uses the same boundaries as that guard, so longer number sequences such
+    as 0.0.0.0 or 10.0.1.0 are not matched.
+    """
+
+    PATTERN = re.compile(r"(?<![\d.])v?0\.\d+\.\d+(?![\d.])")
+    # Justified exceptions only: (path relative to the repository, exact
+    # matched text, reason). The list may only shrink: MAX_EXCEPTIONS is the
+    # length it had when the guard was added, and a stale entry fails.
+    EXCEPTIONS: tuple[tuple[str, str, str], ...] = ()
+    MAX_EXCEPTIONS = 0
+
+    def found(self):
+        hits = []
+        for path in sorted(ROOT.rglob("*.py")):
+            relative = path.relative_to(ROOT).as_posix()
+            if relative == "version.py" or relative.startswith(".git/"):
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                for match in self.PATTERN.finditer(line):
+                    hits.append((relative, number, match.group(0)))
+        return hits
+
+    def test_no_version_number_outside_version_py(self):
+        allowed = {(path, text) for path, text, _reason in self.EXCEPTIONS}
+        offenders = [f"{path}:{line}: {text}" for path, line, text in self.found() if (path, text) not in allowed]
+        self.assertEqual(
+            offenders,
+            [],
+            msg="Verziószám egy .py fájlban a version.py-n kívül (INVARIANTS D8). Hivatkozz feladatszámra "
+            "(pl. T3) vagy a CHANGELOG.md/docs/progress.md megfelelő részére; a verzióhoz kötött információ ott él. "
+            "Kivétel csak indoklással, a gazda jóváhagyásával kerülhet az EXCEPTIONS listára.",
+        )
+
+    def test_exception_list_only_shrinks_and_has_no_stale_entry(self):
+        self.assertLessEqual(len(self.EXCEPTIONS), self.MAX_EXCEPTIONS, msg="a kivétellista nem bővíthető")
+        present = {(path, text) for path, _line, text in self.found()}
+        for path, text, reason in self.EXCEPTIONS:
+            self.assertTrue(reason.strip(), msg=f"indoklás nélküli kivétel: {path} {text}")
+            self.assertIn((path, text), present, msg=f"elavult kivétel, töröld: {path} {text}")
+
+    def test_pattern_boundaries(self):
+        # Built from parts, so this file holds no version-like text itself.
+        def v(*parts):
+            return ".".join(parts)
+
+        for text in (f"({v('0', '4', '0')} T3)", "v" + v("0", "3", "0"), v("0", "1", "2") + ";",
+                     f"a {v('0', '8', '0')}-tól"):
+            self.assertRegex(text, self.PATTERN)
+        for text in (v("0", "0", "0", "0"), v("10", "0", "1", "0"), v("10", "3", "0"), v("192", "0", "2", "1"),
+                     v("1", "0", "0"), v("0", "3"), "PySide6 " + v("6", "12", "0")):
+            self.assertNotRegex(text, self.PATTERN)
+
+
+class GuiTestCoverageTests(unittest.TestCase):
+    """T7: the theme, layout, contrast, pseudo-locale and message tests run in
+    CI, offscreen, and cannot drop out silently."""
+
+    WORKFLOW = ROOT / ".github/workflows/tests.yml"
+    # Test classes that carry the GUI quality checks; renaming or removing
+    # one must be a visible change here.
+    REQUIRED_SUITES = {
+        "test_theme": ("ContrastTests", "ClassificationTests", "ThemeControllerTests", "WindowThemeTests",
+                       "FixedColourTests"),
+        "test_layout": ("ResponsiveLayoutTests", "FontAndDpiTests", "MeasuredMinimumTests",
+                        "TestFontRequirementTests"),
+        "test_i18n": ("TrSourceTests", "PseudoHelperTests", "PseudoLocaleLayoutTests"),
+        "test_messages": ("MessageSourceTests", "EmitTests", "WriterMessageTests", "GuiIgnoresIdentifierTests"),
+        "test_writer_fingerprint": ("WriterFingerprintTests", "CancellationBoundaryTests", "RawByteExactnessTests"),
+        "test_desktop_polkit": (),
+        "test_terminal_interrupt": ("TerminalInterruptTests", "TerminalInterruptPathTests"),
+        "test_target_state": ("FailClosedTargetStateTests", "GuiTextIdentifierTests"),
+    }
+
+    def discovered(self):
+        suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"), top_level_dir=str(ROOT / "tests"))
+        found = set()
+
+        def walk(item):
+            if isinstance(item, unittest.TestSuite):
+                for child in item:
+                    walk(child)
+            else:
+                found.add((type(item).__module__, type(item).__name__))
+
+        walk(suite)
+        return found
+
+    def test_required_gui_suites_are_discovered(self):
+        found = self.discovered()
+        failed_imports = sorted(name for module, name in found if module == "unittest.loader")
+        self.assertEqual(failed_imports, [], msg="importálhatatlan tesztmodul")
+        modules = {module for module, _name in found}
+        for module, classes in self.REQUIRED_SUITES.items():
+            self.assertIn(module, modules)
+            for name in classes:
+                self.assertIn((module, name), found, msg=f"hiányzó tesztosztály: {module}.{name}")
+
+    def test_ci_runs_them_offscreen_and_fails_on_any_skip(self):
+        workflow = self.WORKFLOW.read_text(encoding="utf-8")
+        step = workflow.split("- name: Run unit and offscreen GUI tests", 1)[1].split("- name:", 1)[0]
+        self.assertIn("QT_QPA_PLATFORM: offscreen", step)
+        self.assertIn("set -o pipefail", step)
+        self.assertIn('python -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"', step)
+        self.assertIn("skipped=", step)
+        self.assertIn("exit 1", step)
+        self.assertNotRegex(step, r"discover[^\n]*(-k|-p|--pattern)")
+        # The fonts are checked before the tests run.
+        self.assertLess(workflow.index("- name: Check layout test fonts"),
+                        workflow.index("- name: Run unit and offscreen GUI tests"))
+
+    def test_every_test_module_is_described_in_testing_md(self):
+        testing = (ROOT / "docs/TESTING.md").read_text(encoding="utf-8")
+        for path in sorted((ROOT / "tests").glob("test_*.py")) + sorted((ROOT / "tests/integration").glob("test_*.py")):
+            self.assertTrue(path.name in testing, msg=f"docs/TESTING.md nem írja le: {path.relative_to(ROOT)}")
+
+    def test_installer_installs_every_local_gui_module_and_no_test_helper(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        local = {path.stem for path in ROOT.glob("*.py")}
+        pending, needed = ["app"], set()
+        while pending:
+            module = pending.pop()
+            if module in needed:
+                continue
+            needed.add(module)
+            source = (ROOT / f"{module}.py").read_text(encoding="utf-8")
+            pending.extend(set(re.findall(r"^(?:from|import) (\w+)", source, flags=re.MULTILINE)) & local)
+        for module in sorted(needed - {"app"}):
+            self.assertIn(f'"$SCRIPT_DIR/{module}.py" "$APP_DIR/{module}.py"', installer,
+                          msg=f"az install.sh nem telepíti: {module}.py")
+        # Test helpers stay in the source tree (INVARIANTS D7).
+        self.assertNotIn("tests/", installer)
+        for helper in ("pseudo_locale", "text_scan", "loop_helpers"):
+            self.assertNotIn(helper, installer)
+
+
+class DependencyDocumentationTests(unittest.TestCase):
+    """T8: install.sh, both READMEs, CONTRIBUTING.md and docs/TESTING.md
+    name the same runtime packages (INVARIANTS D5)."""
+
+    def installed_packages(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+        match = re.search(r"^pacman -S --needed (.+)$", installer, flags=re.MULTILINE)
+        self.assertIsNotNone(match)
+        return match.group(1).split()
+
+    def test_readmes_list_exactly_the_installed_packages(self):
+        packages = self.installed_packages()
+        self.assertIn("pyside6", packages)
+        for readme in ("README.md", "README.hu.md"):
+            text = (ROOT / readme).read_text(encoding="utf-8")
+            listed = re.findall(r"^- `([a-z0-9-]+)` — ", text, flags=re.MULTILINE)
+            self.assertEqual(listed, packages, msg=readme)
+
+    def test_contributing_and_testing_name_every_runtime_package(self):
+        packages = self.installed_packages()
+        for document in ("CONTRIBUTING.md", "docs/TESTING.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for package in packages:
+                self.assertIn(f"`{package}`", text, msg=f"{document}: hiányzik: {package}")
+
+    def test_wimlib_is_not_a_dependency(self):
+        # Removed together with the WIM splitting (see CHANGELOG.md); CONTRIBUTING.md says so.
+        for name in ("install.sh", "README.md", "README.hu.md", "docs/TESTING.md"):
+            self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"), msg=name)
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertEqual(contributing.count("wimlib"), 1)
+        self.assertIn("`wimlib` is not used", contributing)
+        for name in ("worker.py", "app.py", "iso_utils.py"):
+            self.assertNotIn("wimlib", (ROOT / name).read_text(encoding="utf-8"))
+
+
 class LegacyBiosPackagingTests(unittest.TestCase):
     def read(self, name):
         return (ROOT / name).read_text(encoding="utf-8")
@@ -347,6 +536,163 @@ class SafetyDocumentationTests(unittest.TestCase):
         hungarian = (ROOT / "README.hu.md").read_text(encoding="utf-8")
         self.assertIn("may be left partially written", english)
         self.assertIn("részlegesen írt állapotban maradhat", hungarian)
+
+
+class ProjectRuleDocumentTests(unittest.TestCase):
+    DOCUMENTS = (
+        "docs/INVARIANTS.md",
+        "docs/LESSONS.md",
+        "docs/REGRESSION_CHECKLIST.md",
+    )
+
+    def test_rule_documents_exist_and_are_not_empty(self):
+        for relative in self.DOCUMENTS:
+            path = ROOT / relative
+            self.assertTrue(path.is_file(), msg=f"hiányzik: {relative}")
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
+
+    def test_contributing_and_readmes_link_the_rule_documents(self):
+        for document in ("CONTRIBUTING.md", "README.md", "README.hu.md"):
+            text = (ROOT / document).read_text(encoding="utf-8")
+            for relative in self.DOCUMENTS:
+                self.assertIn(f"({relative})", text, msg=f"{document} nem hivatkozik rá: {relative}")
+
+    def test_invariants_keep_the_frozen_writer_rules(self):
+        text = (ROOT / "docs/INVARIANTS.md").read_text(encoding="utf-8")
+        for writer in ("write_raw()", "write_windows_uefi()", "write_windows_bios()"):
+            self.assertIn(writer, text)
+        self.assertIn("wipefs --all --force", text)
+        self.assertIn("130-as kilépési kóddal", text)
+
+
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def markdown_lines_outside_code(text: str) -> list[str]:
+    """The lines of a Markdown text outside fenced code blocks."""
+    lines, fenced = [], False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            lines.append(line)
+    return lines
+
+
+def github_heading_anchors(text: str) -> set[str]:
+    """Anchors GitHub generates for the headings of a Markdown text: lower
+    case, punctuation removed (letters with accents stay), spaces become
+    hyphens; a repeated heading gets -1, -2, ..."""
+    anchors: set[str] = set()
+    seen: dict[str, int] = {}
+    for line in markdown_lines_outside_code(text):
+        match = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
+        if not match:
+            continue
+        heading = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", match.group(1))
+        slug = re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+        count = seen.get(slug, 0)
+        seen[slug] = count + 1
+        anchors.add(slug if count == 0 else f"{slug}-{count}")
+    return anchors
+
+
+def broken_markdown_links(path: Path) -> list[str]:
+    """Relative links and anchors in a Markdown file that do not resolve.
+    External links (any URI scheme, e.g. https) are not checked, so this
+    needs no network."""
+    text = path.read_text(encoding="utf-8")
+    broken = []
+    for line in markdown_lines_outside_code(text):
+        for target in MARKDOWN_LINK.findall(line):
+            if URI_SCHEME.match(target):
+                continue
+            file_part, _, anchor = target.partition("#")
+            linked = (path.parent / file_part) if file_part else path
+            if not linked.exists():
+                broken.append(target)
+                continue
+            if anchor and linked.is_file() and linked.suffix == ".md":
+                if anchor not in github_heading_anchors(linked.read_text(encoding="utf-8")):
+                    broken.append(target)
+    return broken
+
+
+class RoadmapDocumentTests(unittest.TestCase):
+    """The public ROADMAP.md, the internal docs/progress.md and the closed
+    release sections in docs/history/ (document reorganisation; the old
+    ROADMAP.md became docs/progress.md)."""
+
+    def markdown_files(self) -> list[Path]:
+        return sorted(ROOT.glob("*.md")) + sorted((ROOT / "docs").rglob("*.md"))
+
+    def history_files(self) -> list[Path]:
+        return sorted((ROOT / "docs" / "history").glob("*.md"))
+
+    def test_roadmap_progress_and_history_exist(self):
+        for relative in ("ROADMAP.md", "docs/progress.md"):
+            path = ROOT / relative
+            self.assertTrue(path.is_file(), msg=f"hiányzik: {relative}")
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {relative}")
+        history = self.history_files()
+        self.assertTrue(history, msg="a docs/history/ üres vagy hiányzik")
+        for path in history:
+            self.assertTrue(path.read_text(encoding="utf-8").strip(), msg=f"üres: {path.relative_to(ROOT)}")
+
+    def test_history_files_are_released_versions(self):
+        # Version numbers are not written into .py files (INVARIANTS D8); the
+        # released versions come from the CHANGELOG headings instead.
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        released = set(re.findall(r"(?m)^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}$", changelog))
+        self.assertTrue(released)
+        for path in self.history_files():
+            self.assertIn(path.stem, released, msg=f"nem kiadott verzió: {path.relative_to(ROOT)}")
+
+    def test_roadmap_and_progress_name_no_file_outside_the_repository(self):
+        # The per-version work descriptions (roadmap/<version>.md) are not in
+        # the repository; a reader of these documents must not meet a dead
+        # reference.
+        for relative in ("ROADMAP.md", "docs/progress.md"):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("roadmap/", text, msg=f"{relative} a repón kívüli roadmap/ fájlra hivatkozik")
+
+    def test_roadmap_links_progress_history_and_changelog(self):
+        text = (ROOT / "ROADMAP.md").read_text(encoding="utf-8")
+        for target in ("(docs/progress.md)", "(docs/history/)", "(CHANGELOG.md)", "(CONTRIBUTING.md)"):
+            self.assertIn(target, text)
+
+    def test_relative_markdown_links_and_anchors_resolve(self):
+        files = self.markdown_files()
+        for required in ("ROADMAP.md", "docs/progress.md", "CHANGELOG.md", "README.md"):
+            self.assertIn(ROOT / required, files)
+        for path in self.history_files():
+            self.assertIn(path, files)
+        for path in files:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                self.assertEqual(broken_markdown_links(path), [], msg="érvénytelen relatív hivatkozás vagy horgony")
+
+    def test_link_check_finds_broken_links_and_anchors(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "sub").mkdir()
+            (base / "sub" / "other.md").write_text("# Címsor – ékezettel?\n\n## Kettő\n## Kettő\n", encoding="utf-8")
+            page = base / "page.md"
+            page.write_text(
+                "# Saját\n"
+                "[ok](sub/other.md) [ok](sub/other.md#címsor--ékezettel) [ok](sub/other.md#kettő-1) "
+                "[ok](#saját) [ok](sub/) [ext](https://example.invalid/nothing)\n"
+                "[rossz](missing.md) [rossz](sub/other.md#nincs) [rossz](#nincs-ilyen)\n"
+                "```\n[kódban](not-checked.md)\n# nem címsor\n```\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                broken_markdown_links(page),
+                ["missing.md", "sub/other.md#nincs", "#nincs-ilyen"],
+            )
 
 
 if __name__ == "__main__":

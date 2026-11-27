@@ -4,7 +4,9 @@ BootMediaKit is an early-stage project. Reliability and data safety take priorit
 
 ## Before changing code
 
-1. Check `ROADMAP.md` and existing issues for an already-known problem.
+Read these first (Hungarian): [`docs/INVARIANTS.md`](docs/INVARIANTS.md) lists the rules no change may break (the three writers are frozen), [`docs/LESSONS.md`](docs/LESSONS.md) the mistakes that already happened, and [`docs/REGRESSION_CHECKLIST.md`](docs/REGRESSION_CHECKLIST.md) the physical checks the maintainer runs before every release. A new worker message needs a `msg_id` listed in [`docs/MESSAGES.md`](docs/MESSAGES.md).
+
+1. Check `ROADMAP.md`, `docs/progress.md` and existing issues for an already-known problem.
 2. Keep the graphical frontend unprivileged. Privileged operations must remain in the narrowly scoped worker and be invoked only after explicit confirmation.
 3. Revalidate the target block device immediately before any destructive operation. Never weaken the system-disk protection checks for convenience.
 4. Add or update automated tests for every bug fix.
@@ -12,12 +14,12 @@ BootMediaKit is an early-stage project. Reliability and data safety take priorit
 
 ## Development environment
 
-The current baseline targets Arch-based Linux and uses Python 3, PySide6, `parted`, `dosfstools`, `wimlib`, `7zip`, `grub` (only `grub-install` and the i386-pc modules, for the Windows Legacy BIOS mode) and polkit. The QEMU boot checks of the integration tests also need `qemu-system-x86_64` (Arch: `qemu-system-x86`).
+The current baseline targets Arch-based Linux. The runtime dependencies are the Arch packages `install.sh` installs and both READMEs list: `pyside6`, `util-linux`, `parted`, `ntfs-3g`, `ntfsprogs`, `dosfstools`, `polkit`, `7zip` and `grub` (only `grub-install` and the i386-pc modules, for the Windows Legacy BIOS mode). `wimlib` is not used since 0.1.2 (no WIM splitting). The tests additionally need the fonts DejaVu Sans and Noto Sans (Arch: `ttf-dejavu`, `noto-fonts`), `shellcheck`, `desktop-file-utils`, and for the QEMU boot checks of the integration tests `qemu-system-x86_64` (Arch: `qemu-system-x86`).
 
 ## Tests
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py
 bash -n install.sh uninstall.sh bootmediakit-worker
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
@@ -43,4 +45,4 @@ Do not claim that a physical-device or Windows Setup issue is fixed based only o
 - Explain the problem and expected behavior.
 - Include test results and the test level.
 - Include relevant logs with personal paths, serial numbers, and unrelated identifiers removed.
-- Update `CHANGELOG.md` and `ROADMAP.md` when appropriate.
+- Update `CHANGELOG.md` and `docs/progress.md` when appropriate.

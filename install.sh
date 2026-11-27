@@ -38,6 +38,7 @@ install -m 0755 "$SCRIPT_DIR/app.py" "$APP_DIR/app.py"
 install -m 0755 "$SCRIPT_DIR/worker.py" "$APP_DIR/worker.py"
 install -m 0644 "$SCRIPT_DIR/iso_utils.py" "$APP_DIR/iso_utils.py"
 install -m 0644 "$SCRIPT_DIR/ui_helpers.py" "$APP_DIR/ui_helpers.py"
+install -m 0644 "$SCRIPT_DIR/theme.py" "$APP_DIR/theme.py"
 install -m 0644 "$SCRIPT_DIR/version.py" "$APP_DIR/version.py"
 install -m 0644 "$SCRIPT_DIR/bootmediakit.svg" "$APP_DIR/bootmediakit.svg"
 install -m 0644 "$SCRIPT_DIR/bootmediakit.svg" "$ICON_PATH"
@@ -67,4 +68,6 @@ printf '\nA BootMediaKit telepítése kész.\n'
 printf 'Indítás: bootmediakit\n'
 printf 'A program az alkalmazásmenüben is megjelenik.\n\n'
 printf 'A lemezírás a saját org.bootmediakit.write Polkit-akción és root tulajdonú worker-wrapperen át fut.\n'
-printf 'A grafikus munkamenetben aktív Polkit hitelesítő ügynök szükséges.\n'
+printf 'Ehhez a polkit szolgáltatás és a grafikus munkamenetben futó polkit hitelesítési ügynök kell\n'
+printf '(ez jeleníti meg a jelszókérő ablakot). A legtöbb asztali környezet elindít ilyet; minimális\n'
+printf 'ablakkezelőnél vagy távoli munkamenetben a disztribúció ügynökét neked kell elindítanod.\n'

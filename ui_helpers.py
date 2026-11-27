@@ -52,3 +52,130 @@ def bios_grub_available(
         return all((directory / name).is_file() for name in GRUB_PC_REQUIRED_FILES)
     except OSError:
         return False
+
+
+# -- Responsive layout (T3, layout work) ---------------------------------------
+# All sizes are Qt logical pixels of the window's client area; Qt applies the
+# device pixel ratio itself, so nothing here is multiplied by it.
+
+LAYOUT_PROFILES = ("normal", "wide", "narrow")
+
+# Spacing and control heights per density. "normal" is the single-column
+# layout on tall screens; "wide" (two columns) and "narrow" (one column, the
+# fallback below the minimum size) use the compact density.
+DENSITY = {
+    "normal": {
+        "outer_margin": 12, "spacing": 7, "card_margin": (11, 7), "card_spacing": 5,
+        "warning_margin": (10, 7), "line_edit": 32, "combo": 33, "mode_button": 34,
+        "boot_combo": 30, "action_button": 38, "log_min": 56,
+    },
+    "compact": {
+        "outer_margin": 6, "spacing": 4, "card_margin": (9, 4), "card_spacing": 2,
+        "warning_margin": (8, 4), "line_edit": 29, "combo": 29, "mode_button": 30,
+        "boot_combo": 28, "action_button": 34, "log_min": 44,
+    },
+}
+
+
+def density_for(profile: str) -> dict[str, object]:
+    if profile not in LAYOUT_PROFILES:
+        raise ValueError(f"ismeretlen elrendezés: {profile!r}")
+    return DENSITY["normal" if profile == "normal" else "compact"]
+
+
+def choose_layout_profile(
+    viewport: tuple[int, int],
+    requirements: dict[str, tuple[int, int]],
+) -> str:
+    """Pick the layout from the measured (width, height) each one needs.
+
+    One column when it fits; otherwise two columns when they fit. If neither
+    fits (below the minimum size, e.g. very large fonts) the scroll area is
+    the last resort: two columns when they are not too wide, since they need
+    less scrolling, else the compact single column.
+    """
+    width, height = viewport
+    for profile in ("normal", "wide"):
+        need = requirements.get(profile)
+        if need is not None and need[0] <= width and need[1] <= height:
+            return profile
+    wide = requirements.get("wide")
+    if wide is not None and wide[0] <= width:
+        return "wide"
+    return "narrow"
+
+
+def initial_window_size(
+    available_width: int,
+    available_height: int,
+    single_column_height: int,
+    minimum: tuple[int, int],
+) -> tuple[int, int]:
+    """First window size (outer frame estimate) inside the work area.
+
+    Tall work areas keep the single-column window of earlier versions
+    (calculate_window_profile); short ones get a window wide enough for the
+    two-column layout. Never larger than the work area minus a 24 px margin.
+    """
+    usable_width = max(1, int(available_width) - 24)
+    usable_height = max(1, int(available_height) - 24)
+    width, height, _ = calculate_window_profile(available_width, available_height)
+    if height >= single_column_height:
+        return min(width, usable_width), min(height, usable_height)
+    return min(max(minimum[0], 960), usable_width), usable_height
+
+
+def clamp_minimum_size(minimum: tuple[int, int], available: tuple[int, int]) -> tuple[int, int]:
+    """The minimum window size never exceeds the screen's available area."""
+    return min(int(minimum[0]), int(available[0])), min(int(minimum[1]), int(available[1]))
+
+
+# Height kept free on Wayland when Qt reports the whole output as the work
+# area (docs/TESTING.md, docs/progress.md approved deviations). Wayland gives Qt no
+# work area: QScreen.availableGeometry() equals QScreen.geometry() even with
+# panels (measured on GNOME 51.1 and on KDE Plasma). Measured on the
+# maintainer's KDE Plasma: KWin's configure_bounds keep 58 logical px free
+# (panel and title bar), sent only at start-up; 60 px covers that and GNOME's
+# top bar (about 32 px in the maintainer's log). Still an estimate for other
+# desktops and panel sizes (docs/TESTING.md).
+WAYLAND_PANEL_RESERVE = 60
+
+
+def usable_work_area(
+    geometry: tuple[int, int, int, int],
+    available: tuple[int, int, int, int],
+    *,
+    wayland: bool,
+    reserve: int = WAYLAND_PANEL_RESERVE,
+) -> tuple[int, int, int, int]:
+    """The work area (x, y, width, height) the window may fill.
+
+    Only on Wayland, and only when the available area is the whole output
+    (the panels are unknown), ``reserve`` logical pixels of height are kept
+    free; the compositor places the window, so only the height matters.
+    Everywhere else (X11, or a Wayland compositor that reports a smaller
+    available area) the available area is used unchanged.
+    """
+    available = tuple(int(value) for value in available)
+    if wayland and available == tuple(int(value) for value in geometry):
+        x, y, width, height = available
+        return x, y, width, max(1, height - int(reserve))
+    return available
+
+
+def fit_rect_into_area(
+    rect: tuple[int, int, int, int], area: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """Shrink an outer window rectangle (x, y, width, height) to the work
+    area if it is larger, then move it inside; unchanged if it already fits.
+
+    Used when the window's screen or its available area changes after
+    start-up (another monitor, undocking, a new resolution or scale).
+    """
+    x, y, width, height = (int(value) for value in rect)
+    area_x, area_y, area_width, area_height = (int(value) for value in area)
+    width = min(width, area_width)
+    height = min(height, area_height)
+    x = min(max(x, area_x), area_x + area_width - width)
+    y = min(max(y, area_y), area_y + area_height - height)
+    return x, y, width, height

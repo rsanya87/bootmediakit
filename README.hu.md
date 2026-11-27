@@ -2,11 +2,11 @@
 
 **BootMediaKit** egy grafikus, nyílt forráskódú Linuxos USB-készítő. A grafikus felület Python és PySide6 alapú; a lemezre írást külön, root tulajdonú wrapperen és saját Polkit-szabályon át indított, izolált Python worker végzi.
 
-**Verzió:** `0.3.0` (stabil kiadás, 2026-11-24)  
+**Verzió:** `0.4.0` (stabil kiadás, 2026-11-27)  
 **Elsődleges platform:** Arch Linux család (elsőként CachyOS)  
 **Az alkalmazás licence:** GNU GPL-3.0-only
 
-> A 0.3.0 új Windows Legacy BIOS/MBR telepítő módot ad: MBR egyetlen aktív NTFS partícióval és GNU GRUB i386-pc láncbetöltővel, amelyet a gép saját `grub-install` programja ír ki. A Linux DD/RAW és a Windows UEFI mód nem változott. Az automatizált GitHub Actions ellenőrzések sikeresek, beleértve a valódi RAW, Windows UEFI és Windows Legacy BIOS írót futtató loop-eszközös integrációs teszteket, valamint a Legacy pendrive QEMU/SeaBIOS alatti indítását egy teszt-rendszerindító-kezelőig. A 0.3.0-val fizikailag ellenőrizve: a Windows 10 és Windows 11 IoT Enterprise LTSC x64 Legacy pendrive egy nagyon régi Core 2 Duo laptopon a Windows Telepítő particionálási képernyőjéig jutott, és a Windows 7 SP1 x64 telepítő is elindult Legacy pendrive-ról. A Legacy pendrive QEMU/SeaBIOS alatt is elindult; a QEMU OVMF UEFI firmware-ével nem indult, egy Gigabyte B850 alaplap viszont kikapcsolt CSM mellett UEFI módban elindította róla a Windows Telepítőt, valószínűleg a firmware saját NTFS-támogatásával. A Windows UEFI pendrive és a Linux Mint DD/RAW pendrive (UEFI és Legacy BIOS) újratesztelve elindult. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem jelentenek minden firmware-re érvényes kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
+> A 0.4.0 a felületet függetleníti az asztali környezettől; új írási funkciót nem ad. A megjelenés a rendszer világos/sötét beállítását követi, ahogy a Qt jelzi (ha ez nem állapítható meg, sötét), és a nap/hold gombbal kézi világos vagy sötét mód választható; az elrendezés a képernyőhöz igazodik, a dokumentált legkisebb ablakméret 880×550 logikai képpont; polkit hitelesítési ügynök nélkül a program érthető hibát ad. A három írási mód (Linux DD/RAW, Windows UEFI, Windows Legacy BIOS) nem változott, a parancssorrendjüket új writer-ujjlenyomat tesztek rögzítik. Az automatizált GitHub Actions ellenőrzések sikeresek (384 egység-, csomagolási és offscreen GUI-teszt; 10 rootként futó loop-eszközös integrációs teszt, köztük a Legacy pendrive QEMU/SeaBIOS alatti indítása), és ugyanezek a tesztek a fejlesztő CachyOS gépén is sikeresek. A 0.4.0-val fizikailag ellenőrizve: KDE Plasma (Wayland) a fő gépen, virtuális gépben GNOME (Wayland), XFCE, Cinnamon és MATE (X11), valamint LXQt: világos, sötét és automatikus megjelenés, 1280×800 és 1366×768 100% és 125% skálázással görgetősáv nélkül, és felbontásváltás futás közben. A fő gépen az ezzel a kiadással írt Linux Mint DD/RAW pendrive (UEFI és Legacy BIOS), valamint a Windows 11 26H2 UEFI és Legacy pendrive elindult. Ezek a teszteredmények a kipróbált konfigurációkra vonatkoznak, nem általános kompatibilitási garanciát. A BootMediaKit nem teljes Rufus-funkciópótlás.
 
 ## Jelenlegi funkciók
 
@@ -17,7 +17,8 @@
 - Partíciók és címkék részletes megjelenítése a megerősítés előtt; dupla megerősítés nagy vagy nem-removable USB-meghajtóknál.
 
 
-- Képernyőmérethez igazodó PySide6 felület: legfeljebb 740×900-as ablak, 1366×768-as laptopon kompakt elrendezés és görgetés nélküli használatra optimalizált méret; a 10 pontos betűméret megmarad.
+- Reszponzív PySide6 felület, amely a rendszer betűtípusát és a Qt saját nagy DPI-s méretezését használja: magas képernyőn egy oszlop, alacsonyon két oszlop tömörebb térközökkel. A legkisebb ablakméret 880×550 logikai képpont (XFCE alatt elfér 1024×640 logikai képponton – ennyi egy 1280×800-as kijelző 125%-on – ablakkerettel és panellel, KDE Plasma alatt 1280×720-on 125%-on; valódi laptopkijelzőn nincs ellenőrizve); ekkora vagy nagyobb ablakban a felületen nincs görgetősáv, csak a napló görgethető a saját dobozában. Ennél kisebb méretnél (például nagyon nagy rendszer-betűméretnél) a felület görgethető, de egyetlen vezérlő sem tűnik el. Ezt offscreen tesztek ellenőrzik két betűtípussal. Valódi asztali környezetben KDE Plasma alatt (Wayland, CachyOS), virtuális gépben GNOME (Wayland), XFCE, Cinnamon és MATE (X11), valamint LXQt alatt ellenőriztük (lásd [docs/progress.md](docs/progress.md) és [docs/TESTING.md](docs/TESTING.md)).
+- Világos/sötét megjelenés, amely a rendszert követi (ha az nem állapítható meg, sötét), jobb felül nap/hold gyorsváltóval; a gomb menüje visszaállítja a rendszer szerinti módot.
 - Élő elteltidő-kijelzés a pendrive készítésének tényleges futási idejéről.
 - Saját BootMediaKit alkalmazásikon az ablakhoz, a tálcához és az alkalmazásmenühöz.
 - Jól olvasható meghajtóadatok sötét KDE témán; a partíciók teljes listája a kis `i` információs ikon fölé húzott egérmutatóval jelenik meg.
@@ -68,7 +69,7 @@ A BootMediaKit ekkor MBR partíciós táblát készít egyetlen aktív NTFS part
 - **Legacy indításhoz készül.** A pendrive Legacy BIOS/CSM indításhoz készül. NTFS-driver nélküli UEFI firmware-en (például a QEMU OVMF-en) **nem** indul. Az ISO saját `efi/boot/bootx64.efi` fájlja azonban a pendrive-ra kerül, ezért olyan gépen, amelynek UEFI firmware-e olvassa az NTFS-t, UEFI módban is elindulhat. Erre ne építs: UEFI-s géphez az UEFI (GPT) indítási módot használd. A megerősítő ablak is figyelmeztet erre.
 - **Régebbi gépekhez.** A mód régebbi gépekhez készült. Az újabb Windows telepítők ellenőrzik a hardverkövetelményeket, és régi gépen megtagadhatják a telepítést; ez a Windows Telepítő döntése, nem a pendrive hibája.
 - Feltételek és elutasítások: 2 TiB-os vagy nagyobb meghajtót nem fogad el (az MBR korlátja); 512 bájtos logikai szektor kell, mint az UEFI módban; Windows XP / Server 2003 jellegű ISO (`i386` könyvtár `bootmgr` nélkül) nem támogatott; ha az ISO gyökerében már van `grub` nevű elem, a program megáll, nem írja felül. `grub-install` és `/usr/lib/grub/i386-pc` nélkül a Legacy érték a felületen tiltott.
-- Tesztelés: az automatikus tesztek a termelési íróval loop-eszközre írják a pendrive-ot, és QEMU/SeaBIOS alatt egy teszt-`bootmgr`-ig indítják. A valódi Windows ISO-kkal és gépeken végzett fizikai teszteket a [ROADMAP.md](ROADMAP.md) követi.
+- Tesztelés: az automatikus tesztek a termelési íróval loop-eszközre írják a pendrive-ot, és QEMU/SeaBIOS alatt egy teszt-`bootmgr`-ig indítják. A valódi Windows ISO-kkal és gépeken végzett fizikai teszteket az aktuális verzióra a [docs/progress.md](docs/progress.md), a korábbiakra a [docs/history/](docs/history/) követi.
 
 ### Jelenlegi korlátozások
 
@@ -78,6 +79,7 @@ A BootMediaKit ekkor MBR partíciós táblát készít egyetlen aktív NTFS part
 - A telepítőszkript egyelőre Arch-alapú rendszereket támogat; Debian/Ubuntu és Fedora későbbi fejlesztési cél.
 - A Windows 10 és Windows 11 IoT Enterprise LTSC x64 UEFI telepítése a tesztelt rendszeren sikeresen befejeződött. A normál Windows 11 26H2 x64 ISO Secure Boot be- és kikapcsolt állapotában is eljutott a partícióválasztó képernyőig; a telepítés további része nem lett igazolva.
 - A fájl-ellenőrzés a másolt fájlok méretét és SHA-256 hashét ellenőrzi. Az ISO eredetiségét vagy kiadói aláírását nem vizsgálja.
+- Az automatikus világos/sötét mód a Qt jelzését követi. GNOME alatt a Qt ezt a GTK-téma nevéből veheti: sötét GTK-témánál (például `adw-gtk3-dark`) az Automatikus mód akkor is sötét, ha a GNOME Beállításokban a világos megjelenés van kiválasztva (GNOME 51.1 alatt mérve). A menü kézi Világos/Sötét módja ezt felülírja.
 
 ## Telepítés Arch-alapú Linuxon
 
@@ -106,12 +108,12 @@ Szükséges Arch csomagok:
 - `7zip` — Windows ISO felismerése
 - `grub` — a `grub-install` és az i386-pc modulok a Windows Legacy BIOS módhoz. A BootMediaKit csak ezeket használja, és a `grub-install`-t kizárólag a kiválasztott pendrive-ra futtatja. A csomag telepítése **nem** módosítja a gép saját rendszerbetöltőjét. A csomag telepítés utáni üzenete a `grub-install` és a `grub-mkconfig` futtatását javasolja; ez a gép saját rendszerbetöltőjére vonatkozik, a BootMediaKit-hez nem kell.
 
-KDE alatt aktív polkit hitelesítő ügynök szükséges.
+Az íráshoz a polkit szolgáltatás és a grafikus munkamenetben futó polkit hitelesítési ügynök szükséges; az ügynök jeleníti meg a jelszókérő ablakot. A legtöbb asztali környezet elindít ilyet (Archon például `polkit-kde-agent`, `polkit-gnome`, `lxqt-policykit` vagy `mate-polkit`); minimális ablakkezelőnél vagy távoli munkamenetben előfordulhat, hogy a disztribúció ügynökét magadnak kell elindítanod. A BootMediaKit nem hoz magával ügynököt, nem indít ilyet, és soha nem tér át `sudo`-ra. Ügynök nélkül a hitelesítés sikertelen (a pkexec kilépési kódja 127); a BootMediaKit ilyenkor leírja, mit ellenőrizz, és a célmeghajtóhoz nem nyúl.
 
 ## Automatikus tesztek
 
 ```bash
-python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+python3 -m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py
 bash -n install.sh uninstall.sh bootmediakit-worker
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
@@ -128,7 +130,7 @@ sudo -E env BMK_INTEGRATION=1 QT_QPA_PLATFORM=offscreen python3 -m unittest disc
 
 ## Fejlesztési irány
 
-Elsőként az Arch/CachyOS változatot stabilizáljuk. Debian/Ubuntu és Fedora csak ezután következik. Részletek: [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md).
+Elsőként az Arch/CachyOS változatot stabilizáljuk. A Debian/Ubuntu csomag ezután következik; a Fedora nem része az 1.0.0-nak. Részletek: [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md). A minden változtatásnál kötelező szabályok, a korábbi hibák tanulságai és a kiadás előtti fizikai ellenőrzőlista: [docs/INVARIANTS.md](docs/INVARIANTS.md), [docs/LESSONS.md](docs/LESSONS.md), [docs/REGRESSION_CHECKLIST.md](docs/REGRESSION_CHECKLIST.md).
 
 ## Windows Telepítő több belső meghajtó esetén
 

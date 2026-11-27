@@ -34,7 +34,7 @@ jobs:
       - name: Install system and Python test dependencies
         timeout-minutes: 20
         run: |
-          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86"
+          packages="libegl1 libgl1 ntfs-3g dosfstools shellcheck fdisk parted e2fsprogs p7zip-full grub-pc-bin grub2-common qemu-system-x86 desktop-file-utils fontconfig fonts-dejavu-core fonts-noto-core"
           for attempt in 1 2 3; do
             if sudo apt-get update && sudo apt-get install -y $packages; then
               break
@@ -47,8 +47,18 @@ jobs:
             sleep 30
           done
           python -m pip install --disable-pip-version-check PySide6
+      # The offscreen layout tests run with both fonts; a missing font is an
+      # error, never a silent skip (tests/test_layout.py fails as well).
+      - name: Check layout test fonts
+        run: |
+          for family in "DejaVu Sans" "Noto Sans"; do
+            if [ -z "$(LC_ALL=C fc-list "$family" family)" ]; then
+              echo "::error::Missing layout test font: $family"
+              exit 1
+            fi
+          done
       - name: Compile Python files
-        run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py fetch_uefi_ntfs.py version.py
+        run: python -m py_compile app.py worker.py iso_utils.py ui_helpers.py theme.py fetch_uefi_ntfs.py version.py
       - name: Check shell syntax
         run: bash -n install.sh uninstall.sh bootmediakit-worker
       - name: Lint shell scripts with shellcheck
@@ -69,10 +79,18 @@ jobs:
           test "$(fatlabel "$RUNNER_TEMP/uefi-ntfs-bmk.img")" = "BMK_EFI"
           test "$(stat -c %s "$RUNNER_TEMP/uefi-ntfs-bmk.img")" = "1048576"
           sha256sum "$RUNNER_TEMP/uefi-ntfs.img" "$RUNNER_TEMP/uefi-ntfs-bmk.img"
+      # A skipped test would silently weaken the theme, layout, contrast,
+      # pseudo-locale or packaging checks: the step fails on any skip.
       - name: Run unit and offscreen GUI tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest discover -s tests -v
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+          if grep -Eq '^(OK|FAILED) \(.*skipped=' "$RUNNER_TEMP/unit-tests.log"; then
+            echo "::error::Unit or GUI tests were skipped in CI"
+            exit 1
+          fi
       # The runner's sudo does not pass a step's env: block through "sudo -E"
       # (seen on ubuntu-26.04), so the variables are given to env after sudo.
       - name: Check that the root test process receives the integration variables

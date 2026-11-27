@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Never read or write the real user's ~/.config/BootMediaKit in tests.
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="bmk-test-config-")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from PySide6.QtCore import QEvent, QProcess
@@ -331,14 +333,18 @@ class BootModeSelectorTests(unittest.TestCase):
             "wwn": "", "tran": "usb", "rm": True, "maj_min": "8:240", "diskseq": "9",
             "by_id": "/dev/disk/by-id/usb-Test_S1-0:0", "partitions": [], "mounts": [],
         }
-        yes = gui.QMessageBox.StandardButton.Yes
+        # The confirmations go through MainWindow.confirm (Hungarian buttons);
+        # plain warnings (e.g. missing GRUB) still through QMessageBox.warning.
         with patch.object(gui, "PRIVILEGED_WRAPPER", wrapper), patch.object(
             gui.shutil, "which", return_value="/usr/bin/pkexec"
         ), patch.object(gui, "bios_grub_available", return_value=grub_available), patch.object(
             gui, "is_windows_install_iso", return_value=True
-        ), patch.object(gui.QMessageBox, "warning", return_value=yes) as warning:
+        ), patch.object(gui.MainWindow, "confirm", return_value=True) as confirm, patch.object(
+            gui.QMessageBox, "warning"
+        ) as warning:
             window.start_operation()
-        return warning
+        confirm.warning = warning
+        return confirm
 
     def windows_iso_window(self):
         window = self.make_window()
@@ -353,10 +359,124 @@ class BootModeSelectorTests(unittest.TestCase):
         args = window.process.arguments()
         self.assertEqual(args[1:4], ["windows", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0"])
         self.assertEqual(args[4], "0")
-        details = warning.call_args_list[0].args[2]
+        details = warning.call_args_list[0].args[1]
         self.assertIn("indítási mód: UEFI (GPT)", details)
         self.assertNotIn("Legacy", details)
         self.assertFalse(window.boot_mode_combo.isEnabled())
+
+    def test_verify_label_click_toggles_the_box_and_reaches_the_worker(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        window, image = self.windows_iso_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        self.assertFalse(box.isChecked())  # Windows mode default: off
+        QTest.mouseClick(box.label, Qt.MouseButton.LeftButton)
+        self.assertTrue(box.isChecked())
+        self.assertIs(QApplication.focusWidget(), box)
+        self.start_and_capture(window, image)
+        self.assertEqual(window.process.arguments()[4], "1")
+
+    def test_verify_box_keeps_focus_space_and_accessible_name(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QCheckBox
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        label = box.label
+        self.assertIs(label.buddy(), box)
+        self.assertEqual(label.focusPolicy(), Qt.FocusPolicy.NoFocus)
+        self.assertTrue(box.focusPolicy() & Qt.FocusPolicy.TabFocus)
+        # The QCheckBox draws no text itself; the label shows it in full.
+        self.assertEqual(QCheckBox.text(box), "")
+        for mode, text in (
+            ("raw", "Kiírás utáni teljes visszaolvasás és ellenőrzés"),
+            ("windows", "USB-re másolt fájlok teljes SHA-256 visszaellenőrzése"),
+        ):
+            with self.subTest(mode=mode):
+                window.select_mode(mode)
+                self.assertEqual(box.text(), text)
+                self.assertEqual(label.text(), text)
+                self.assertEqual(box.accessibleName(), text)
+        box.setFocus()
+        QApplication.processEvents()
+        before = box.isChecked()
+        QTest.keyClick(box, Qt.Key.Key_Space)
+        self.assertEqual(box.isChecked(), not before)
+        self.assertIs(QApplication.focusWidget(), box)
+        self.assertTrue(label.property("checkFocus"))
+
+    def test_disabled_verify_label_follows_the_box_and_stays_readable(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        import theme
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        box = window.verify_checkbox
+        box.setEnabled(False)
+        QApplication.processEvents()
+        self.assertFalse(box.label.isEnabled())
+        before = box.isChecked()
+        QTest.mouseClick(box.label, Qt.MouseButton.LeftButton)
+        self.assertEqual(box.isChecked(), before)
+        self.assertIn("QLabel#checkBoxLabel:disabled { color: ", window.styleSheet())
+        for name, palette in (("light", theme.light_palette()), ("dark", theme.dark_palette())):
+            with self.subTest(palette=name):
+                tokens = theme.compute_tokens(palette)
+                self.assertGreaterEqual(
+                    theme.contrast_ratio(tokens["disabled_text"], tokens["window"]), theme.NON_TEXT_CONTRAST
+                )
+                self.assertNotEqual(tokens["disabled_text"].name(), tokens["text"].name())
+        box.setEnabled(True)
+        self.assertTrue(box.label.isEnabled())
+
+    def test_mode_buttons_keep_text_api_click_focus_and_state(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QPushButton
+
+        window = self.make_window()
+        window.show()
+        QApplication.processEvents()
+        raw, windows = window.raw_button, window.windows_button
+        self.assertEqual(raw.text(), "Lemezkép közvetlen kiírása")
+        self.assertEqual(windows.text(), "Windows telepítő (NTFS)")
+        for button in (raw, windows):
+            self.assertIsInstance(button, QPushButton)
+            self.assertEqual(QPushButton.text(button), "")  # drawn by the label
+            self.assertEqual(button.label.text(), button.text())
+            self.assertEqual(button.accessibleName(), button.text())
+            self.assertTrue(button.focusPolicy() & Qt.FocusPolicy.TabFocus)
+            self.assertTrue(button.label.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+        # A click on the text reaches the button.
+        QTest.mouseClick(windows, Qt.MouseButton.LeftButton, pos=windows.label.geometry().center())
+        self.assertTrue(windows.isChecked())
+        self.assertFalse(raw.isChecked())
+        self.assertEqual(window.selected_worker_mode(), "windows")
+        self.assertEqual(windows.label.font().weight(), QFont.Weight(650))
+        self.assertTrue(windows.label.property("checked"))
+        self.assertEqual(raw.label.font().weight(), QFont.Weight.Normal)
+        # Space on the focused button.
+        raw.setFocus()
+        QTest.keyClick(raw, Qt.Key.Key_Space)
+        self.assertTrue(raw.isChecked())
+        self.assertEqual(window.selected_worker_mode(), "raw")
+        # The label follows the disabled state.
+        raw.setEnabled(False)
+        self.assertFalse(raw.label.isEnabled())
+        raw.setEnabled(True)
+        self.assertTrue(raw.label.isEnabled())
+        self.assertIn('QLabel#buttonLabel:disabled { color: ', window.styleSheet())
+        self.assertIn('QLabel#buttonLabel[checked="true"] { color: ', window.styleSheet())
 
     def test_legacy_boot_mode_passes_windows_bios_and_warns_about_uefi(self):
         window, image = self.windows_iso_window()
@@ -365,7 +485,7 @@ class BootModeSelectorTests(unittest.TestCase):
         warning = self.start_and_capture(window, image)
         args = window.process.arguments()
         self.assertEqual(args[1:5], ["windows-bios", str(image.resolve()), "/dev/disk/by-id/usb-Test_S1-0:0", "1"])
-        details = warning.call_args_list[0].args[2]
+        details = warning.call_args_list[0].args[1]
         self.assertIn("indítási mód: Legacy BIOS (MBR)", details)
         self.assertIn("Legacy BIOS / CSM indításhoz készül", details)
         self.assertIn("csak NTFS-t olvasó firmware-en indulhat", details)
@@ -375,7 +495,7 @@ class BootModeSelectorTests(unittest.TestCase):
     def test_legacy_start_is_refused_when_grub_disappeared(self):
         window, image = self.windows_iso_window()
         window.boot_mode_combo.setCurrentIndex(1)
-        warning = self.start_and_capture(window, image, grub_available=False)
+        warning = self.start_and_capture(window, image, grub_available=False).warning
         self.assertIsNone(window.process)
         self.assertEqual(warning.call_args.args[1], "Hiányzó GRUB")
         self.assertIn("sudo pacman -S grub", warning.call_args.args[2])
@@ -395,6 +515,163 @@ class BootModeSelectorTests(unittest.TestCase):
         window.set_busy(False)
         self.assertTrue(window.boot_mode_combo.isEnabled())
         self.assertEqual(window.selected_worker_mode(), "windows-bios")
+
+
+
+class CancelBeforeAuthenticationTests(unittest.TestCase):
+    """Megszakítás while pkexec still authenticates: the user is told when it
+    takes effect; the cancel protocol (a cancel line on stdin) is unchanged."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def make_window(self, worker_started):
+        from unittest.mock import MagicMock
+
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        window.process = MagicMock()
+        window._worker_started = worker_started
+        self.addCleanup(setattr, window, "process", None)
+        return window
+
+    def test_before_the_worker_started(self):
+        window = self.make_window(False)
+        window._send_cancel_request()
+        self.assertEqual(window.status_label.text(), gui.gui_text("gui.cancel.pending_authentication"))
+        self.assertIn(gui.gui_text("gui.cancel.before_authentication"), window.log.toPlainText())
+        window.process.write.assert_called_once_with(b"cancel\n")
+        window.process.closeWriteChannel.assert_called_once_with()
+
+    def test_after_the_worker_started_unchanged(self):
+        window = self.make_window(True)
+        window._send_cancel_request()
+        self.assertEqual(window.status_label.text(), "Biztonságos megszakítás kérése…")
+        self.assertNotIn(gui.gui_text("gui.cancel.before_authentication"), window.log.toPlainText())
+        window.process.write.assert_called_once_with(b"cancel\n")
+
+
+
+class HungarianConfirmationButtonsTests(unittest.TestCase):
+    """The four confirmations had Qt's English Yes/Cancel (no Qt catalogue is
+    loaded); they now have tr() labels, and the safe choice is the default."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def make_window(self):
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        return window
+
+    def test_buttons_are_hungarian_and_the_safe_one_is_default(self):
+        window = self.make_window()
+        box = window.confirmation_box("Cím", "Szöveg", gui.gui_text("gui.button.stop_and_close"),
+                                      gui.gui_text("gui.button.continue"))
+        self.addCleanup(box.deleteLater)
+        labels = sorted(button.text().replace("&", "") for button in box.buttons())
+        self.assertEqual(labels, ["Folytatás", "Megszakítás és bezárás"])
+        self.assertNotIn("Yes", labels)
+        self.assertEqual(box.defaultButton().text(), "Folytatás")
+        self.assertIs(box.escapeButton(), box.defaultButton())
+        self.assertEqual(box.buttonRole(box.defaultButton()), gui.QMessageBox.ButtonRole.RejectRole)
+
+    def test_confirm_returns_true_only_for_the_accept_button(self):
+        window = self.make_window()
+        for role, expected in ((gui.QMessageBox.ButtonRole.AcceptRole, True),
+                               (gui.QMessageBox.ButtonRole.RejectRole, False)):
+            with self.subTest(role=role):
+                def exec_and_click(box, role=role):
+                    for button in box.buttons():
+                        if box.buttonRole(button) == role:
+                            button.click()
+                    return 0
+                with patch.object(gui.QMessageBox, "exec", exec_and_click):
+                    self.assertIs(window.confirm("Cím", "Szöveg", "Igen", "Mégse"), expected)
+
+    def test_every_confirmation_uses_hungarian_buttons(self):
+        window = self.make_window()
+        from unittest.mock import MagicMock
+
+        window.process = MagicMock()
+        self.addCleanup(setattr, window, "process", None)
+        with patch.object(gui.MainWindow, "confirm", return_value=False) as confirm:
+            window.cancel_operation()
+            window.close()
+        buttons = [call.args[2:] for call in confirm.call_args_list]
+        self.assertEqual(buttons, [("Megszakítás", "Folytatás"), ("Megszakítás és bezárás", "Folytatás")])
+        window.process.write.assert_not_called()  # rejected: nothing sent
+        source = Path(gui.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("StandardButton.Yes", source)
+
+
+
+class ConfirmationTextByStateTests(unittest.TestCase):
+    """Before the worker started (pkexec still authenticates) the close and
+    Megszakítás confirmations say what is certain and what is not; after it
+    started the earlier conservative texts stay."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.qt_app = QApplication.instance() or QApplication([])
+
+    def texts(self, worker_started):
+        from unittest.mock import MagicMock
+
+        patcher = patch.object(QProcess, "start")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        window = gui.MainWindow()
+        window.refresh_timer.stop()
+        window.lsblk_timeout_timer.stop()
+        self.addCleanup(window.deleteLater)
+        window.process = MagicMock()
+        window._worker_started = worker_started
+        self.addCleanup(setattr, window, "process", None)
+        with patch.object(gui.MainWindow, "confirm", return_value=False) as confirm:
+            window.cancel_operation()
+            window.close()
+        window.process.write.assert_not_called()
+        return [call.args[1] for call in confirm.call_args_list]
+
+    def test_before_the_worker_started(self):
+        cancel, close = self.texts(False)
+        self.assertEqual(cancel, gui.gui_text("gui.cancel.confirm_before_start"))
+        self.assertEqual(close, gui.gui_text("gui.close.before_start"))
+        for text in (cancel, close):
+            self.assertIn("a pendrive írása még nem kezdődött el", text)
+            # Certain only for the Mégse of the authentication dialog.
+            self.assertIn("Mégse gombjával a művelet nem indul el, és a lemezhez nem nyúlunk", text)
+            # The cancel itself: expected, not promised (worker reader thread).
+            self.assertIn("várhatóan a lemez módosítása előtt", text)
+            self.assertIn("nem garantáljuk szigorúan", text)
+            self.assertNotIn("azonnal", text)
+        self.assertTrue(close.endswith("Megszakítod és bezárod?"))
+        self.assertTrue(cancel.endswith("Biztosan megszakítod?"))
+
+    def test_after_the_worker_started_unchanged(self):
+        cancel, close = self.texts(True)
+        self.assertTrue(cancel.startswith("A műveletet biztonságos írási határon állítjuk le."))
+        self.assertTrue(close.startswith("Bezárás előtt biztonságosan megszakítjuk a pendrive készítését."))
+
+    def test_status_and_log_promise_nothing_more(self):
+        status = gui.gui_text("gui.cancel.pending_authentication")
+        log = gui.gui_text("gui.cancel.before_authentication")
+        self.assertEqual(status, "Megszakítás kérve; a hitelesítés után érvényesül.")
+        self.assertNotIn("azonnal", log)
+        self.assertIn("nem szigorúan garantált", log)
 
 
 if __name__ == "__main__":

@@ -68,6 +68,13 @@ def start_control_reader() -> None:
     threading.Thread(target=read_commands, name="bmk-control-stdin", daemon=True).start()
 
 
+def _json_value(value: object) -> object:
+    """A msg_args value as plain JSON; anything else (e.g. a Path) as text."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
 def emit(
     message: str,
     percent: int | None = None,
@@ -76,8 +83,16 @@ def emit(
     error: str | None = None,
     worker_started: bool | None = None,
     cancelled: bool = False,
+    msg_id: str | None = None,
+    msg_args: dict[str, object] | None = None,
 ) -> bool:
-    """Send one structured event; return False when the GUI pipe is closed."""
+    """Send one structured event; return False when the GUI pipe is closed.
+
+    ``msg_id`` and ``msg_args`` are additive fields (docs/MESSAGES.md): a
+    stable identifier of the message and its dynamic values. The Hungarian
+    ``message``/``log``/``error`` texts stay unchanged and are what the GUI
+    shows; the GUI ignores the new fields for now.
+    """
     global OUTPUT_BROKEN
     event: dict[str, object] = {"message": message, "target_modified": TARGET_MODIFIED}
     if percent is not None:
@@ -90,6 +105,10 @@ def emit(
         event["worker_started"] = worker_started
     if cancelled:
         event["cancelled"] = True
+    if msg_id is not None:
+        event["msg_id"] = msg_id
+    if msg_args is not None:
+        event["msg_args"] = {str(name): _json_value(value) for name, value in msg_args.items()}
     try:
         print(json.dumps(event, ensure_ascii=False), flush=True)
     except (BrokenPipeError, OSError):
@@ -652,7 +671,12 @@ def assert_disk_unmounted(device: str) -> None:
 def unmount_disk(device: str) -> None:
     mountpoints = _disk_mount_targets(device)
     for mountpoint in sorted(mountpoints, key=lambda value: (value.count(os.sep), len(value)), reverse=True):
-        emit(f"Meghajtó leválasztása: {mountpoint}", 1)
+        emit(
+            f"Meghajtó leválasztása: {mountpoint}",
+            1,
+            msg_id="worker.disk.unmounting",
+            msg_args={"mountpoint": mountpoint},
+        )
         command(["umount", "--", mountpoint], timeout=120)
     command(["udevadm", "settle"], check=False, timeout=15)
     assert_disk_unmounted(device)
@@ -1055,6 +1079,7 @@ def install_bios_chainloader(
         "GRUB indító telepítése a pendrive-ra…",
         99,
         log="A grub-install futása közben a megszakítás csak a lépés végén érvényesül.",
+        msg_id="worker.windows.bios.installing_bootloader",
     )
     command(args, timeout=GRUB_INSTALL_TIMEOUT)
     check_cancelled()
@@ -1083,7 +1108,7 @@ def install_bios_chainloader(
     if mbr[:440] == bytes(440):
         raise RuntimeError("Az MBR indítókód-területe üres maradt; a GRUB nem települt.")
     verify_mbr_layout(device, layout)
-    emit("A GRUB indító települt; a partíciós tábla változatlan.", 99)
+    emit("A GRUB indító települt; a partíciós tábla változatlan.", 99, msg_id="worker.windows.bios.bootloader_installed")
 
 
 def mount_iso(image: Path, mountpoint: Path) -> None:
@@ -1211,6 +1236,8 @@ def copy_tree_progress(
             emit(
                 f"Windows fájlok másolása… {copied_total:,} / {total_bytes:,} bájt",
                 percent,
+                msg_id="worker.copy.progress",
+                msg_args={"done_bytes": copied_total, "total_bytes": total_bytes},
             )
 
     for current, dirs, files in os.walk(source_root):
@@ -1265,6 +1292,7 @@ def copy_tree_progress(
                             emit(
                                 "A fájlrendszerek közötti gyorsmásolás nem érhető el; alternatív kernelmásolásra váltok.",
                                 log="A copy_file_range ezen a forrás/cél fájlrendszer-kombináción nem támogatott; a másolás folytatódik.",
+                                msg_id="worker.copy.fallback_sendfile",
                             )
                             continue
                         fast_copy_method = None
@@ -1272,6 +1300,7 @@ def copy_tree_progress(
                             "A gyors kernelmásolás nem támogatott ezen a fájlrendszer-kombináción; "
                             "kompatibilis adatmásolásra váltok.",
                             log="A két fájlrendszer közötti gyorsmásolás nem támogatott; a kompatibilis másolás zavartalanul folytatódik.",
+                            msg_id="worker.copy.fallback_buffered",
                         )
                         break
                     if amount == 0:
@@ -1318,9 +1347,9 @@ def copy_tree_progress(
             f"({copied_total} / {total_bytes} bájt)."
         )
     if last_percent < base_percent + span:
-        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span, msg_id="worker.copy.done")
     else:
-        emit("Windows telepítőfájlok átmásolva.", base_percent + span)
+        emit("Windows telepítőfájlok átmásolva.", base_percent + span, msg_id="worker.copy.done")
     return manifest
 
 def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, str]]) -> None:
@@ -1350,10 +1379,12 @@ def verify_copied_files(destination_root: Path, manifest: list[tuple[str, int, s
                 digest.update(data)
                 checked += len(data)
                 emit(f"SHA-256 visszaellenőrzés… {checked:,} / {total:,} bájt",
-                     86 + int((checked / max(total, 1)) * 12))
+                     86 + int((checked / max(total, 1)) * 12),
+                     msg_id="worker.windows.verify.progress",
+                     msg_args={"done_bytes": checked, "total_bytes": total})
         if digest.hexdigest() != expected_hash:
             raise RuntimeError(f"SHA-256 eltérés az USB-n: {relative}")
-    emit("Minden telepítőfájl SHA-256 ellenőrzése sikeres.", 98)
+    emit("Minden telepítőfájl SHA-256 ellenőrzése sikeres.", 98, msg_id="worker.windows.verify.done")
 
 
 
@@ -1400,7 +1431,7 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
         raise RuntimeError(
             f"Az UEFI:NTFS partíció mérete ({actual}) nem egyezik a segédkép méretével ({expected})."
         )
-    emit("BMK_EFI FAT indítópartíció telepítése…", 38)
+    emit("BMK_EFI FAT indítópartíció telepítése…", 38, msg_id="worker.windows.uefi.writing_efi_partition")
     fd = os.open(partition, os.O_WRONLY)
     try:
         with image.open("rb", buffering=0) as source:
@@ -1445,7 +1476,7 @@ def write_uefi_ntfs_image(image: Path, partition: str) -> None:
             f"A pendrive FAT segédpartíciójának címkéje hibás: {actual_label!r}; "
             f"elvárt: {BOOTMEDIA_FAT_VOLUME_LABEL}."
         )
-    emit("BMK_EFI FAT segédpartíció SHA-256 és kötetcímke visszaellenőrzése sikeres.", 40)
+    emit("BMK_EFI FAT segédpartíció SHA-256 és kötetcímke visszaellenőrzése sikeres.", 40, msg_id="worker.windows.uefi.efi_partition_verified")
 
 
 
@@ -1490,7 +1521,7 @@ def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
     common = ["-o", "rw,nosuid,nodev", partition, str(mountpoint)]
     try:
         command(["mount", "-t", "ntfs3", *common], timeout=120)
-        emit("NTFS kötet csatolása a Linux kernel NTFS3 driverével…", 41)
+        emit("NTFS kötet csatolása a Linux kernel NTFS3 driverével…", 41, msg_id="worker.ntfs.mounting_ntfs3")
         return "ntfs3"
     except RuntimeError as kernel_error:
         if not shutil.which("ntfs-3g"):
@@ -1503,6 +1534,7 @@ def mount_ntfs_volume(partition: str, mountpoint: Path) -> str:
             "A kernel NTFS3 driver nem érhető el; kompatibilitási tartalék: ntfs-3g…",
             41,
             log=str(kernel_error),
+            msg_id="worker.ntfs.ntfs3g_fallback",
         )
         command(["mount", "-t", "ntfs-3g", *common], timeout=120)
         return "ntfs-3g"
@@ -1575,7 +1607,7 @@ def copy_windows_files(
     # Commit all writes in one batch. Per-file fsync is particularly slow
     # on low-end USB 2.0 flash drives; unmount also performs final flushing.
     check_cancelled()
-    emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent)
+    emit("A másolt adatok kiírása a pendrive-ra…", copy_end_percent, msg_id="worker.windows.flushing")
     sync_filesystem(usb_mount)
 
     # Recheck the boot chain files on the destination before unmounting.
@@ -1585,12 +1617,13 @@ def copy_windows_files(
         if copied is None or not copied.is_file():
             raise RuntimeError(f"{missing_boot_file_message}: {relative}")
     if verify:
-        emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86)
+        emit("USB-re másolt Windows fájlok SHA-256 visszaellenőrzése…", 86, msg_id="worker.windows.verify.started")
         verify_copied_files(usb_mount, manifest)
     else:
         emit(
             "A teljes SHA-256 ellenőrzés kihagyva; az indítófájlok meglétét ellenőriztem.",
             copy_end_percent,
+            msg_id="worker.windows.verify.skipped",
         )
 
 
@@ -1653,7 +1686,7 @@ def write_windows_uefi(
         # target remains untouched.
         check_cancelled()
         ensure_source_not_on_target(image, device)
-        emit("Windows ISO és UEFI:NTFS segédkép ellenőrzése…", 1)
+        emit("Windows ISO és UEFI:NTFS segédkép ellenőrzése…", 1, msg_id="worker.windows.uefi.scanning")
         mount_iso(image, iso_mount)
         mounted_iso = True
         install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount)
@@ -1680,6 +1713,13 @@ def write_windows_uefi(
                 f"ISO kötetcímke: {iso_label}; "
                 f"másolandó fájlméret: {total_copy_bytes:,} bájt."
             ),
+            msg_id="worker.windows.precheck_done",
+            msg_args={
+                "boot_wim": boot_wim.relative_to(iso_mount),
+                "install_image": install_image.relative_to(iso_mount),
+                "iso_label": iso_label,
+                "copy_bytes": total_copy_bytes,
+            },
         )
 
         # From this point on, disk contents will be modified. The device was
@@ -1688,7 +1728,7 @@ def write_windows_uefi(
         check_cancelled()
         ensure_source_not_on_target(image, device)
         validate_target(device, expected_identity)
-        emit("USB lemez leválasztása és GPT partíciók létrehozása…", 10)
+        emit("USB lemez leválasztása és GPT partíciók létrehozása…", 10, msg_id="worker.windows.uefi.partitioning")
         unmount_disk(device)
         # Last-moment identity and source checks after unmounting but before wipefs.
         validate_target(device, expected_identity)
@@ -1705,6 +1745,7 @@ def write_windows_uefi(
             "GPT ellenőrzése sikeres: két Microsoft Basic Data partíció; "
             "az UEFI:NTFS segédpartíció automatikus meghajtóbetűjel nélkül.",
             22,
+            msg_id="worker.windows.uefi.layout_verified",
         )
 
         ntfs_partition = partition_path(device, 1)
@@ -1714,12 +1755,12 @@ def write_windows_uefi(
             "A GPT elkészült, de a kernel nem hozta létre időben a két partíció-eszközt.",
         )
 
-        emit("NTFS fájlrendszer létrehozása…", 25)
+        emit("NTFS fájlrendszer létrehozása…", 25, msg_id="worker.windows.formatting_ntfs")
         format_ntfs(ntfs_partition, iso_label, layout["first_start"])
         validate_ntfs_boot_sector(ntfs_partition, layout["first_start"])
         write_uefi_ntfs_image(bmk_efi_image, uefi_partition)
 
-        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
+        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42, msg_id="worker.windows.copying")
         usb_mount.mkdir(parents=True, exist_ok=True)
         check_cancelled()
         validate_target(device, expected_identity)
@@ -1736,7 +1777,7 @@ def write_windows_uefi(
         )
 
         check_cancelled()
-        emit("Fájlrendszer kiürítése és leválasztása…", 99)
+        emit("Fájlrendszer kiürítése és leválasztása…", 99, msg_id="worker.windows.finishing")
         sync_filesystem(usb_mount)
         command(["umount", "--", str(usb_mount)], timeout=120)
         mounted_usb = False
@@ -1751,6 +1792,7 @@ def write_windows_uefi(
                 "hogy a Windows Setup ne találjon második EFI System Partitiont. "
                 "A Windows ISO fájljai eredeti formájukban kerültek át."
             ),
+            msg_id="worker.windows.uefi.done",
         )
     finally:
         cleanup_windows_write(device, temp_root, iso_mount, usb_mount, mounted_iso, mounted_usb)
@@ -1790,7 +1832,7 @@ def write_windows_bios(
     try:
         check_cancelled()
         ensure_source_not_on_target(image, device)
-        emit("Windows ISO ellenőrzése a Legacy BIOS módhoz…", 1)
+        emit("Windows ISO ellenőrzése a Legacy BIOS módhoz…", 1, msg_id="worker.windows.bios.scanning")
         mount_iso(image, iso_mount)
         mounted_iso = True
         install_image, boot_wim, total_copy_bytes = scan_windows_iso(iso_mount, boot_mode="bios")
@@ -1812,12 +1854,19 @@ def write_windows_bios(
                 f"ISO kötetcímke: {iso_label}; "
                 f"másolandó fájlméret: {total_copy_bytes:,} bájt."
             ),
+            msg_id="worker.windows.precheck_done",
+            msg_args={
+                "boot_wim": boot_wim.relative_to(iso_mount),
+                "install_image": install_image.relative_to(iso_mount),
+                "iso_label": iso_label,
+                "copy_bytes": total_copy_bytes,
+            },
         )
 
         check_cancelled()
         ensure_source_not_on_target(image, device)
         validate_target(device, expected_identity)
-        emit("USB lemez leválasztása és MBR partíció létrehozása…", 10)
+        emit("USB lemez leválasztása és MBR partíció létrehozása…", 10, msg_id="worker.windows.bios.partitioning")
         unmount_disk(device)
         # Last-moment identity and source checks after unmounting but before wipefs.
         validate_target(device, expected_identity)
@@ -1830,7 +1879,7 @@ def write_windows_bios(
         command(["wipefs", "--all", "--force", device])
         write_partition_table(device, make_mbr_sfdisk_script(layout))
         verify_mbr_layout(device, layout)
-        emit("MBR ellenőrzése sikeres: egy aktív NTFS partíció.", 22)
+        emit("MBR ellenőrzése sikeres: egy aktív NTFS partíció.", 22, msg_id="worker.windows.bios.layout_verified")
 
         ntfs_partition = partition_path(device, 1)
         wait_for_partition_nodes(
@@ -1838,11 +1887,11 @@ def write_windows_bios(
             "Az MBR elkészült, de a kernel nem hozta létre időben a partíció-eszközt.",
         )
 
-        emit("NTFS fájlrendszer létrehozása…", 25)
+        emit("NTFS fájlrendszer létrehozása…", 25, msg_id="worker.windows.formatting_ntfs")
         format_ntfs(ntfs_partition, iso_label, layout["start"])
         validate_ntfs_boot_sector(ntfs_partition, layout["start"])
 
-        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42)
+        emit("Windows ISO fájlok másolása az NTFS partícióra…", 42, msg_id="worker.windows.copying")
         usb_mount.mkdir(parents=True, exist_ok=True)
         check_cancelled()
         validate_target(device, expected_identity)
@@ -1862,7 +1911,7 @@ def write_windows_bios(
         install_bios_chainloader(device, usb_mount, expected_identity, layout)
 
         check_cancelled()
-        emit("Fájlrendszer kiürítése és leválasztása…", 99)
+        emit("Fájlrendszer kiürítése és leválasztása…", 99, msg_id="worker.windows.finishing")
         sync_filesystem(usb_mount)
         command(["umount", "--", str(usb_mount)], timeout=120)
         mounted_usb = False
@@ -1878,6 +1927,7 @@ def write_windows_bios(
                 "firmware-en indulhat, UEFI-s géphez az UEFI (GPT) mód való. "
                 "A Windows ISO fájljai eredeti formájukban kerültek át."
             ),
+            msg_id="worker.windows.bios.done",
         )
     finally:
         cleanup_windows_write(device, temp_root, iso_mount, usb_mount, mounted_iso, mounted_usb)
@@ -1911,6 +1961,8 @@ def write_raw(
             "Célmeghajtó ellenőrzése…",
             1,
             log=f"Forrás: {image} ({source_size:,} bájt); cél: {device} ({target_size:,} bájt)",
+            msg_id="worker.raw.checking_target",
+            msg_args={"image": image, "image_bytes": source_size, "device": device, "target_bytes": target_size},
         )
         check_cancelled()
         unmount_disk(device)
@@ -1920,14 +1972,14 @@ def write_raw(
         validate_target(device, expected_identity)
         check_cancelled()
         assert_disk_unmounted(device)
-        emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2)
+        emit("Régi partíciós és fájlrendszer-aláírások eltávolítása…", 2, msg_id="worker.raw.wiping")
         TARGET_MODIFIED = True
         # util-linux needs --force to erase a block-device partition-table signature.
         # assert_disk_unmounted() above ensures the target is not mounted.
         command(["wipefs", "--all", "--force", device])
         command(["sync"])
 
-        emit("Lemezkép kiírása…", 3)
+        emit("Lemezkép kiírása…", 3, msg_id="worker.raw.write_started")
         offset = 0
         os.lseek(source_fd, 0, os.SEEK_SET)
         fd = os.open(device, os.O_WRONLY | getattr(os, "O_CLOEXEC", 0))
@@ -1946,7 +1998,12 @@ def write_raw(
                     offset += written
                     view = view[written:]
                 percent = 3 + int((offset / source_size) * (57 if verify else 96))
-                emit(f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt", percent)
+                emit(
+                    f"Lemezkép kiírása… {offset:,} / {source_size:,} bájt",
+                    percent,
+                    msg_id="worker.raw.write_progress",
+                    msg_args={"done_bytes": offset, "total_bytes": source_size},
+                )
             os.fsync(fd)
         finally:
             os.close(fd)
@@ -1954,7 +2011,7 @@ def write_raw(
         check_cancelled()
         command(["sync"])
         if verify:
-            emit("Visszaolvasás és adategyezőség ellenőrzése…", 61)
+            emit("Visszaolvasás és adategyezőség ellenőrzése…", 61, msg_id="worker.raw.verify_started")
             compared = 0
             os.lseek(source_fd, 0, os.SEEK_SET)
             command(["blockdev", "--flushbufs", device])
@@ -1989,14 +2046,23 @@ def write_raw(
                         )
                     compared += len(expected)
                     percent = 61 + int((compared / source_size) * 38)
-                    emit(f"Ellenőrzés… {compared:,} / {source_size:,} bájt", percent)
+                    emit(
+                        f"Ellenőrzés… {compared:,} / {source_size:,} bájt",
+                        percent,
+                        msg_id="worker.raw.verify_progress",
+                        msg_args={"done_bytes": compared, "total_bytes": source_size},
+                    )
             finally:
                 os.close(target_fd)
         command(["blockdev", "--rereadpt", device], check=False)
         command(["udevadm", "settle"], check=False, timeout=15)
         command(["sync"])
         check_cancelled()
-        emit("A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.", 100)
+        emit(
+            "A lemezkép sikeresen kiírva és ellenőrizve." if verify else "A lemezkép sikeresen kiírva.",
+            100,
+            msg_id="worker.raw.done_verified" if verify else "worker.raw.done",
+        )
     finally:
         os.close(source_fd)
 
@@ -2068,18 +2134,19 @@ def main(argv: list[str]) -> int:
         if not emit(
             "Hibás paraméterezés.",
             error="Használat: bootmediakit-worker raw|windows|windows-bios ISO DEVICE VERIFY IDENTITY_JSON",
+            msg_id="worker.usage_error",
         ):
             _write_stderr_safely("HIBA: Hibás BootMediaKit worker paraméterezés.")
         return 2
     mode, image_arg, device, verify_arg, identity_arg = argv[1:6]
     if os.geteuid() != 0:
-        if not emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges."):
+        if not emit("A háttérfolyamat nem kapott rendszergazdai jogosultságot.", error="A művelethez a BootMediaKit polkit akció szükséges.", msg_id="worker.not_root"):
             _write_stderr_safely("HIBA: A BootMediaKit worker nem kapott rendszergazdai jogosultságot.")
         return 1
     try:
         validate_privileged_install()
     except Exception as exc:
-        if not emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc)):
+        if not emit("A privilegizált worker biztonsági ellenőrzése sikertelen.", error=str(exc), msg_id="worker.self_check_failed"):
             _write_stderr_safely(f"HIBA: A privilegizált worker biztonsági ellenőrzése sikertelen: {exc}")
         return 1
 
@@ -2098,7 +2165,7 @@ def main(argv: list[str]) -> int:
             raise RuntimeError("Windows telepítő készítéséhez ISO fájl szükséges.")
 
         start_control_reader()
-        emit("A BootMediaKit biztonságos háttérfolyamata elindult.", 0, worker_started=True)
+        emit("A BootMediaKit biztonságos háttérfolyamata elindult.", 0, worker_started=True, msg_id="worker.started")
         check_cancelled()
         verify = verify_arg == "1"
         if mode == "raw":
@@ -2116,7 +2183,7 @@ def main(argv: list[str]) -> int:
             )
         else:
             detail = "A megszakítás a célmeghajtó módosítása előtt történt; a cél tartalmához nem nyúltam."
-        if not emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True):
+        if not emit("A művelet biztonságosan megszakítva.", error=str(exc), log=detail, cancelled=True, msg_id="worker.cancelled"):
             _write_stderr_safely(f"Megszakítva: {exc}. {detail}")
         return 130
     except Exception as exc:
@@ -2124,7 +2191,7 @@ def main(argv: list[str]) -> int:
             state_log = "A célmeghajtó állapota részleges lehet; ellenőrizd újracsatlakoztatás után."
         else:
             state_log = "A célmeghajtó tartalmát nem módosítottam; az előellenőrzés állította le a műveletet."
-        if not emit("A művelet megszakadt.", error=str(exc), log=state_log):
+        if not emit("A művelet megszakadt.", error=str(exc), log=state_log, msg_id="worker.failed"):
             _write_stderr_safely(f"HIBA: {exc}. {state_log}")
         return 1
 
