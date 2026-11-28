@@ -18,7 +18,7 @@ The detailed development records of the closed versions: [docs/history/](docs/hi
 
 ## Where we are
 
-**0.4.0 is done (2026-11-27).** Next is **0.5.0**: checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI); support will cover only the versions actually tried.
+**0.5.0 – in development.** Goal: checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI); support will cover only the versions actually tried. The previous release, 0.4.0, was completed on 2026-11-27.
 
 The detailed development status: [docs/progress.md](docs/progress.md).
 
@@ -27,7 +27,7 @@ The detailed development status: [docs/progress.md](docs/progress.md).
 | Version | Goal | Status |
 |---|---|---|
 | 0.4.0 | Responsive interface independent of the desktop environment, with a light/dark theme; the disk writers' behaviour pinned by tests; identifiers on the worker messages | done |
-| 0.5.0 | Checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI) | planned |
+| 0.5.0 | Checking Windows 7 (Legacy only) and Windows 8/8.1 (Legacy and UEFI) | in development |
 | 0.6.0 | Reliability regression closure before packaging: open physical tests, installation, upgrade, removal | planned |
 | 0.7.0 | Common installation contract: file list, dependency inventory, only the files needed at run time in the package | planned |
 | 0.8.0 | Hungarian language catalogue and translation infrastructure | planned |

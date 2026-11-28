@@ -18,7 +18,7 @@ A lezárt verziók részletes fejlesztési naplója: [docs/history/](docs/histor
 
 ## Hol tartunk
 
-**A 0.4.0 elkészült (2026-11-27).** Következik a **0.5.0**: a Windows 7 (csak Legacy) és a Windows 8/8.1 (Legacy és UEFI) ellenőrzése; a támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni.
+**0.5.0 – fejlesztés alatt.** Cél: a Windows 7 (csak Legacy) és a Windows 8/8.1 (Legacy és UEFI) ellenőrzése; a támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni. Az előző kiadás, a 0.4.0, 2026-11-27-én készült el.
 
 A fejlesztés részletes állapota: [docs/progress.md](docs/progress.md).
 
@@ -27,7 +27,7 @@ A fejlesztés részletes állapota: [docs/progress.md](docs/progress.md).
 | Verzió | Cél | Állapot |
 |---|---|---|
 | 0.4.0 | Asztali környezettől független, reszponzív felület világos/sötét témával; a lemezírók viselkedésének tesztes rögzítése; azonosítók a worker üzenetein | kész |
-| 0.5.0 | Windows 7 (csak Legacy) és Windows 8/8.1 (Legacy és UEFI) ellenőrzése | tervezett |
+| 0.5.0 | Windows 7 (csak Legacy) és Windows 8/8.1 (Legacy és UEFI) ellenőrzése | fejlesztés alatt |
 | 0.6.0 | Megbízhatósági regressziózárás a csomagolás előtt: nyitott fizikai tesztek, telepítés, frissítés, eltávolítás | tervezett |
 | 0.7.0 | Közös telepítési szerződés: fájllista, függőségleltár, a csomagban csak a futáshoz szükséges fájlok | tervezett |
 | 0.8.0 | Magyar nyelvi katalógus és fordítási infrastruktúra | tervezett |
