@@ -39,7 +39,7 @@ A VM-es és a fizikai eredményt csak a gazda jelentheti; a jegyzőkönyvben kü
 **Szintek:**
 
 1. A betöltő elindul.
-2. A telepítő felülete, a kiadáslista és a lemezválasztó megjelenik.
+2. A Setup felülete teljesen betölt, és a „Telepítés most” után eljut az első képernyőig (kiadáslista, termékkulcs vagy lemezválasztó); a jegyzőkönyvbe az kerül, melyik képernyőig jutott. Fizikai gépen itt megállunk; ha a Setup eljut a lemezválasztóig, ott is megállunk, belső lemezen nem lépünk tovább.
 3. A fájlmásolás elindul.
 4. Teljes telepítés és első indítás.
 
@@ -48,6 +48,7 @@ A VM-es és a fizikai eredményt csak a gazda jelentheti; a jegyzőkönyvben kü
 - Fizikai gépen csak az 1–2. szint; belső lemezen soha nem lépünk tovább a lemezválasztónál.
 - VM: QEMU, a boot-média `snapshot=on` módban, minden futásnál friss célmeghajtó; Legacy = SeaBIOS, UEFI = OVMF Secure Boot nélkül. Minden UEFI-teszt rekordja megmondja a Secure Boot állapotát (0.5.0-ban: ki).
 - Pendrive: 8 GB elég az I1–I4-hez (az I3 adata ≈ 4,3 GB, 4 GB-os nem elég), 16 GB kell az I5-höz.
+- Várakozás a 2. szint első képernyőjére (az ISO-szerkezet és a Setup ismert viselkedése alapján, nem mérés): az I1 és az I2 `sources/ei.cfg` fájlja `EditionID=Professional`, `Channel=Retail`, ezért a Setup valószínűleg nem mutat kiadáslistát, hanem a Professional kiadást telepíti; az I3-nál és az I4-nél nincs `ei.cfg`, így a Setup termékkulcsot kérhet. Az ISO-kat nem módosítjuk (nincs `ei.cfg`/`PID.txt` beillesztés).
 - A Windows 7 hivatalos médiája nem tartalmaz USB 3-meghajtót: modern, csak xHCI-portos gépen a Setup nem biztos, hogy látja a pendrive-ot. Ez ismert Windows 7-korlát, nem BootMediaKit-hiba (a support-szövegbe később kerül).
 
 **I1 – Windows 7 SP1 x64 (hivatalos)**
