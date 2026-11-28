@@ -45,6 +45,7 @@ An intermediate fix version (for example 0.5.1) is made only for a real bug that
 
 - **Windows 7:** only in Legacy BIOS (MBR) mode. The official Windows 7 SP1 ISO has no UEFI boot loader (`efi\boot\bootx64.efi`), and changing the installer image is not a goal.
 - **Windows 8 and 8.1:** in both Legacy and UEFI mode. Support will cover only the versions actually tried.
+- **32-bit UEFI:** 32-bit (IA32) UEFI is not supported; x86 Windows media is supported in Legacy BIOS mode only.
 - **Distributions in 1.0.0:** Arch/CachyOS and Debian/Ubuntu, with native packages. The project adds one distribution family at a time and extends only after the previous one is stable.
 - **Fedora (RPM):** not part of 1.0.0; it will be considered again after a bug-free 1.0.0.
 - **AppImage:** not planned.
