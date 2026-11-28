@@ -147,3 +147,5 @@ Ha a grafikus felület írás közben bezárul vagy megszakad a kapcsolata a wor
 ## Külső összetevők
 
 A BootMediaKit nem tartalmaz átmásolt Rufus alkalmazás-forráskódot. Telepítéskor a hivatalos Rufus tárolóból külön licencű UEFI:NTFS segédképet tölt le; ez harmadik féltől származó UEFI bootloader- és fájlrendszer-driver binárisokat tartalmaz. A forrásokra, szerzői jogokra és licencekre vonatkozó részletek: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+A BootMediaKit független projekt, nem áll kapcsolatban a Rufus projekttel és a Microsofttal. A Windows a Microsoft védjegye.

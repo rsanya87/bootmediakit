@@ -58,3 +58,7 @@ Ne állítsd, hogy egy fizikai eszközzel vagy a Windows Setuppal kapcsolatos hi
 - Add meg a teszteredményeket és a teszt szintjét.
 - Csatold a releváns naplókat, a személyes útvonalak, sorozatszámok és nem kapcsolódó azonosítók eltávolítása után.
 - Ha indokolt, frissítsd a `CHANGELOG.md`-t és a `docs/progress.md`-t.
+
+## A hozzájárulások licence
+
+A BootMediaKithez beküldött hozzájárulások (pull requestek, javítások) a projekt licence, a GPL-3.0-only alatt kerülnek a projektbe; lásd: [LICENSE](LICENSE). Csak olyan munkát küldj be, amelyet jogosult vagy így licencelni.

@@ -58,3 +58,7 @@ Do not claim that a physical-device or Windows Setup issue is fixed based only o
 - Include test results and the test level.
 - Include relevant logs with personal paths, serial numbers, and unrelated identifiers removed.
 - Update `CHANGELOG.md` and `docs/progress.md` when appropriate.
+
+## License of contributions
+
+Contributions submitted to BootMediaKit (pull requests, patches) are included in the project under GPL-3.0-only, the project's license; see [LICENSE](LICENSE). Submit only work that you have the right to license this way.
