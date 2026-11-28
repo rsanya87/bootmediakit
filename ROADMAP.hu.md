@@ -43,7 +43,7 @@ Köztes javítóverzió (például 0.5.1) csak valós, külön javítandó hiba 
 
 ## Meghozott döntések
 
-- **Windows 7:** csak Legacy BIOS (MBR) módban. A hivatalos Windows 7 SP1 ISO-n nincs UEFI-s rendszertöltő (`efi\boot\bootx64.efi`), a telepítőkép módosítása pedig nem cél.
+- **Windows 7:** csak Legacy BIOS (MBR) módban. A hivatalos Windows 7 SP1 ISO-n nincs UEFI-s rendszertöltő (`efi/boot/bootx64.efi`), a telepítőkép módosítása pedig nem cél.
 - **Windows 8 és 8.1:** Legacy és UEFI módban is. A támogatás csak a ténylegesen kipróbált változatokra fog vonatkozni.
 - **32 bites UEFI:** a 32 bites (IA32) UEFI nem támogatott; az x86 Windows adathordozó csak Legacy BIOS módban támogatott.
 - **Disztribúciók az 1.0.0-ban:** Arch/CachyOS és Debian/Ubuntu, natív csomaggal. A projekt egyszerre egy disztribúciócsaládot vesz fel, és csak az előző stabilizálása után bővít.

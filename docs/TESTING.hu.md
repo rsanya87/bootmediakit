@@ -61,7 +61,7 @@ A karbantartó jelentései 2026-11-11-ről és 2026-11-24-ről:
 - **Legacy elrendezés:** az `sfdisk -d` kimenete `label: dos`, `sector-size: 512` és egyetlen partíció `start=2048, type=7, bootable`.
 - **Legacy a korábban GPT-s pendrive-on:** egy Windows UEFI elrendezésű pendrive-ra írt Legacy után a `wipefs` csak `dos` bejegyzést mutatott, `gpt`-t nem.
 - **Kézi QEMU-próba:** a kész Legacy pendrive QEMU/SeaBIOS alatt a Windows Setupot mutatta. OVMF-fel nem indult el.
-- **Csak UEFI-s firmware:** egy Gigabyte B850 D3HP alaplapon kikapcsolt CSM mellett a Legacy pendrive `UEFI:` előtaggal jelent meg, és UEFI módban elindította a Windows Setupot (`PEFirmwareType` 0x2), valószínűleg azért, mert a firmware NTFS-drivere olvassa az ISO saját `efi\boot\bootx64.efi` fájlját. Ezt nem tekintjük hibának; a grafikus felület, a worker naplója és a README-k azt írják, hogy a pendrive Legacy BIOS/CSM indításhoz készül, és UEFI-ben csak NTFS-t olvasó firmware-en indulhat.
+- **Csak UEFI-s firmware:** egy Gigabyte B850 D3HP alaplapon kikapcsolt CSM mellett a Legacy pendrive `UEFI:` előtaggal jelent meg, és UEFI módban elindította a Windows Setupot (`PEFirmwareType` 0x2), valószínűleg azért, mert a firmware NTFS-drivere olvassa az ISO saját `efi/boot/bootx64.efi` fájlját. Ezt nem tekintjük hibának; a grafikus felület, a worker naplója és a README-k azt írják, hogy a pendrive Legacy BIOS/CSM indításhoz készül, és UEFI-ben csak NTFS-t olvasó firmware-en indulhat.
 - **Regresszió:** Windows UEFI mód (az `sfdisk` kimenet a várt, a Setup UEFI-ből elindult a karbantartó fő gépén) és Linux Mint DD/RAW (elindult UEFI-ből és egy Legacy gépen).
 - **A gép saját rendszerbetöltője:** a Windows UEFI próba után a karbantartó CachyOS rendszere rendesen elindult; a `grub` csomag ekkor telepítve volt, és korábban Legacy írások is készültek.
 - **GRUB nélkül:** a `grub` csomag eltávolítása után a Legacy lehetőség a helyes megjegyzéssel és súgóval szürke volt; a visszatelepítés után újra választható lett.
@@ -312,6 +312,8 @@ A képeket és az adataikat (méret, hash-ek, kötetcímke, a `sources/install.w
 A Windows UEFI-módhoz az ISO-n `efi/boot/bootx64.efi` kell; enélkül a worker az ISO-t a pendrive első írása előtt elutasítja. A hivatalos Windows 7 adathordozókon (I1, I2) ez a fájl nincs meg: a Windows 7 UEFI-indítása nem támogatott és nem tesztelt út, egy nem hivatalos, integrált kép (I5) UEFI-mérése pedig csak extra eredmény lenne, támogatási ígéret nélkül. A csak `bootia32.efi` fájlt tartalmazó ISO-t (I4) a worker ugyanígy elutasítja: a 32 bites (IA32) UEFI nem támogatott, az x86 Windows adathordozó csak Legacy BIOS módra szól (még nem tesztelt).
 
 A CI loop-eszközös integrációs tesztjei (lent) szintetikus adathordozót indítanak QEMU/SeaBIOS alatt; ezeket az ISO-kat nem használják, és a CI-ben nincs OVMF-indítási teszt.
+
+A Windows 7 / 8.1 adathordozók Secure Boot-viselkedését a 0.5.0-ban nem teszteljük; „nem tesztelt” marad, és a 0.6.0 Secure Boot-ellenőrzései közé kerül.
 
 ### Loop-eszközös integrációs tesztek
 

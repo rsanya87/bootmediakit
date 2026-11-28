@@ -61,7 +61,7 @@ Reported by the maintainer on 2026-11-11 and 2026-11-24:
 - **Legacy layout:** `sfdisk -d` showed `label: dos`, `sector-size: 512` and one partition `start=2048, type=7, bootable`.
 - **Legacy over former GPT media:** after a Legacy write on a drive that carried the Windows UEFI layout, `wipefs` showed only a `dos` entry, no `gpt`.
 - **Manual QEMU check:** the finished Legacy drive showed Windows Setup in QEMU/SeaBIOS. With OVMF it did not boot.
-- **UEFI-only firmware:** on a Gigabyte B850 D3HP with CSM disabled the Legacy drive was listed with a `UEFI:` prefix and started Windows Setup in UEFI mode (`PEFirmwareType` 0x2), presumably because the firmware's NTFS driver reads the ISO's own `efi\boot\bootx64.efi`. This is not treated as a defect; the GUI, the worker log and the READMEs say that the drive is made for Legacy BIOS/CSM and may start in UEFI only on firmware that reads NTFS.
+- **UEFI-only firmware:** on a Gigabyte B850 D3HP with CSM disabled the Legacy drive was listed with a `UEFI:` prefix and started Windows Setup in UEFI mode (`PEFirmwareType` 0x2), presumably because the firmware's NTFS driver reads the ISO's own `efi/boot/bootx64.efi`. This is not treated as a defect; the GUI, the worker log and the READMEs say that the drive is made for Legacy BIOS/CSM and may start in UEFI only on firmware that reads NTFS.
 - **Regression:** Windows UEFI mode (`sfdisk` output as expected, Setup started from UEFI on the maintainer's main computer) and Linux Mint DD/RAW (booted from UEFI and from a Legacy computer).
 - **Host boot loader:** after the Windows UEFI test the maintainer's CachyOS system booted normally; the `grub` package was installed and Legacy writes had been made before.
 - **Without GRUB:** after removing the `grub` package the Legacy option was greyed out with the correct note and hint; after reinstalling it the option was selectable again.
@@ -312,6 +312,8 @@ The maintainer supplied the images and their data (size, hashes, volume label, t
 The Windows UEFI mode needs `efi/boot/bootx64.efi` on the ISO; the worker refuses an ISO without it before the first write to the USB drive. The official Windows 7 media (I1, I2) do not contain this file: Windows 7 UEFI boot is not supported and not a tested path, and a UEFI measurement with an unofficial integrated image (I5) would be an extra result without a support promise. An ISO with only `bootia32.efi` (I4) is refused the same way: 32-bit (IA32) UEFI is not supported, and x86 Windows media is meant for the Legacy BIOS mode only (not tested yet).
 
 The loop-device integration tests in CI (below) boot synthetic media in QEMU/SeaBIOS; they do not use these ISOs, and CI has no OVMF boot test.
+
+Secure Boot is not tested for Windows 7 / 8.1 media in 0.5.0; it stays listed as "not tested" and moves to the 0.6.0 Secure Boot checks.
 
 ### Loop-device integration tests
 
