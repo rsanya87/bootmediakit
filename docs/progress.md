@@ -34,4 +34,56 @@ A kötelező szabályok: [docs/INVARIANTS.md](INVARIANTS.md), a korábbi hibák:
 
 ### Fizikai és kézi tesztek (a gazda végzi; csak az ő visszajelzése alapján pipálva)
 
-- A lista a T0-ban, a gazda ISO-tesztkészlete alapján készül.
+A VM-es és a fizikai eredményt csak a gazda jelentheti; a jegyzőkönyvben külön oszlopba kerülnek. Az ISO-k (I1–I5): [TESTING.md](TESTING.md), „ISO test set (0.5.0)”.
+
+**Szintek:**
+
+1. A betöltő elindul.
+2. A telepítő felülete, a kiadáslista és a lemezválasztó megjelenik.
+3. A fájlmásolás elindul.
+4. Teljes telepítés és első indítás.
+
+**Szabályok:**
+
+- Fizikai gépen csak az 1–2. szint; belső lemezen soha nem lépünk tovább a lemezválasztónál.
+- VM: QEMU, a boot-média `snapshot=on` módban, minden futásnál friss célmeghajtó; Legacy = SeaBIOS, UEFI = OVMF Secure Boot nélkül. Minden UEFI-teszt rekordja megmondja a Secure Boot állapotát (0.5.0-ban: ki).
+- Pendrive: 8 GB elég az I1–I4-hez (az I3 adata ≈ 4,3 GB, 4 GB-os nem elég), 16 GB kell az I5-höz.
+- A Windows 7 hivatalos médiája nem tartalmaz USB 3-meghajtót: modern, csak xHCI-portos gépen a Setup nem biztos, hogy látja a pendrive-ot. Ez ismert Windows 7-korlát, nem BootMediaKit-hiba (a support-szövegbe később kerül).
+
+**I1 – Windows 7 SP1 x64 (hivatalos)**
+
+- [ ] Legacy, VM: 2. szint
+- [ ] Legacy, VM: 4. szint
+- [ ] Legacy, fizikai (valódi BIOS-os gép): 2. szint
+- [ ] UEFI: elutasítás ellenőrzése (T1/T2)
+
+**I2 – Windows 7 SP1 x86 (hivatalos)**
+
+- [ ] Legacy, VM: 2. szint
+- [ ] Legacy, fizikai (opcionális): 2. szint
+- [ ] UEFI: elutasítás ellenőrzése (T1/T2)
+
+**I3 – Windows 8.1 with Update x64 (hivatalos)**
+
+- [ ] Legacy, VM: 2. szint
+- [ ] Legacy, fizikai: 2. szint
+- [ ] UEFI (Secure Boot ki), VM: 2. szint
+- [ ] UEFI (Secure Boot ki), VM: 4. szint
+- [ ] UEFI (Secure Boot ki), fizikai: 2. szint
+
+**I4 – Windows 8.1 with Update x86 (hivatalos)**
+
+- [ ] Legacy, VM: 2. szint
+- [ ] Legacy, fizikai (opcionális): 2. szint
+- [ ] UEFI: elutasítás ellenőrzése (T1/T2)
+
+**I5 – harmadik féltől származó, integrált Windows 7 SP1 x64 kép (nem hivatalos)**
+
+- [ ] Legacy, VM: 2. szint
+- [ ] Legacy, VM: 3. szint (a 4 GiB-nál nagyobb `install.wim` NTFS-ről olvasása hiba nélkül halad-e)
+- [ ] Legacy, fizikai (opcionális, modern gépen, USB 3): 2. szint
+- [ ] UEFI (Secure Boot ki): extra, támogatási ígéret nélkül
+
+**Minden kiadás előtt**
+
+- [ ] A [REGRESSION_CHECKLIST.md](REGRESSION_CHECKLIST.md) kötelező pontjai.

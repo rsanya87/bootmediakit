@@ -8,6 +8,7 @@
 - Docs: `docs/TESTING.md` and `docs/TESTING.hu.md` list the 0.5.0 ISO test set (Windows 7 SP1 x64 and x86, Windows 8.1 with Update x64 and x86, one third-party integrated Windows 7 SP1 x64 image): size, SHA-256, volume label, editions, architecture, build, `install.wim` size and the `efi/boot/` contents, checked again against the images, and a note that the Windows UEFI mode needs `efi/boot/bootx64.efi` (no Windows 7 UEFI, no 32-bit UEFI). No test results yet (T0).
 - Docs: `ROADMAP.md`, `ROADMAP.hu.md` and `docs/progress.md` record the decision that 32-bit (IA32) UEFI is not supported and x86 Windows media is supported in Legacy BIOS mode only; no code change, the worker already refuses an ISO without `efi/boot/bootx64.efi` in UEFI mode.
 - Docs: `docs/progress.md` and `docs/TESTING.md`/`docs/TESTING.hu.md` record that Secure Boot is not tested for Windows 7 / 8.1 media in 0.5.0; it stays "not tested" and moves to the 0.6.0 Secure Boot checks. `ROADMAP.md`/`ROADMAP.hu.md` and the 0.3.0 test record in `docs/TESTING.md`/`docs/TESTING.hu.md` write `efi/boot/bootx64.efi` with forward slashes, like the rest of the documents (notation only).
+- Docs: `docs/progress.md` lists the 0.5.0 physical and VM tests: four levels (boot loader, Setup screens and disk selection, file copy, full installation and first boot), the rules for physical machines and VMs, the USB drive sizes, the Windows 7 USB 3 limitation, and the ISO × mode × environment checklist for I1–I5, all still open (T0).
 
 ## 0.4.0 — 2026-11-27
 
